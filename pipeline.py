@@ -357,19 +357,21 @@ class Node:
         return None
 
     def launch_local(self, tags=None, title=None, use_shell=True,
-                     retention=7, run=False, sleep_when_done=False):
+                     retention=7, run=False, sleep_when_done=False,
+                     prebuild_images=False):
         self._build(
             build_mode=constants.BuildMode.LOCAL, tags=tags, title=title,
             use_shell=use_shell, retention=retention, run=run,
-            sleep_when_done=sleep_when_done
+            sleep_when_done=sleep_when_done, prebuild_images=prebuild_images
         )
 
     def launch_cloud(self, tags=None, title=None, use_shell=True,
-                     retention=7, run=False, sleep_when_done=False):
+                     retention=7, run=False, sleep_when_done=False,
+                     prebuild_images=False):
         self._build(
             build_mode=constants.BuildMode.DEPLOY_TO_CLOUD, tags=tags,
             title=title, use_shell=use_shell, retention=retention, run=run,
-            sleep_when_done=sleep_when_done
+            sleep_when_done=sleep_when_done, prebuild_images=prebuild_images
         )
 
     def _build(self, build_mode=constants.BuildMode.LOCAL,
@@ -380,7 +382,7 @@ class Node:
             self.image = image_mod.Image()
 
         if build_mode != constants.BuildMode.LOCAL or prebuild_images:
-            image_mod.make_and_push_all(self)
+            image_mod.make_all(self, push_to_cloud=build_mode != constants.BuildMode.LOCAL)
 
         self._autorun = run
         self._sleep_when_done = sleep_when_done

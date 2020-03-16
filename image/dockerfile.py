@@ -12,17 +12,21 @@ def lines_for_build_dockerfile(image, reqs_py, context_url, context_branch):
         py_binary, _py_version = get_python_version(image)
         if py_binary is None:
             raise Exception(f"Cannot find suitable python in {image} for installing {reqs_py}")
-        non_conducto_reqs_py = [r for r in reqs_py if r != "conducto"]
-        if non_conducto_reqs_py:
-            yield "RUN pip install " + " ".join(non_conducto_reqs_py)
 
-        if "conducto" in reqs_py:
-            image = "conducto"
-            tag = api.Config().get_image_tag(default=None)
-            if tag is not None:
-                image = f"{image}:{tag}"
-            yield f"COPY --from={image} /tmp/conducto /tmp/conducto"
-            yield "RUN pip install -e /tmp/conducto"
+        if api.Config().get("dev", "who"):
+            non_conducto_reqs_py = [r for r in reqs_py if r != "conducto"]
+            if non_conducto_reqs_py:
+                yield "RUN pip install " + " ".join(non_conducto_reqs_py)
+
+            if "conducto" in reqs_py:
+                image = "conducto"
+                tag = api.Config().get_image_tag(default=None)
+                if tag is not None:
+                    image = f"{image}:{tag}"
+                yield f"COPY --from={image} /tmp/conducto /tmp/conducto"
+                yield "RUN pip install -e /tmp/conducto"
+        else:
+            yield "RUN pip install " + " ".join(reqs_py)
 
     code_dir = "/usr/conducto"
     yield f"WORKDIR {code_dir}"

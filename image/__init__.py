@@ -310,7 +310,7 @@ class Image:
             self.context_url is not None or self.reqs_py is not None
 
 
-def make_and_push_all(node: "pipeline.Node"):
+def make_all(node: "pipeline.Node", push_to_cloud):
     images = {}
     for n in node.stream():
         if n.user_set["image_name"]:
@@ -331,7 +331,7 @@ def make_and_push_all(node: "pipeline.Node"):
 
     # Run all the builds concurrently.
     # TODO: limit simultaneous builds using an asyncio.Semaphore
-    futs = [img.make(push_to_cloud=True, callback=_print_status) for img in images.values()]
+    futs = [img.make(push_to_cloud=push_to_cloud, callback=_print_status) for img in images.values()]
 
     asyncio.get_event_loop().run_until_complete(asyncio.gather(*futs))
     print(f"\r{log.Control.ERASE_LINE}", end="", flush=True)

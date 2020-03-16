@@ -101,7 +101,7 @@ class _Data:
                 names = os.listdir(path)
             except OSError:
                 return []
-            return sorted(names)
+            return [os.path.join(prefix, name) for name in sorted(names)]
 
     @classmethod
     def exists(cls, name):

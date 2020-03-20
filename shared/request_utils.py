@@ -10,7 +10,7 @@ def _add_status_code(response):
         code = response.status
     else:
         try:
-            code = int(re.search(r'^(\d\d\d)', response.status).groups()[0])
+            code = int(re.search(r"^(\d\d\d)", response.status).groups()[0])
         except:
             response.status_code = response.status
             return
@@ -32,7 +32,7 @@ def _get_json_bytes(data):
     if isinstance(data, dict):
         data = json.dumps(data)
     if isinstance(data, str):
-        data = data.encode('utf8')
+        data = data.encode("utf8")
     return data
 
 
@@ -40,8 +40,7 @@ def get(url, headers=None, params=None):
     if headers is None:
         headers = {}
     url = _put_params(url, params)
-    the_request = urllib.request.Request(
-            url, headers=headers, method='GET')
+    the_request = urllib.request.Request(url, headers=headers, method="GET")
     try:
         response = urllib.request.urlopen(the_request)
     except urllib.error.HTTPError as e:
@@ -55,8 +54,7 @@ def put(url, headers=None, data=None):
         headers = {}
     data = _get_json_bytes(data)
     assert isinstance(data, bytes), f"data is of type {type(data)}."
-    the_request = urllib.request.Request(
-            url, headers=headers, data=data, method='PUT')
+    the_request = urllib.request.Request(url, headers=headers, data=data, method="PUT")
     try:
         response = urllib.request.urlopen(the_request)
     except urllib.error.HTTPError as e:
@@ -70,8 +68,7 @@ def post(url, headers=None, data=None):
         headers = {}
     data = _get_json_bytes(data)
     assert isinstance(data, bytes), f"data is of type {type(data)}."
-    the_request = urllib.request.Request(
-            url, headers=headers, data=data, method='POST')
+    the_request = urllib.request.Request(url, headers=headers, data=data, method="POST")
     try:
         response = urllib.request.urlopen(the_request)
     except urllib.error.HTTPError as e:
@@ -84,8 +81,7 @@ def delete(url, headers=None, params=None):
     if headers is None:
         headers = {}
     url = _put_params(url, params)
-    the_request = urllib.request.Request(
-            url, headers=headers, method='DELETE')
+    the_request = urllib.request.Request(url, headers=headers, method="DELETE")
     try:
         response = urllib.request.urlopen(the_request)
     except urllib.error.HTTPError as e:
@@ -100,7 +96,8 @@ def patch(url, headers=None, data=None):
     data = _get_json_bytes(data)
     assert isinstance(data, bytes), f"data is of type {type(data)}."
     the_request = urllib.request.Request(
-            url, headers=headers, data=data, method='PATCH')
+        url, headers=headers, data=data, method="PATCH"
+    )
     try:
         response = urllib.request.urlopen(the_request)
     except urllib.error.HTTPError as e:

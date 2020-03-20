@@ -22,7 +22,7 @@ import sys
 import pprint
 
 
-EXC_CTX_KEY = '_ctxStack'
+EXC_CTX_KEY = "_ctxStack"
 
 
 class KwargException(Exception):
@@ -92,6 +92,7 @@ class KwargException(Exception):
         [{'a': 1, 'b': 2}, {'b': 3, 'c': 4}, {'c': 5, 'e': 6}]
 
     """
+
     defaultMessage = None
 
     def __init__(self, message=None, **kwargs):
@@ -130,8 +131,8 @@ class KwargException(Exception):
         if not includeContexts:
             return message
 
-        tab = ' ' * 4
-        sep = '\n{}'.format(tab)
+        tab = " " * 4
+        sep = "\n{}".format(tab)
         indented = lambda t: tab + sep.join(pprint.pformat(t).splitlines())
 
         # Until Python 3.6, kwargs does not maintain specification order
@@ -139,18 +140,19 @@ class KwargException(Exception):
         parts = [message]
 
         if firstContext or stackedContexts:
-            parts.extend([
-                'First Context:' if stackedContexts else 'Context:',
-                indented(firstContext),
-            ])
+            parts.extend(
+                [
+                    "First Context:" if stackedContexts else "Context:",
+                    indented(firstContext),
+                ]
+            )
 
         if stackedContexts:
-            parts.extend([
-                'Stacked Contexts:',
-                indented(stackedContexts),
-            ])
+            parts.extend(
+                ["Stacked Contexts:", indented(stackedContexts),]
+            )
 
-        return '\n\n'.join(parts)
+        return "\n\n".join(parts)
 
 
 def appendContext(exc, **kwargs):
@@ -167,7 +169,7 @@ def appendContext(exc, **kwargs):
 
     """
     if not isinstance(exc, BaseException):
-        msg = 'exc must be an exception type. Found: {}'.format(type(exc))
+        msg = "exc must be an exception type. Found: {}".format(type(exc))
         raise TypeError(msg)
 
     if not hasattr(exc, EXC_CTX_KEY):
@@ -225,7 +227,7 @@ def _demoTracebacks():
     def a():
         try:
             try:
-                1/0
+                1 / 0
             except Exception as e1:
                 raise e1.with_traceback(sys.exc_info()[2])
         except Exception as e2:
@@ -234,7 +236,7 @@ def _demoTracebacks():
     def b():
         try:
             try:
-                1/0
+                1 / 0
             except Exception as e1:
                 raise e1
         except Exception as e2:

@@ -3,13 +3,16 @@ from . import utils
 
 __package__ = "ci_cd"
 
-# Use the standard python 3.8 image as a base and add all files from the current dir.
-IMG = do.Image(image="python:3.8", context=".")
-
 
 def ci_cd(projects=utils.get_projects()) -> do.Serial:
     "Build all projects, run tests if builds succeed, then deploy if tests pass"
-    output = do.Serial(image=IMG)
+
+    # User the standard python 3.8 image as a base and add all files from
+    # the current dir. We also need to install conducto in the image in
+    # order to dynamically generate the tree with lazy_py in test().
+    img = do.Image(image="python:3.8", context=".", reqs_py=["conducto"])
+
+    output = do.Serial(image=img)
     output["Build"] = build(projects)
     output["Test"] = test(projects)
     output["Deploy"] = do.Exec("echo aws cloudformation deploy")
@@ -18,7 +21,11 @@ def ci_cd(projects=utils.get_projects()) -> do.Serial:
 
 def build(projects: typing.List[str]) -> do.Parallel:
     "Build projects in parallel, using simple shell command."
-    output = do.Parallel(requires_docker=True)
+
+    # Override the parent image to use one with docker installed.
+    img = do.Image(image="docker:19.03", context=".")
+
+    output = do.Parallel(image=img, requires_docker=True)
     for project in projects:
         # Command needs docker; inherits flag from parent node
         output[project] = do.Exec(f"cd {project} && docker build .")

@@ -9,6 +9,7 @@ import typing
 
 from .shared import constants, log
 from . import callback, image as image_mod
+
 State = constants.State
 
 
@@ -42,7 +43,7 @@ class Node:
     # i.e., how many are running.
     SKIP_RUN_NONE = 0
     SKIP_RUN_SOME = 1
-    SKIP_RUN_ALL  = 2
+    SKIP_RUN_ALL = 2
 
     # In AWS cloud mode, mem and cpu must fit on an EC2 instance (in EC2
     # mode), and must be one of allowed pairings (in FARGATE mode).
@@ -52,16 +53,42 @@ class Node:
 
     _CONTEXT_STACK = []
 
-    __slots__ = ("_name", "id", "id_root", "user_set", "_root", 'pipeline_id',
-                 "id_generator", "result", "token",
-                 "parent", "children", "_callbacks", "suppress_errors",
-                 "same_container", "env", "_repo", "_autorun", "_sleep_when_done")
+    __slots__ = (
+        "_name",
+        "id",
+        "id_root",
+        "user_set",
+        "_root",
+        "pipeline_id",
+        "id_generator",
+        "result",
+        "token",
+        "parent",
+        "children",
+        "_callbacks",
+        "suppress_errors",
+        "same_container",
+        "env",
+        "_repo",
+        "_autorun",
+        "_sleep_when_done",
+    )
 
     def __init__(
-            self, *, env=None, skip=False, name=None, cpu=None, gpu=None,
-            mem=None, requires_docker=None, suppress_errors=False,
-            same_container=constants.SameContainer.INHERIT,
-            image: typing.Union[str, image_mod.Image] = None, image_name=None):
+        self,
+        *,
+        env=None,
+        skip=False,
+        name=None,
+        cpu=None,
+        gpu=None,
+        mem=None,
+        requires_docker=None,
+        suppress_errors=False,
+        same_container=constants.SameContainer.INHERIT,
+        image: typing.Union[str, image_mod.Image] = None,
+        image_name=None,
+    ):
         self.id_generator, self.id_root = itertools.count(), self
         self.id = None
 
@@ -76,30 +103,34 @@ class Node:
         self._repo = image_mod.Repository()
         # store actual values of each attribute
         self.user_set = {
-            'skip': skip,
-            'cpu': cpu,
-            'gpu': gpu,
-            'mem': mem,
-            'requires_docker': requires_docker
+            "skip": skip,
+            "cpu": cpu,
+            "gpu": gpu,
+            "mem": mem,
+            "requires_docker": requires_docker,
         }
 
         if image:
             self.image = image
         else:
-            self.user_set['image_name'] = image_name
+            self.user_set["image_name"] = image_name
 
         self.env = env or {}
 
         self.result = {}
         if name is not None:
             if not Node._CONTEXT_STACK:
-                raise ValueError(f"Cannot assign name={name} outside of a context manager.")
+                raise ValueError(
+                    f"Cannot assign name={name} outside of a context manager."
+                )
             if "/" in name:
-                raise ValueError(f"Disallowed character in name, may not use '/': {name}")
+                raise ValueError(
+                    f"Disallowed character in name, may not use '/': {name}"
+                )
             parent = Node._CONTEXT_STACK[-1]
             parent[name] = self
         else:
-            self._name = '/'
+            self._name = "/"
 
         self.suppress_errors = suppress_errors
         self.same_container = same_container
@@ -114,7 +145,9 @@ class Node:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if Node._CONTEXT_STACK[-1] is not self:
-            raise Exception(f"Node context error: {repr(Node._CONTEXT_STACK[-1])} is not {repr(self)}")
+            raise Exception(
+                f"Node context error: {repr(Node._CONTEXT_STACK[-1])} is not {repr(self)}"
+            )
         Node._CONTEXT_STACK.pop()
 
     def __str__(self):
@@ -123,38 +156,51 @@ class Node:
         while cur:
             name.append(cur.name)
             cur = cur.parent
-        return '/'.join(name[::-1]).replace('//', '/')
+        return "/".join(name[::-1]).replace("//", "/")
 
     @property
-    def name(self): return self._name
+    def name(self):
+        return self._name
 
     @property
-    def repo(self): return self.root._repo
+    def repo(self):
+        return self.root._repo
 
     @property
-    def _id(self): return self.id
+    def _id(self):
+        return self.id
 
     @property
-    def mem(self): return self.user_set['mem']
+    def mem(self):
+        return self.user_set["mem"]
 
     @property
-    def gpu(self): return self.user_set['gpu']
+    def gpu(self):
+        return self.user_set["gpu"]
 
     @property
-    def cpu(self): return self.user_set['cpu']
+    def cpu(self):
+        return self.user_set["cpu"]
 
     @property
-    def requires_docker(self): return self.user_set.get('requires_docker')
+    def requires_docker(self):
+        return self.user_set.get("requires_docker")
 
     @property
-    def skip(self): return self.user_set.get('skip', False)
+    def skip(self):
+        return self.user_set.get("skip", False)
 
     @mem.setter
-    def mem(self, val): self.user_set['mem'] = val
+    def mem(self, val):
+        self.user_set["mem"] = val
+
     @gpu.setter
-    def gpu(self, val): self.user_set['gpu'] = val
+    def gpu(self, val):
+        self.user_set["gpu"] = val
+
     @cpu.setter
-    def cpu(self, val): self.user_set['cpu'] = val
+    def cpu(self, val):
+        self.user_set["cpu"] = val
 
     @property
     def image(self) -> typing.Optional[image_mod.Image]:
@@ -181,10 +227,11 @@ class Node:
 
     @requires_docker.setter
     def requires_docker(self, val: bool):
-        self.user_set['requires_docker'] = val
+        self.user_set["requires_docker"] = val
+
     @skip.setter
     def skip(self, val: bool):
-        self.user_set['skip'] = val
+        self.user_set["skip"] = val
 
     def register_image(self, image: image_mod.Image):
         self.repo.add(image)
@@ -214,8 +261,8 @@ class Node:
         return self._root
 
     def __setitem__(self, name, node):
-        if '/' in name:
-            path, new = name.rsplit('/', 1)
+        if "/" in name:
+            path, new = name.rsplit("/", 1)
             self[path][new] = node
             return
         if name in self.children or node.root == self.root or node.root != node:
@@ -234,56 +281,74 @@ class Node:
             current = self.root
         else:
             current = self
-        for i in item.split('/'):
+        for i in item.split("/"):
             # Ignore consecutive delimiters: 'a/b//c' == 'a/b/c'
-            if not i: continue
+            if not i:
+                continue
 
             # Find the referenced child and iterate
             current = current.children[i]
         return current
 
     def __contains__(self, item):
-         try:
-             self[item]
-         except KeyError:
-             return False
-         else:
-             return True
+        try:
+            self[item]
+        except KeyError:
+            return False
+        else:
+            return True
 
     def describe(self):
-        return {**self.user_set,
-                **{'__env__' + key: value for key, value in self.env.items()},
-                **{"id": self,
-                   "callbacks": [(event, cb.to_literal()) for event, cb in self._callbacks],
-                   "type": self.__class__.__name__,
-                   "command": getattr(self, "command", None),
-                   "suppress_errors": getattr(self, "suppress_errors", False),
-                   "same_container": getattr(self, "same_container", constants.SameContainer.INHERIT)
-                   },
-                **({"stop_on_error":self.stop_on_error} if isinstance(self, Serial) else {})
-                }
+        return {
+            **self.user_set,
+            **{"__env__" + key: value for key, value in self.env.items()},
+            **{
+                "id": self,
+                "callbacks": [
+                    (event, cb.to_literal()) for event, cb in self._callbacks
+                ],
+                "type": self.__class__.__name__,
+                "command": getattr(self, "command", None),
+                "suppress_errors": getattr(self, "suppress_errors", False),
+                "same_container": getattr(
+                    self, "same_container", constants.SameContainer.INHERIT
+                ),
+            },
+            **(
+                {"stop_on_error": self.stop_on_error}
+                if isinstance(self, Serial)
+                else {}
+            ),
+        }
 
     def serialize(self, pretty=False):
-
         def validate_env(node):
             for key, value in node.env.items():
                 if not isinstance(key, str):
-                    raise TypeError(f"{node} has {type(key).__name__} in env key when str is required")
+                    raise TypeError(
+                        f"{node} has {type(key).__name__} in env key when str is required"
+                    )
                 if not isinstance(value, str):
-                    raise TypeError(f"{node} has {type(value).__name__} in env value for {key} when str is required")
+                    raise TypeError(
+                        f"{node} has {type(value).__name__} in env value for {key} when str is required"
+                    )
 
-        res = {"edges": [],
-               "nodes": [],
-               "images": self.repo.images,
-               "token": self.token,
-               "autorun": self._autorun,
-               "sleep_when_done": self._sleep_when_done}
+        res = {
+            "edges": [],
+            "nodes": [],
+            "images": self.repo.images,
+            "token": self.token,
+            "autorun": self._autorun,
+            "sleep_when_done": self._sleep_when_done,
+        }
         queue = collections.deque([self])
         while queue:
             node = queue.popleft()
             validate_env(node)
             node._pull()
-            res["nodes"].append({k: v for k, v in node.describe().items() if v is not None})
+            res["nodes"].append(
+                {k: v for k, v in node.describe().items() if v is not None}
+            )
 
             for name, child in node.children.items():
                 queue.append(child)
@@ -295,11 +360,15 @@ class Node:
                     return o._id
                 except AttributeError:
                     return o
+
         if pretty:
             import pprint
+
             return pprint.pformat(res)
         output = json.dumps(res, cls=NodeEncoder)
-        return base64.b64encode(gzip.compress(output.encode(), compresslevel=3)).decode()
+        return base64.b64encode(
+            gzip.compress(output.encode(), compresslevel=3)
+        ).decode()
 
     @staticmethod
     def deserialize(string):
@@ -308,11 +377,13 @@ class Node:
         nodes = {i["id"]: load_node(**i) for i in data["nodes"]}
 
         for i in data["nodes"]:
-            for event, cb_literal in i.get('callbacks', []):
+            for event, cb_literal in i.get("callbacks", []):
                 cb, cb_args = cb_literal
-                kwargs = {k: nodes[cb_args[k]] for k in cb_args.get('__node_args__', [])}
+                kwargs = {
+                    k: nodes[cb_args[k]] for k in cb_args.get("__node_args__", [])
+                }
                 cb = callback.base(cb, **kwargs)
-                nodes[i['id']]._callbacks.append((event, cb))
+                nodes[i["id"]]._callbacks.append((event, cb))
 
         for parent, child, name in data["edges"]:
             nodes[parent][name] = nodes[child]
@@ -356,46 +427,80 @@ class Node:
                 node = node.parent
         return None
 
-    def launch_local(self, tags=None, title=None, use_shell=True,
-                     retention=7, run=False, sleep_when_done=False,
-                     prebuild_images=False):
+    def launch_local(
+        self,
+        tags=None,
+        title=None,
+        use_shell=True,
+        retention=7,
+        run=False,
+        sleep_when_done=False,
+        prebuild_images=False,
+    ):
         self._build(
-            build_mode=constants.BuildMode.LOCAL, tags=tags, title=title,
-            use_shell=use_shell, retention=retention, run=run,
-            sleep_when_done=sleep_when_done, prebuild_images=prebuild_images
+            build_mode=constants.BuildMode.LOCAL,
+            tags=tags,
+            title=title,
+            use_shell=use_shell,
+            retention=retention,
+            run=run,
+            sleep_when_done=sleep_when_done,
+            prebuild_images=prebuild_images,
         )
 
-    def launch_cloud(self, tags=None, title=None, use_shell=True,
-                     retention=7, run=False, sleep_when_done=False,
-                     prebuild_images=False):
+    def launch_cloud(
+        self,
+        tags=None,
+        title=None,
+        use_shell=True,
+        retention=7,
+        run=False,
+        sleep_when_done=False,
+        prebuild_images=False,
+    ):
         self._build(
-            build_mode=constants.BuildMode.DEPLOY_TO_CLOUD, tags=tags,
-            title=title, use_shell=use_shell, retention=retention, run=run,
-            sleep_when_done=sleep_when_done, prebuild_images=prebuild_images
+            build_mode=constants.BuildMode.DEPLOY_TO_CLOUD,
+            tags=tags,
+            title=title,
+            use_shell=use_shell,
+            retention=retention,
+            run=run,
+            sleep_when_done=sleep_when_done,
+            prebuild_images=prebuild_images,
         )
 
-    def _build(self, build_mode=constants.BuildMode.LOCAL,
-              tags=None, title=None, use_shell=True,
-              prebuild_images=False,
-              retention=7, run=False, sleep_when_done=False):
+    def _build(
+        self,
+        build_mode=constants.BuildMode.LOCAL,
+        tags=None,
+        title=None,
+        use_shell=True,
+        prebuild_images=False,
+        retention=7,
+        run=False,
+        sleep_when_done=False,
+    ):
         if self.image is None:
             self.image = image_mod.Image()
 
         if build_mode != constants.BuildMode.LOCAL or prebuild_images:
-            image_mod.make_all(self, push_to_cloud=build_mode != constants.BuildMode.LOCAL)
+            image_mod.make_all(
+                self, push_to_cloud=build_mode != constants.BuildMode.LOCAL
+            )
 
         self._autorun = run
         self._sleep_when_done = sleep_when_done
 
         from conducto.internal import build
+
         return build.build(self, build_mode, tags, title, use_shell, retention)
 
-    def pretty(self):
+    def pretty(self, strict=True):
         buf = []
-        self._pretty("", "", "", buf)
+        self._pretty("", "", "", buf, strict)
         return "\n".join(buf)
 
-    def _pretty(self, node_prefix, child_prefix, index_str, buf):
+    def _pretty(self, node_prefix, child_prefix, index_str, buf, strict):
         """
         Draw pretty representation of the node pipeline, using ASCII box-drawing
         characters.
@@ -408,12 +513,12 @@ class Node:
           └─2 Second   "echo 'I run last.'"
         """
         if isinstance(self, Exec):
-            node_str = f"{log.format(self.name, color='cyan')}   {self.expanded_command()}"
+            node_str = f"{log.format(self.name, color='cyan')}   {self.expanded_command(strict)}"
             node_str = node_str.strip().replace("\n", "\\n")
         else:
-            node_str = log.format(self.name, color='blue')
+            node_str = log.format(self.name, color="blue")
         buf.append(f"{node_prefix}{index_str}{node_str}")
-        length_of_length = len(str(len(self.children)-1))
+        length_of_length = len(str(len(self.children) - 1))
         for i, node in enumerate(self.children.values()):
             if isinstance(self, Parallel):
                 new_index_str = " "
@@ -426,14 +531,15 @@ class Node:
             else:
                 this_node_prefix = f"{child_prefix}├─"
                 this_child_prefix = f"{child_prefix}│ "
-            node._pretty(this_node_prefix, this_child_prefix, new_index_str, buf)
-
+            node._pretty(
+                this_node_prefix, this_child_prefix, new_index_str, buf, strict
+            )
 
 
 class Exec(Node):
-    '''
+    """
     A node that contains an executable command
-    '''
+    """
 
     __slots__ = ("command",)
 
@@ -449,46 +555,74 @@ class Exec(Node):
     def append_child(self, node):
         raise NotImplementedError("Exec nodes have no children")
 
-    def expanded_command(self):
-        output = self.command
-        if "__conducto" in output:
+    def expanded_command(self, strict=True):
+        if "__conducto" in self.command:
             img = self.image
+
+            if not strict and img is None:
+                return self.command
 
             context = img.context
 
-            if '//' in output and context is None and img.context_url:
-                context = re.search("__conducto_path:(.*?):endpath__", output).group(1).split('//')[0]
+            if "//" in self.command and context is None and img.context_url:
+                context = (
+                    re.search("__conducto_path:(.*?):endpath__", self.command)
+                    .group(1)
+                    .split("//")[0]
+                )
 
             def repl(match):
                 if context is None:
-                    raise ValueError(f"Node must be in Image with .context or a valid .context_url set. Node={self}. Image={img.to_dict()}")
+                    raise ValueError(
+                        f"Node must be in Image with .context or a valid .context_url set. Node={self}. Image={img.to_dict()}"
+                    )
                 return os.path.relpath(match.group(1), context)
 
-            output = re.sub("__conducto_path:(.*?):endpath__", repl, output)
-        return output
+            return re.sub("__conducto_path:(.*?):endpath__", repl, self.command)
+        else:
+            return self.command
+
 
 class Parallel(Node):
-    'A list of commands executed in Parallel - a branch node.'
+    "A list of commands executed in Parallel - a branch node."
     pass
 
 
 class Serial(Node):
-    '''
+    """
     A list of commands executed in Serial, kind of like "begin" in Scheme.
     Its children get executed one after another.
-    '''
+    """
+
     __slots__ = ["stop_on_error"]
 
     def __init__(
-            self, *, env=None, skip=False, name=None, cpu=None, gpu=None,
-            mem=None, requires_docker=None,
-            stop_on_error=True, suppress_errors=False,
-            same_container=constants.SameContainer.INHERIT,
-            image: typing.Union[str, image_mod.Image] = None,
-            image_name=None):
+        self,
+        *,
+        env=None,
+        skip=False,
+        name=None,
+        cpu=None,
+        gpu=None,
+        mem=None,
+        requires_docker=None,
+        stop_on_error=True,
+        suppress_errors=False,
+        same_container=constants.SameContainer.INHERIT,
+        image: typing.Union[str, image_mod.Image] = None,
+        image_name=None,
+    ):
         super().__init__(
-            env=env, skip=skip, name=name, cpu=cpu, gpu=gpu, mem=mem,
-            requires_docker=requires_docker, suppress_errors=suppress_errors,
-            same_container=same_container, image=image, image_name=image_name
+            env=env,
+            skip=skip,
+            name=name,
+            cpu=cpu,
+            gpu=gpu,
+            mem=mem,
+            requires_docker=requires_docker,
+            suppress_errors=suppress_errors,
+            same_container=same_container,
+            image=image,
+            image_name=image_name,
         )
         self.stop_on_error = stop_on_error

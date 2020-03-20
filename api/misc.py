@@ -7,6 +7,7 @@ from ..shared import log
 
 async def connect_to_pipeline(token, pipeline_id):
     import websockets
+
     pgw_url = api.Config().get_url()
     pgw_url = re.sub("^http", "ws", pgw_url) + "/pgw"
 
@@ -23,12 +24,14 @@ async def connect_to_pipeline(token, pipeline_id):
         try:
             websocket = await websockets.connect(uri, extra_headers=header)
         except (
-                websockets.ConnectionClosedError,
-                websockets.InvalidStatusCode,
-                socket.gaierror,
+            websockets.ConnectionClosedError,
+            websockets.InvalidStatusCode,
+            socket.gaierror,
         ) as e:
-            if getattr(e, 'status_code', None) == 403:
-                raise PermissionError("You are not permitted to connect to this pipeline.")
+            if getattr(e, "status_code", None) == 403:
+                raise PermissionError(
+                    "You are not permitted to connect to this pipeline."
+                )
             log.debug(f"cannot connect to pgw ... waiting {i}")
             await asyncio.sleep(min(3.0, (2 ** i) / 8))
             continue

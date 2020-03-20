@@ -1,4 +1,10 @@
+import os
 from . import pipeline
+from .shared import types as t
+
+
+def env_bool(key):
+    return t.Bool(os.getenv(key))
 
 
 def mkdirs(baseNode, path, nodeType=None):
@@ -12,7 +18,9 @@ def mkdirs(baseNode, path, nodeType=None):
     return curr
 
 
-def makenestednodes(baseNode, values, func, makeLeafNode=False, sort=True, reverse=False, nodeType=None):
+def makenestednodes(
+    baseNode, values, func, makeLeafNode=False, sort=True, reverse=False, nodeType=None
+):
     if sort:
         values = sorted(values, reverse=reverse)
 
@@ -33,8 +41,15 @@ def makeyyyymmnodes(baseNode, yyyymms, makeLeafNode=False, reverse=True, nodeTyp
         else:
             return "%s/%s" % (str(yyyymm)[:4], yyyymm)
 
-    return makenestednodes(baseNode, yyyymms, pathFunc, makeLeafNode=makeLeafNode, sort=True, reverse=reverse,
-                           nodeType=nodeType)
+    return makenestednodes(
+        baseNode,
+        yyyymms,
+        pathFunc,
+        makeLeafNode=makeLeafNode,
+        sort=True,
+        reverse=reverse,
+        nodeType=nodeType,
+    )
 
 
 def makedatenodes(baseNode, dates, makeLeafNode=False, reverse=True, nodeType=None):
@@ -49,5 +64,12 @@ def makedatenodes(baseNode, dates, makeLeafNode=False, reverse=True, nodeType=No
         else:
             return "%s/%s/%s" % (str(date)[:4], str(date)[:7], str(date))
 
-    return makenestednodes(baseNode, dates, pathFunc, makeLeafNode=makeLeafNode, sort=True, reverse=reverse,
-                           nodeType=nodeType)
+    return makenestednodes(
+        baseNode,
+        dates,
+        pathFunc,
+        makeLeafNode=makeLeafNode,
+        sort=True,
+        reverse=reverse,
+        nodeType=nodeType,
+    )

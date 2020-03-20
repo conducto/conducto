@@ -5,6 +5,7 @@ from . import types as t
 class Control:
     ERASE_LINE = "\033[K"
 
+
 class Color:
     GRAY = 30
     RED = 31
@@ -25,24 +26,23 @@ class Color:
 
     MAP = {
         # Short versions
-        "a"     : GRAY,
-        "r"     : RED,
-        "g"     : GREEN,
-        "y"     : YELLOW,
-        "b"     : BLUE,
-        "p"     : PURPLE,
-        "c"     : CYAN,
-        "t"     : TRUEWHITE,
-
+        "a": GRAY,
+        "r": RED,
+        "g": GREEN,
+        "y": YELLOW,
+        "b": BLUE,
+        "p": PURPLE,
+        "c": CYAN,
+        "t": TRUEWHITE,
         # full names
-        "gray"  : GRAY,
-        "red"   : RED,
-        "green" : GREEN,
+        "gray": GRAY,
+        "red": RED,
+        "green": GREEN,
         "yellow": YELLOW,
-        "blue"  : BLUE,
+        "blue": BLUE,
         "purple": PURPLE,
-        "cyan"  : CYAN,
-        "white" : TRUEWHITE,
+        "cyan": CYAN,
+        "white": TRUEWHITE,
     }
 
     # Use RANDOM to select a random color that is deterministic based on the input string
@@ -53,7 +53,9 @@ class Color:
         try:
             return Color.MAP[color.lower()]
         except KeyError:
-            msg = "Unrecognized color code: {}. Known colors are: {}".format(color, Color.MAP)
+            msg = "Unrecognized color code: {}. Known colors are: {}".format(
+                color, Color.MAP
+            )
             raise Exception(msg)
 
 
@@ -78,20 +80,24 @@ def format(s, color=None, bold=True, underline=False, dim=False):
     if color is True:
         color = Color.CYAN
 
-    elif color == Color.RANDOM or str(color).lower() == 'random':
+    elif color == Color.RANDOM or str(color).lower() == "random":
         # Gray looks disabled and shouldn't be included in the allows random colors.
         randomColors = sorted({v for v in Color.MAP.values() if v != Color.GRAY})
-        i = int(hashlib.md5(str(s).encode('utf-8')).hexdigest(), 16)
+        i = int(hashlib.md5(str(s).encode("utf-8")).hexdigest(), 16)
         color = randomColors[i % len(randomColors)]
 
     elif isinstance(color, str):
         color = Color.Get(color)
 
     codes = []
-    if bold: codes.append("1")
-    if dim: codes.append("2")
-    if underline: codes.append("4")
-    if color: codes.append(str(color))
+    if bold:
+        codes.append("1")
+    if dim:
+        codes.append("2")
+    if underline:
+        codes.append("4")
+    if color:
+        codes.append(str(color))
     if not codes:
         return s
     codeStr = ";".join(codes)
@@ -99,13 +105,16 @@ def format(s, color=None, bold=True, underline=False, dim=False):
 
 
 def strip_format(string):
-    regex = re.compile("""
+    regex = re.compile(
+        """
         \033\[             # Start with '\033['
         (\d);              # '0;' is regular, '1;' is bold
         (\d+)m             # The number + 'm' is the end of the color sequence
         (.*?)              # This is the text that is colorized
         \033\[(?:0|0;0)m   # End with returning it to normal
-    """, re.DOTALL | re.VERBOSE)
+    """,
+        re.DOTALL | re.VERBOSE,
+    )
     return re.sub(regex, "\\3", string)
 
 
@@ -134,11 +143,11 @@ class _utils(object):
     ]
     NAMES = {
         DEBUG: "DEBUG",
-        INFO : "INFO",
-        LOG  : "LOG",
-        WARN : "WARN",
+        INFO: "INFO",
+        LOG: "LOG",
+        WARN: "WARN",
         ERROR: "ERROR",
-        CRIT : "CRIT",
+        CRIT: "CRIT",
     }
     REVERSE_NAMES = {v: k for k, v in NAMES.items()}
 
@@ -203,7 +212,11 @@ class _utils(object):
                 # Extract log level value from args/kwargs and normalize it
                 if len(args) > position:
                     orig_val = args[position]
-                    args = args[:position] + (_utils.normalize(orig_val),) + args[position + 1:]
+                    args = (
+                        args[:position]
+                        + (_utils.normalize(orig_val),)
+                        + args[position + 1 :]
+                    )
                 if key in kwargs:
                     orig_val = kwargs[key]
                     kwargs[key] = _utils.normalize(orig_val)
@@ -247,8 +260,12 @@ class base_logger(object):
 
     def __init__(self, level=None):
         self.level = level
-        self.call_defaults = dict()  # defaults for certain keyword arguments to __call__
-        self.format_defaults = dict()  # defaults for certain keyword arguments to _format
+        self.call_defaults = (
+            dict()
+        )  # defaults for certain keyword arguments to __call__
+        self.format_defaults = (
+            dict()
+        )  # defaults for certain keyword arguments to _format
         # self.memoized__call__ = memoized(self.__call__, strict=False)
 
     @staticmethod
@@ -351,33 +368,35 @@ class base_logger(object):
         specifying the `back` kwarg, for example.
 
         """
-        noscaff = kwargs.get('noscaff', False)
-        nomsg = kwargs.get('nomsg', False)
+        noscaff = kwargs.get("noscaff", False)
+        nomsg = kwargs.get("nomsg", False)
 
-        back = kwargs.get('back', 0)
-        notime = kwargs.get('notime', False)
-        nomem = kwargs.get('nomem', False)
-        noline = kwargs.get('noline', False)
-        noframe = kwargs.get('noframe', False)
-        nomethod = kwargs.get('nomethod', False) # TODO: Should default `False` for back-compat behavior?
-        nolevel = kwargs.get('nolevel', False)
+        back = kwargs.get("back", 0)
+        notime = kwargs.get("notime", False)
+        nomem = kwargs.get("nomem", False)
+        noline = kwargs.get("noline", False)
+        noframe = kwargs.get("noframe", False)
+        nomethod = kwargs.get(
+            "nomethod", False
+        )  # TODO: Should default `False` for back-compat behavior?
+        nolevel = kwargs.get("nolevel", False)
 
-        plain = kwargs.get('plain', False)
+        plain = kwargs.get("plain", False)
 
-        sindent = kwargs.get('sindent', 0)
-        timecolor = kwargs.get('timecolor', Color.GRAY)
-        memcolor = kwargs.get('memcolor', Color.GRAY)
-        framecolor = kwargs.get('framecolor', Color.TRUEWHITE)
-        nofw = kwargs.get('nofw', False)
+        sindent = kwargs.get("sindent", 0)
+        timecolor = kwargs.get("timecolor", Color.GRAY)
+        memcolor = kwargs.get("memcolor", Color.GRAY)
+        framecolor = kwargs.get("framecolor", Color.TRUEWHITE)
+        nofw = kwargs.get("nofw", False)
 
         # Message
         #########
-        level = kwargs.get('level', None)
-        mindent = kwargs.get('mindent', 2)
+        level = kwargs.get("level", None)
+        mindent = kwargs.get("mindent", 2)
         indentNewLines = kwargs.get("indentNewLines", None)
-        bold = kwargs.get('bold', True)
-        color = kwargs.get('color', None)
-        delim = kwargs.get('delim', ' ')
+        bold = kwargs.get("bold", True)
+        color = kwargs.get("color", None)
+        delim = kwargs.get("delim", " ")
 
         scaffoldPieces = []
         scaffold = io.StringIO()
@@ -385,7 +404,7 @@ class base_logger(object):
             # Construct scaffold
             if sindent > 0:
                 # Add scaffold indentation
-                scaffold.write(' ' * sindent)
+                scaffold.write(" " * sindent)
 
             # Add timestamp
             t = time.time()
@@ -404,22 +423,34 @@ class base_logger(object):
                 # In non-fixed-width mode we can choose to always show MB.
                 if cgroup_max_usage > 0:
                     memMarkUp = "%d/%d|%d/%dM" % (
-                    rss / 2 ** 20, vsize / 2 ** 20, cgroup_usage / 2 ** 20, cgroup_max_usage / 2 ** 20)
+                        rss / 2 ** 20,
+                        vsize / 2 ** 20,
+                        cgroup_usage / 2 ** 20,
+                        cgroup_max_usage / 2 ** 20,
+                    )
                 else:
                     memMarkUp = "%d/%dM" % (rss / 2 ** 20, vsize / 2 ** 20)
             else:
                 # In fixed-width mode we use whatever SI suffix allows us to keep the
                 # number short.
                 maxMem = max(vsize, cgroup_max_usage)
-                mult, unit = 1024 * 1024., "M"
+                mult, unit = 1024 * 1024.0, "M"
                 if maxMem > 9 * 1024 * 1024 * 1024:
-                    mult, unit = 1024 * 1024 * 1024., "G"
+                    mult, unit = 1024 * 1024 * 1024.0, "G"
                 if cgroup_max_usage > 0:
                     memMarkUp = "%4d/%4d|%4d/%4d%s" % (
-                    round(rss / mult), round(vsize / mult), round(cgroup_usage / mult), round(cgroup_max_usage / mult),
-                    unit)
+                        round(rss / mult),
+                        round(vsize / mult),
+                        round(cgroup_usage / mult),
+                        round(cgroup_max_usage / mult),
+                        unit,
+                    )
                 else:
-                    memMarkUp = "%4d/%4d%s" % (round(rss / mult), round(vsize / mult), unit)
+                    memMarkUp = "%4d/%4d%s" % (
+                        round(rss / mult),
+                        round(vsize / mult),
+                        unit,
+                    )
 
             if not plain and memcolor is not None:
                 memStr = format(memMarkUp, memcolor)
@@ -468,7 +499,9 @@ class base_logger(object):
                 frameMarkUp += "]"
 
                 if not plain and framecolor is not None:
-                    frameStr = format(frameMarkUp, framecolor, bold=False)  # do not bold the stack frame display
+                    frameStr = format(
+                        frameMarkUp, framecolor, bold=False
+                    )  # do not bold the stack frame display
                 else:
                     frameStr = frameMarkUp
                 scaffoldPieces.append(frameStr)
@@ -477,7 +510,7 @@ class base_logger(object):
                 scaffoldPieces.append("[{:<5s}]".format(base_logger.NAMES[level]))
 
             # Join the scaffold pieces
-            scaffold.write(' '.join(scaffoldPieces))
+            scaffold.write(" ".join(scaffoldPieces))
         scaffoldStr = scaffold.getvalue()
 
         message = io.StringIO()
@@ -485,14 +518,16 @@ class base_logger(object):
             # Construct message
             if mindent > 0:
                 # Add message indentation
-                message.write(' ' * mindent)
+                message.write(" " * mindent)
 
             if len(args) > 0:
                 # Write args
                 if plain or color is None:
                     message.write(delim.join(str(arg) for arg in args))
                 else:
-                    message.write(delim.join(format(arg, color=color, bold=bold) for arg in args))
+                    message.write(
+                        delim.join(format(arg, color=color, bold=bold) for arg in args)
+                    )
         messageStr = message.getvalue()
         if indentNewLines and 0:
             newKwargs = dict(kwargs)
@@ -571,34 +606,45 @@ class base_logger(object):
         GetLogLevel()        - Return the current class-wide log level
 
         """
-        if kwargs.pop('once', False):
-            return self.memoized__call__(*args, back=kwargs.pop("back", 0) + 2, **kwargs)
+        if kwargs.pop("once", False):
+            return self.memoized__call__(
+                *args, back=kwargs.pop("back", 0) + 2, **kwargs
+            )
 
         ############
         # Check instance for level (and kwargs for disagreement).  Pass level to
         # _format even if it was not passed to us.
         if self.level is None:
-            raise Exception("Attempted to write to a base_logger instance with no `level` attribute defined.")
+            raise Exception(
+                "Attempted to write to a base_logger instance with no `level` attribute defined."
+            )
 
-        if 'level' in kwargs:
-            if self.level != kwargs['level']:
-                raise ValueError("Attempted to log at level {} using a base_logger at level {}".
-                                 format(kwargs['level'], self.level))
+        if "level" in kwargs:
+            if self.level != kwargs["level"]:
+                raise ValueError(
+                    "Attempted to log at level {} using a base_logger at level {}".format(
+                        kwargs["level"], self.level
+                    )
+                )
         else:
             # Assign the correct level for the below check and passing to
             # _format.
-            kwargs['level'] = self.level
+            kwargs["level"] = self.level
 
         # Short-circuit based on level.
-        if base_logger.GetLogLevel() > kwargs['level']:
+        if base_logger.GetLogLevel() > kwargs["level"]:
             return ""
 
-        handle = sys.stderr if kwargs.pop('stderr', self.call_defaults.get('stderr', False)) else sys.stdout
-        nonewln = kwargs.pop('nonewln', self.call_defaults.get('nonewln', False))
+        handle = (
+            sys.stderr
+            if kwargs.pop("stderr", self.call_defaults.get("stderr", False))
+            else sys.stdout
+        )
+        nonewln = kwargs.pop("nonewln", self.call_defaults.get("nonewln", False))
 
         # Add one to `back` before passing to _format because we are a wrapper
         # around _format.
-        kwargs['back'] = kwargs.get('back', 0) + 1
+        kwargs["back"] = kwargs.get("back", 0) + 1
 
         # Check instance for _format kwarg defaults.
         for key, val in self.format_defaults.items():
@@ -610,11 +656,11 @@ class base_logger(object):
         # Write the output and return it.
         with self._LOCK:
             if self._IN_PROGRESS:
-                handle.write('\n')
+                handle.write("\n")
                 self._IN_PROGRESS = False
             handle.write(msg)
             if not nonewln:
-                handle.write('\n')
+                handle.write("\n")
             handle.flush()
             return msg
 
@@ -662,7 +708,9 @@ def getLogLevel(default=_utils.DEFAULT_LEVEL):
 ########################################
 def addVerbosity(parser):
     import optparse, argparse
+
     if isinstance(parser, optparse.OptionParser):
+
         def setr(option, opt_str, value, parser):
             if value.upper() in base_logger.REVERSE_NAMES:
                 value = base_logger.REVERSE_NAMES[value.upper()]
@@ -692,13 +740,36 @@ def addVerbosity(parser):
 
         default = getLogLevel()
 
-        grp = parser.add_option_group("Verbosity control. Log levels: {}".format(base_logger.NAMES))
-        grp.add_option('--loglevel', action="callback", callback=setr,
-                       help="Set logging verbosity by number or keyword. default: {}.".format(default), dest="loglevel",
-                       type=str, default=default)
-        grp.add_option('--verbose', '-v', action='callback', callback=decr, help="Increase logging verbosity")
-        grp.add_option('--quiet', '-q', action='callback', callback=incr, help="Decrease logging verbosity")
+        grp = parser.add_option_group(
+            "Verbosity control. Log levels: {}".format(base_logger.NAMES)
+        )
+        grp.add_option(
+            "--loglevel",
+            action="callback",
+            callback=setr,
+            help="Set logging verbosity by number or keyword. default: {}.".format(
+                default
+            ),
+            dest="loglevel",
+            type=str,
+            default=default,
+        )
+        grp.add_option(
+            "--verbose",
+            "-v",
+            action="callback",
+            callback=decr,
+            help="Increase logging verbosity",
+        )
+        grp.add_option(
+            "--quiet",
+            "-q",
+            action="callback",
+            callback=incr,
+            help="Decrease logging verbosity",
+        )
     elif isinstance(parser, argparse.ArgumentParser):
+
         class Setr(argparse.Action):
             def __call__(self, parser, namespace, values, option_string):
                 if values.upper() in base_logger.REVERSE_NAMES:
@@ -737,14 +808,28 @@ def addVerbosity(parser):
 
         default = getLogLevel()
 
-        grp = parser.add_argument_group("Verbosity control. Log levels: {}".format(base_logger.NAMES))
-        grp.add_argument('--loglevel', action=Setr,
-                         help="Set logging verbosity by number or keyword. default: {}.".format(default),
-                         dest="loglevel", default=default)
-        grp.add_argument('--verbose', '-v', action=Decr, help="Increase logging verbosity")
-        grp.add_argument('--quiet', '-q', action=Incr, help="Decrease logging verbosity")
+        grp = parser.add_argument_group(
+            "Verbosity control. Log levels: {}".format(base_logger.NAMES)
+        )
+        grp.add_argument(
+            "--loglevel",
+            action=Setr,
+            help="Set logging verbosity by number or keyword. default: {}.".format(
+                default
+            ),
+            dest="loglevel",
+            default=default,
+        )
+        grp.add_argument(
+            "--verbose", "-v", action=Decr, help="Increase logging verbosity"
+        )
+        grp.add_argument(
+            "--quiet", "-q", action=Incr, help="Decrease logging verbosity"
+        )
     else:
-        raise Exception("Cannot add verbosity options to parser of type: {}".format(type(parser)))
+        raise Exception(
+            "Cannot add verbosity options to parser of type: {}".format(type(parser))
+        )
 
 
 ########################################
@@ -753,6 +838,7 @@ def readVerbosity(opts):
     incrs = getattr(opts, "_vincr", 0)
     decrs = getattr(opts, "_vdecr", 0)
     base_logger.SetLogLevel(loglevel)
+
 
 def memUsedDetail():
     try:
@@ -766,7 +852,9 @@ def memUsedDetail():
     if os.path.exists(cgroup):
         try:
             cgroup_usage = int(open(cgroup + "/memory.memsw.usage_in_bytes").read())
-            cgroup_max_usage = int(open(cgroup + "/memory.memsw.max_usage_in_bytes").read())
+            cgroup_max_usage = int(
+                open(cgroup + "/memory.memsw.max_usage_in_bytes").read()
+            )
         except FileNotFoundError:
             cgroup_usage = int(open(cgroup + "/memory.usage_in_bytes").read())
             cgroup_max_usage = int(open(cgroup + "/memory.max_usage_in_bytes").read())
@@ -808,7 +896,7 @@ def getFileAndLine(back=0):
     if basename == "__init__.py":
         basename = os.path.basename(os.path.dirname(frameOfInterest[0])) + "/"
 
-    return (basename, frameOfInterest[1], frameOfInterest[2]) # (file, line, method)
+    return (basename, frameOfInterest[1], frameOfInterest[2])  # (file, line, method)
 
 
 # Set the default log level from the environment, if it is specified

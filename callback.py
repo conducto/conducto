@@ -1,5 +1,6 @@
 from . import pipeline
 
+
 class base:
     def __init__(self, name, **kwargs):
         self.name = name
@@ -14,6 +15,7 @@ class base:
             else:
                 d[k] = v
         return [self.name, d]
+
 
 def retry(max_num_retries):
     """
@@ -43,7 +45,6 @@ def retry_with_double_mem(max_num_retries):
     :return:
     """
     return base("retry_with_double_mem", max_num_retries=max_num_retries)
-
 
 
 def skip_some_errors(max_num_errors):
@@ -76,12 +77,18 @@ def slack(channel):
 
 
 def github_status_update(owner, repo, sha, access_token, state, **kwargs):
-    return base("github_status_update",
-                owner=owner, sha=sha,
-                repo=repo, access_token=access_token,
-                state=state, **kwargs)
+    return base(
+        "github_status_update",
+        owner=owner,
+        sha=sha,
+        repo=repo,
+        access_token=access_token,
+        state=state,
+        **kwargs
+    )
 
 
 def github_status_creator(owner, repo, sha, access_token):
     import functools
+
     return functools.partial(github_status_update, owner, repo, sha, access_token)

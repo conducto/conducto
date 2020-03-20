@@ -13,14 +13,15 @@ def get_tests(project):
     return {
         "app": ["unit_test", "code_quality", "coverage"],
         "backend": ["test_one", "failover", "scale"],
-        "monitoring": ["connectivity", "endpoints"]
+        "monitoring": ["connectivity", "endpoints"],
     }[project]
 
 
 def run_test(project, test):
     print(f"Running {test} test in {project}")
     import time
+
     for i in range(50):
-        time.sleep(.1)
+        time.sleep(0.1)
         print(".", end="", flush=True)
     print("\nDone!")

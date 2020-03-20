@@ -15,7 +15,7 @@ class GlueArgumentError(kwarg_exception.KwargException):
     defaultMessage = "Error constructing or parsing glue argument"
 
 
-#TODO (kzhang): Do we need `NO_DEFAULT` or can we use `inspect._empty`?
+# TODO (kzhang): Do we need `NO_DEFAULT` or can we use `inspect._empty`?
 NO_DEFAULT = "__no_default__"
 CALLEE_ARG = "__callee_arg__"
 MANUAL_ARG = "__manual_arg__"
@@ -23,9 +23,11 @@ DEFAULT_FROM_FUNC = "__default_from_func__"
 
 UNSET = object()
 
-if sys.version < '3.7':
-    # create a typing._GenericAlias that is good enough for our purposes.
-    typing._GenericAlias = None
+
+def is_collection_type(typ):
+    typeclasses = (typing.List[str].__class__, typing.List[int].__class__)
+    return isinstance(typ, typeclasses)
+
 
 class _Args(object):
     """
@@ -34,6 +36,7 @@ class _Args(object):
      - Providing a translation layer between command line formats and formats
        for calling the functions that use them
     """
+
     __slots__ = ["args", "helps", "helpStr", "ignore"]
 
     def __init__(self, args=None, helpStr=None):
@@ -66,19 +69,31 @@ class _Args(object):
 
             log.debug("Not adding:", arg)
             if type(arg) != type(existingArg):
-                log.warn("Found duplicated, and inconsistent, definition of {}.\n  {}\n  {}".format(arg.name, arg,
-                                                                                                       existingArg))
+                log.warn(
+                    "Found duplicated, and inconsistent, definition of {}.\n  {}\n  {}".format(
+                        arg.name, arg, existingArg
+                    )
+                )
             if arg.type != existingArg.type:
-                log.warn("Found duplicated, and inconsistent, definition of {}.\n  {}\n  {}".format(arg.name, arg,
-                                                                                                       existingArg))
+                log.warn(
+                    "Found duplicated, and inconsistent, definition of {}.\n  {}\n  {}".format(
+                        arg.name, arg, existingArg
+                    )
+                )
         else:
             pass
 
     def ignoreArgs(self, args):
         self.ignore |= set(args)
 
-    def addArgs(self, other, handleArgsWithNoDefaults=False, allowPositional=False, ignoreArgs=True,
-                checkForDuplicates=False):
+    def addArgs(
+        self,
+        other,
+        handleArgsWithNoDefaults=False,
+        allowPositional=False,
+        ignoreArgs=True,
+        checkForDuplicates=False,
+    ):
         if ignoreArgs:
             self.ignore |= other.ignore
 
@@ -90,7 +105,9 @@ class _Args(object):
                 if arg.positional:
                     raise Exception(
                         "Tried to add positional argument {}. Positional arguments can only be defined on for CLI use, should never be called from within another function.".format(
-                            arg.name))
+                            arg.name
+                        )
+                    )
 
             if handleArgsWithNoDefaults:
                 # If the Args are from a callee or for reading from the command
@@ -108,10 +125,12 @@ class _Args(object):
     def getCommandlineParser(self, **kwargs):
         width = termsize.getTerminalWidth()
         parser = argparse.ArgumentParser(
-            formatter_class=lambda prog: argparse.RawTextHelpFormatter(prog, max_help_position=width),
+            formatter_class=lambda prog: argparse.RawTextHelpFormatter(
+                prog, max_help_position=width
+            ),
             description=(self.helpStr or "").strip(),
-            fromfile_prefix_chars='@',
-            **kwargs
+            fromfile_prefix_chars="@",
+            **kwargs,
         )
 
         # Group arguments by destination
@@ -132,51 +151,63 @@ class _Args(object):
 
             if not arg.positional:
                 # allow hyphenated argument names in place of underscores where applicable
-                varargs = [f'--{name}' for name in {arg.name,  arg.name.replace('_', '-')}]
+                varargs = [
+                    f"--{name}" for name in {arg.name, arg.name.replace("_", "-")}
+                ]
                 if arg.short is not None:
                     varargs.append("-" + arg.short)
-                keywords = {'metavar': arg.metavar, 'help': helpMsg, 'dest': arg.dest}
+                keywords = {"metavar": arg.metavar, "help": helpMsg, "dest": arg.dest}
             else:
                 assert not arg.short
                 varargs = [arg.name]
-                keywords = {'metavar': arg.metavar, 'help': helpMsg}
+                keywords = {"metavar": arg.metavar, "help": helpMsg}
 
             keywords.update(arg._argparseKwargs)
             defaultGroup.add_argument(*varargs, **keywords)
 
         # Arguments with specified dest are assigned as mutually exclusive
         # argments that assign the argument name onto the dest.
-        destHelp = {"__method__": "glue.cmdline methods",
-                    "__node__": "glue.node methods"}
+        destHelp = {
+            "__method__": "glue.cmdline methods",
+            "__node__": "glue.node methods",
+        }
         for dest, arguments in sorted(byDest.items()):
             log.debug("Adding mutually exclusive group:", dest)
-            grp = parser.add_argument_group(destHelp.get(dest, "Options for specifying {}".format(dest)))
+            grp = parser.add_argument_group(
+                destHelp.get(dest, "Options for specifying {}".format(dest))
+            )
             exgrp = grp.add_mutually_exclusive_group()
 
             for arg in sorted(arguments, key=lambda x: x.name):
                 # allow hyphenated argument names in place of underscores where applicable
-                varargs = [f'--{name}' for name in {arg.name,  arg.name.replace('_', '-')}]
+                varargs = [
+                    f"--{name}" for name in {arg.name, arg.name.replace("_", "-")}
+                ]
                 if arg.short is not None:
                     varargs.append("-" + arg.short)
 
                 keywords = {
-                    'metavar': arg.metavar,
-                    'help': self.helpMsg(arg),
-                    'dest': arg.dest,
-                    'action': 'store_const',
-                    'const': arg.name,
+                    "metavar": arg.metavar,
+                    "help": self.helpMsg(arg),
+                    "dest": arg.dest,
+                    "action": "store_const",
+                    "const": arg.name,
                 }
                 keywords.update(arg._argparseKwargs)
                 exgrp.add_argument(*varargs, **keywords)
 
         return parser
 
-    def readCommandLine(self, argv: typing.Iterable[str], ignoreUnknown=False, **kwargs):
+    def readCommandLine(
+        self, argv: typing.Iterable[str], ignoreUnknown=False, **kwargs
+    ):
         if argv is None or not client_utils.isiterable(argv):
-            raise TypeError(f'Expecting `argv` to be `list[str]`, got: {argv} {type(argv)}')
+            raise TypeError(
+                f"Expecting `argv` to be `list[str]`, got: {argv} {type(argv)}"
+            )
         not_str = [arg for arg in argv if not isinstance(arg, str)]
         if not_str:
-            raise TypeError(f'Found non-str items in `argv`: {not_str}')
+            raise TypeError(f"Found non-str items in `argv`: {not_str}")
 
         output = collections.OrderedDict()
         parser = self.getCommandlineParser(**kwargs)
@@ -209,7 +240,11 @@ class _Args(object):
         return [arg.name for arg in self.args.values() if arg.default in include]
 
     def getKwargs(self):
-        return [arg.name for arg in self.args.values() if arg.default not in (NO_DEFAULT, CALLEE_ARG, MANUAL_ARG)]
+        return [
+            arg.name
+            for arg in self.args.values()
+            if arg.default not in (NO_DEFAULT, CALLEE_ARG, MANUAL_ARG)
+        ]
 
     def __len__(self):
         return len(self.args)
@@ -237,7 +272,9 @@ class _Args(object):
         for src, msg in self.helps[arg.name]:
             if arg.source is None:
                 continue
-            if msg is False:  # Setting help=False for an argument hides it from command line calls
+            if (
+                msg is False
+            ):  # Setting help=False for an argument hides it from command line calls
                 continue
 
             if log.info.applies():
@@ -286,7 +323,9 @@ class _FuncArgs(_Args):
         super(_FuncArgs, self).__init__()
 
     def __repr__(self):
-        return "<_FuncArgs: {}({})>".format(self.function.__name__, ", ".join(self.args))
+        return "<_FuncArgs: {}({})>".format(
+            self.function.__name__, ", ".join(self.args)
+        )
 
     @staticmethod
     def FromFunction(function):
@@ -296,56 +335,89 @@ class _FuncArgs(_Args):
         output = _FuncArgs(function)
 
         for name, param in inspect.signature(function).parameters.items():
-            output.addArgument(Base(name, default=param.default,
-                               defaultType=param.annotation))
+            output.addArgument(
+                Base(name, default=param.default, defaultType=param.annotation)
+            )
         return output
+
 
 # Certain python types do not have nice string-to-instance conversion,
 # so we use our own
-TYPE_WRAPPERS = {
-    bool: t.Bool,
-    datetime.date: t.Datetime_Date,
-    list: t.List
-}
+TYPE_WRAPPERS = {bool: t.Bool, datetime.date: t.Datetime_Date, list: t.List}
+
 
 def _wrap_type(typ):
     if typ in TYPE_WRAPPERS:
         return TYPE_WRAPPERS[typ]
-    elif isinstance(typ, typing.TypeVar): # un-specific type parameter, always parse as string
+    elif isinstance(
+        typ, typing.TypeVar
+    ):  # un-specific type parameter, always parse as string
         return str
-    elif isinstance(typ, typing._GenericAlias):
-        if typ.__origin__ != list: # TODO (kzhang): add more support
-            raise TypeError('When using types from `typing`, only typing.List[...] is supported right now.')
-        item_type = typ.__args__[0] # type arg inside typing.List[T]
+    elif is_collection_type(typ):
+        if typ.__origin__ not in (list, typing.List):  # TODO (kzhang): add more support
+            raise TypeError(
+                "When using types from `typing`, only typing.List[...] is supported right now."
+            )
+        item_type = typ.__args__[0]  # type arg inside typing.List[T]
         # Check for no inner iterables (excluding `str` of course)
         item_class = t.runtime_type(item_type)
         if item_class != str and issubclass(item_class, collections.abc.Iterable):
-            raise TypeError('Parameterized type, {}, with underlying type {}, for {} cannot be iterable'.format(
-                            item_type, item_class, typ))
+            raise TypeError(
+                "Parameterized type, {}, with underlying type {}, for {} cannot be iterable".format(
+                    item_type, item_class, typ
+                )
+            )
         # Recursively `_wrap_type` for special handling of parameterized types such as `bool` and `datetime.date`
         return t.List[_wrap_type(item_type)]
     elif t.is_NewType(typ):
         return _wrap_type(typ.__supertype__)
     return typ
 
+
 class Base(object):
     """
     Emphasize arguments as function arguments.
 
     """
-    __slots__ = ["name", "default", "defaultFunc", "source", "short", "positional", "type", "metavar", "dest",
-                 "realkey", "help"]
+
+    __slots__ = [
+        "name",
+        "default",
+        "defaultFunc",
+        "source",
+        "short",
+        "positional",
+        "type",
+        "metavar",
+        "dest",
+        "realkey",
+        "help",
+    ]
     _argparseKwargs = {}
 
-    def __init__(self, name, default=NO_DEFAULT, defaultFunc=None, help=None, defaultType=None,
-                 dest=None, positional=False, source=None, realkey=None, short=None, metavar=None):
+    def __init__(
+        self,
+        name,
+        default=NO_DEFAULT,
+        defaultFunc=None,
+        help=None,
+        defaultType=None,
+        dest=None,
+        positional=False,
+        source=None,
+        realkey=None,
+        short=None,
+        metavar=None,
+    ):
         self.name = name
         if default == inspect._empty:
             default = NO_DEFAULT
         if defaultType == inspect._empty:
             defaultType = None
         if defaultFunc is not None:
-            assert default == NO_DEFAULT, "You can't provide both a defaultFunc and a default."
+            assert (
+                default == NO_DEFAULT
+            ), "You can't provide both a defaultFunc and a default."
             self.default = DEFAULT_FROM_FUNC
         else:
             self.default = default
@@ -364,7 +436,7 @@ class Base(object):
             if inspect.isclass(self.type):
                 self.metavar = self.type.__name__.upper()
             # TODO (kzhang): This is the best check I can come up with for now
-            if isinstance(self.type, typing._GenericAlias):
+            if is_collection_type(self.type):
                 # TODO (kzhang): This may be too verbose, ok for now.
                 self.metavar = str(self.type)
         if metavar is not None:
@@ -436,8 +508,17 @@ class Base(object):
         retVal = self._formatCL(value)
         parsed = self._parseCL(retVal)
         if parsed != value:
-            log.warn(self.name, "was given value:", value, "({})".format(type(value)), ", is serialized to",
-                        retVal, " but it deserialized to", parsed, "({})".format(repr(parsed)))
+            log.warn(
+                self.name,
+                "was given value:",
+                value,
+                "({})".format(type(value)),
+                ", is serialized to",
+                retVal,
+                " but it deserialized to",
+                parsed,
+                "({})".format(repr(parsed)),
+            )
         return retVal
 
     def _formatCL(self, value):
@@ -458,7 +539,7 @@ class Base(object):
 
 
 class Toggle(Base):
-    __slots__ = Base.__slots__ + ['onValue', "_argparseKwargs"]
+    __slots__ = Base.__slots__ + ["onValue", "_argparseKwargs"]
 
     def __init__(self, *args, **kwargs):
         self.onValue = kwargs.pop("onValue", True)
@@ -474,8 +555,10 @@ class Toggle(Base):
             return base
         else:  # off branch
             if value != self.default:
-                log.warn(f"{self.name} was given value: {value} ({type(value)})"
-                         f"but it deserialized to {self.default} ({type(self.default)})")
+                log.warn(
+                    f"{self.name} was given value: {value} ({type(value)})"
+                    f"but it deserialized to {self.default} ({type(self.default)})"
+                )
             return ""
 
     def _parseCL(self, arg):

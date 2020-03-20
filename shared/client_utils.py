@@ -27,13 +27,16 @@ def makeIterable(o):
     return [o]
 
 
-class ExpectedOnlyOneError(AssertionError): pass
+class ExpectedOnlyOneError(AssertionError):
+    pass
 
 
-class GotZeroInsteadOfOneError(ExpectedOnlyOneError): pass
+class GotZeroInsteadOfOneError(ExpectedOnlyOneError):
+    pass
 
 
-class GotManyInsteadOfOneError(ExpectedOnlyOneError): pass
+class GotManyInsteadOfOneError(ExpectedOnlyOneError):
+    pass
 
 
 def getOnly(values, msg=None):
@@ -63,7 +66,7 @@ def getOnly(values, msg=None):
 
     """
     if msg is None:
-        msg = 'Expected exactly one value. Got {values}.'
+        msg = "Expected exactly one value. Got {values}."
         msg = msg.format(values=repr(values))
     elif callable(msg):
         msg = msg(values)
@@ -90,18 +93,20 @@ class CalledProcessError(Exception):
 
 def subprocess_run(cmd, *args, shell=False, msg="", capture_output=True, **kwargs):
     import subprocess
+
     if capture_output:
         # NOTE:  Python 3.6 does not support the capture_output parameter of
         # `subprocess.run`.  This translation supports 3.6 and later.
-        kwargs['stdout'] = subprocess.PIPE
-        kwargs['stderr'] = subprocess.PIPE
+        kwargs["stdout"] = subprocess.PIPE
+        kwargs["stderr"] = subprocess.PIPE
     try:
         result = subprocess.run(cmd, *args, shell=shell, **kwargs, check=True)
     except subprocess.CalledProcessError as e:
         if not shell:
             import pipes
+
             cmd = " ".join(pipes.quote(a) for a in cmd)
-        sep = "-"*80 + "\n"
+        sep = "-" * 80 + "\n"
         msg = f"""{msg}
 {sep}command: {cmd}
 {sep}returncode: {e.returncode}

@@ -20,13 +20,17 @@ def _validate_args(wrapper, *args, **kwargs):
 
     # TODO (kzhang): can target function have a `*args` or `**kwargs` in the
     # signature? If so, handle it.
-    invalid_params = [(name, str(param.kind)) for name, param in params.items()
-                      if param.kind != inspect.Parameter.POSITIONAL_OR_KEYWORD]
+    invalid_params = [
+        (name, str(param.kind))
+        for name, param in params.items()
+        if param.kind != inspect.Parameter.POSITIONAL_OR_KEYWORD
+    ]
     if invalid_params:
         raise TypeError(
-            f'Unsupported parameter types of '
-            f'{wrapper.function.__name__}: {invalid_params} - '
-            f'Only {str(inspect.Parameter.POSITIONAL_OR_KEYWORD)} is allowed.')
+            f"Unsupported parameter types of "
+            f"{wrapper.function.__name__}: {invalid_params} - "
+            f"Only {str(inspect.Parameter.POSITIONAL_OR_KEYWORD)} is allowed."
+        )
 
     # this will also validate against too-many or too-few arguments
     call_args = inspect.getcallargs(wrapper.function, *args, **kwargs)
@@ -35,9 +39,10 @@ def _validate_args(wrapper, *args, **kwargs):
         param_type = params[name].annotation
         if not t.is_instance(arg_value, param_type):
             raise TypeError(
-                f'Argument {name}={arg_value} {type(arg_value)} for '
-                f'function {wrapper.function.__name__} is not compatible '
-                f'with expected type: {param_type}')
+                f"Argument {name}={arg_value} {type(arg_value)} for "
+                f"function {wrapper.function.__name__} is not compatible "
+                f"with expected type: {param_type}"
+            )
 
 
 def lazy_shell(command, node_type, env=None, **exec_args) -> pipeline.Node:
@@ -64,24 +69,53 @@ def lazy_py(func, *args, **kwargs) -> pipeline.Node:
         if issubclass(return_type, pipeline.Exec):
             raise ValueError(
                 "Cannot call do.lazy_py() on a function that returns an Exec(). "
-                "Don't defer that Exec(), just do it.")
+                "Don't defer that Exec(), just do it."
+            )
 
-        env = exec_params.pop('env', {})
-        return lazy_shell(wrapper.to_command(*args, **kwargs), return_type, env, **exec_params)
+        env = exec_params.pop("env", {})
+        return lazy_shell(
+            wrapper.to_command(*args, **kwargs), return_type, env, **exec_params
+        )
     else:
         return pipeline.Exec(wrapper.to_command(*args, **kwargs), **exec_params)
 
 
-def meta(func=None, *, mem=None, cpu=None, gpu=None, env=None, image=None,
-         requires_docker=None, title=None, tags=None):
+def meta(
+    func=None,
+    *,
+    mem=None,
+    cpu=None,
+    gpu=None,
+    env=None,
+    image=None,
+    requires_docker=None,
+    title=None,
+    tags=None,
+):
     if func is None:
-        return functools.partial(meta, mem=mem, cpu=cpu, gpu=gpu, image=image,
-                                 env=env, title=title,
-                                 tags=tags, requires_docker=requires_docker)
+        return functools.partial(
+            meta,
+            mem=mem,
+            cpu=cpu,
+            gpu=gpu,
+            image=image,
+            env=env,
+            title=title,
+            tags=tags,
+            requires_docker=requires_docker,
+        )
 
     func._conducto_wrapper = _Wrapper(
-        func, mem=mem, cpu=cpu, gpu=gpu, env=env, title=title, tags=tags,
-        image=image, requires_docker=requires_docker)
+        func,
+        mem=mem,
+        cpu=cpu,
+        gpu=gpu,
+        env=env,
+        title=title,
+        tags=tags,
+        image=image,
+        requires_docker=requires_docker,
+    )
     return func
 
 
@@ -90,9 +124,18 @@ class NodeMethodError(Exception):
 
 
 class _Wrapper(object):
-    def __init__(self, func,
-                 mem=None, cpu=None, gpu=None, env=None, title=None,
-                 image=None, tags=None, requires_docker=None):
+    def __init__(
+        self,
+        func,
+        mem=None,
+        cpu=None,
+        gpu=None,
+        env=None,
+        title=None,
+        image=None,
+        tags=None,
+        requires_docker=None,
+    ):
 
         if isinstance(func, staticmethod):
             self.function = func.__func__
@@ -102,8 +145,12 @@ class _Wrapper(object):
         self.callFunc = func
 
         self.exec_params = {
-            "mem": mem, "cpu": cpu, "gpu": gpu, "env": env,
-            "image": image, "requires_docker": requires_docker,
+            "mem": mem,
+            "cpu": cpu,
+            "gpu": gpu,
+            "env": env,
+            "image": image,
+            "requires_docker": requires_docker,
         }
         self.title = title
         self.tags = api.Pipeline.sanitize_tags(tags)
@@ -133,23 +180,31 @@ class _Wrapper(object):
 
     def to_command(self, *args, **kwargs):
         abspath = os.path.abspath(inspect.getfile(self.callFunc))
-        parts = ["conducto", f"__conducto_path:{abspath}:endpath__",
-                 self.callFunc.__name__]
+        parts = [
+            "conducto",
+            f"__conducto_path:{abspath}:endpath__",
+            self.callFunc.__name__,
+        ]
 
         import subprocess
+
         PIPE = subprocess.PIPE
-        out, err = subprocess.Popen('git rev-parse --show-toplevel', shell=True, stdout=PIPE, stderr=PIPE).communicate()
-        if err.decode('utf-8').rstrip() != 'fatal: not a git repository (or any of the parent directories): .git':
-            out = out.decode('utf-8').rstrip()
-            parts[1] = parts[1].replace(out, out + '/')
+        out, err = subprocess.Popen(
+            "git rev-parse --show-toplevel", shell=True, stdout=PIPE, stderr=PIPE
+        ).communicate()
+        if (
+            err.decode("utf-8").rstrip()
+            != "fatal: not a git repository (or any of the parent directories): .git"
+        ):
+            out = out.decode("utf-8").rstrip()
+            parts[1] = parts[1].replace(out, out + "/")
 
         sig = self.getSignature()
         bound = sig.bind(*args, **kwargs)
         for k, v in bound.arguments.items():
             if not client_utils.isiterable(v):
                 v = [v]
-            parts += ["--{}={}".format(
-                k, t.LIST_DELIM.join(map(t.serialize, v)))]
+            parts += ["--{}={}".format(k, t.LIST_DELIM.join(map(t.serialize, v)))]
         return " ".join(pipes.quote(part) for part in parts)
 
     def pretty(self):
@@ -170,8 +225,11 @@ class _Wrapper(object):
             bridge = ", "
         if kwargs:
             prettyParts.append(bridge)
-            prettyParts.append(", ".join(['{}={}'.format(
-                arg, repr(myargs[arg].default)) for arg in kwargs]))
+            prettyParts.append(
+                ", ".join(
+                    ["{}={}".format(arg, repr(myargs[arg].default)) for arg in kwargs]
+                )
+            )
 
         prettyParts.append(")")
 
@@ -193,7 +251,7 @@ class _Wrapper(object):
         if unknownKeys:
             msg = ["Missing argments for: {}".format(self.pretty())]
             for key in unknownKeys:
-                msg.append("  Please specify: {}".format(log.format(key, color='r')))
+                msg.append("  Please specify: {}".format(log.format(key, color="r")))
             # msg.append("Current state:")
             # msg.append(state.pretty(printif=lambda sv: sv.name in args.keys()))
             raise NodeMethodError("\n".join(msg))
@@ -203,11 +261,15 @@ class _Wrapper(object):
             log.warn(
                 "All manually passed keyword args must be used by the callee, "
                 "but {} had no use for: {}".format(
-                    self.pretty(), ", ".join(sorted(unusedKeys))))
+                    self.pretty(), ", ".join(sorted(unusedKeys))
+                )
+            )
             raise NodeMethodError(
                 "All manually passed keyword args must be used by the callee, "
                 "but {} had no use for: {}".format(
-                    self.pretty(), ", ".join(sorted(unusedKeys))))
+                    self.pretty(), ", ".join(sorted(unusedKeys))
+                )
+            )
 
         # direct gets, since these had better be in the state
         callKwargs = {name: kwargs[name] for name in argVars}
@@ -226,14 +288,15 @@ class _Wrapper(object):
 
     @staticmethod
     def get_or_create(func):
-        if hasattr(func, '_conducto_wrapper'):
-           return func._conducto_wrapper
+        if hasattr(func, "_conducto_wrapper"):
+            return func._conducto_wrapper
         else:
             return _Wrapper(func)
 
 
 def _get_common(tuples):
     from collections import defaultdict
+
     d = defaultdict(set)
     for k, v in tuples:
         if v is not None:
@@ -242,7 +305,9 @@ def _get_common(tuples):
 
 
 def simplify_attributes(root):
-    attributes = ['mem', 'cpu', 'gpu', 'image', 'requires_docker'] + [i for i in root.user_set if i.startswith('__env__')]
+    attributes = ["mem", "cpu", "gpu", "image", "requires_docker"] + [
+        i for i in root.user_set if i.startswith("__env__")
+    ]
 
     for node in root.stream(reverse=True):
         nodes = list(node.children.values()) + [node]
@@ -256,6 +321,7 @@ def simplify_attributes(root):
 
 def beautify(function, name, space):
     from conducto.shared.log import format, Color
+
     sig = inspect.signature(function)
 
     def parse_parameter(s):
@@ -263,10 +329,10 @@ def beautify(function, name, space):
         res.append(format(s.name))
         if s.annotation != inspect.Parameter.empty:
             use = inspect.formatannotation(s.annotation)
-            res.append(format(':' + use, dim=True))
+            res.append(format(":" + use, dim=True))
         if s.default != inspect.Parameter.empty:
-            res.append(format('=' + repr(s.default), dim=True))
-        return ''.join(res)
+            res.append(format("=" + repr(s.default), dim=True))
+        return "".join(res)
 
     def parse_return_annotation():
         if sig.return_annotation == inspect.Parameter.empty:
@@ -277,13 +343,17 @@ def beautify(function, name, space):
             return " -> " + format(res, color="purple")
 
     def parse_docstring():
-        if function.__doc__ is None: return ''
-        return '\n'.join(' '*4 + i for i in function.__doc__.split('\n'))
+        if function.__doc__ is None:
+            return ""
+        return "\n".join(" " * 4 + i for i in function.__doc__.split("\n"))
 
     add = space - len(name)
     name = format(name, color=Color.BLUE)
-    name = '    ' + name + ' ' * add
-    params = f'({", ".join(parse_parameter(p) for p in sig.parameters.values())})' + parse_return_annotation()
+    name = "    " + name + " " * add
+    params = (
+        f'({", ".join(parse_parameter(p) for p in sig.parameters.values())})'
+        + parse_return_annotation()
+    )
     return name + params + parse_docstring()
 
 
@@ -311,38 +381,58 @@ def _get_default_title(is_local, specifiedFuncName, default_method_name):
     args = sys.argv[:]
     try:
         # the cloud/local is shown in the icon, strip it here
-        args.remove('--local' if is_local else '--cloud')
+        args.remove("--local" if is_local else "--cloud")
     except ValueError:
         pass
 
     executable = os.path.basename(args[0])
-    if executable.startswith('python') or executable == 'conducto' or executable == '__main__.py':
+    if (
+        executable.startswith("python")
+        or executable == "conducto"
+        or executable == "__main__.py"
+    ):
         args = args[1:]
 
-    if default_method_name is not None and specifiedFuncName == default_method_name and specifiedFuncName not in args:
+    if (
+        default_method_name is not None
+        and specifiedFuncName == default_method_name
+        and specifiedFuncName not in args
+    ):
         args.insert(1, specifiedFuncName)
 
     # here is the default title
     return " ".join(pipes.quote(a) for a in args)
 
 
-def main(variables=None, default=None, argv=None,
-         env=None, cpu=None, gpu=None, mem=None, requires_docker=False,
-         image: typing.Union[None, str, image_mod.Image] = None
-         ):
+def main(
+    variables=None,
+    default=None,
+    argv=None,
+    env=None,
+    cpu=None,
+    gpu=None,
+    mem=None,
+    requires_docker=False,
+    image: typing.Union[None, str, image_mod.Image] = None,
+):
     # in case we ever add functionality where argv is an empty list
-    if argv is None: argv = list(sys.argv[1:])
+    if argv is None:
+        argv = list(sys.argv[1:])
     if variables is None:
         stack = inspect.stack()
         frame, path, _, source, _, _ = stack[1]
         log.debug("Reading locals from", source, "in", path)
         variables = dict(frame.f_locals)
-    methods = {name: obj for name, obj in variables.items()
-               if not name.startswith("_") and \
-               not inspect.isclass(obj) and callable(obj)}
+    methods = {
+        name: obj
+        for name, obj in variables.items()
+        if not name.startswith("_") and not inspect.isclass(obj) and callable(obj)
+    }
 
-    if '__all__' in variables:
-        methods = {func: methods[func] for func in variables['__all__'] if func in methods}
+    if "__all__" in variables:
+        methods = {
+            func: methods[func] for func in variables["__all__"] if func in methods
+        }
 
     returns_node = []
     doesnt_return_node = []
@@ -357,13 +447,23 @@ def main(variables=None, default=None, argv=None,
     spacing = 2 + max(len(i) for i in methods) if methods else 0
 
     def beautify_method_list(lst):
-        return '\n'.join(beautify(*i, space=spacing) for i in lst)
+        return "\n".join(beautify(*i, space=spacing) for i in lst)
 
-    titles = ["methods that return conducto pipelines", "other methods"] if returns_node else ["", "methods"]
-    returns_node = f"{titles[0]}:\n" + beautify_method_list(returns_node) if returns_node else ''
-    doesnt_return_node = f"{titles[1]}:\n" + beautify_method_list(doesnt_return_node) if doesnt_return_node else ''
+    titles = (
+        ["methods that return conducto pipelines", "other methods"]
+        if returns_node
+        else ["", "methods"]
+    )
+    returns_node = (
+        f"{titles[0]}:\n" + beautify_method_list(returns_node) if returns_node else ""
+    )
+    doesnt_return_node = (
+        f"{titles[1]}:\n" + beautify_method_list(doesnt_return_node)
+        if doesnt_return_node
+        else ""
+    )
 
-    valid_methods = returns_node + '\n' + doesnt_return_node
+    valid_methods = returns_node + "\n" + doesnt_return_node
 
     # if main is executed from __main__, some functions will have
     # __module__ == "__main__". For these, we need to set their name properly.
@@ -384,20 +484,25 @@ def main(variables=None, default=None, argv=None,
         if accepts_cloud:
             commands = "[--cloud] " + commands
 
-        node_usage = ' ' * (len(prog) + 8) + commands
+        node_usage = " " * (len(prog) + 8) + commands
     else:
         node_usage = ""
 
-    usage_message = f"{prog} [-h] <method> [< --arg1 val1 --arg2 val2 ...>]\n" \
-                    + f"{node_usage}\n" + valid_methods
+    usage_message = (
+        f"{prog} [-h] <method> [< --arg1 val1 --arg2 val2 ...>]\n"
+        + f"{node_usage}\n"
+        + valid_methods
+    )
 
     default_method_name = default.__name__ if default != None else None
 
     parser = argparse.ArgumentParser(prog=prog, usage=usage_message)
     if default is not None:
-        parser.add_argument('method', nargs='?', default=default.__name__, help=argparse.SUPPRESS)
+        parser.add_argument(
+            "method", nargs="?", default=default.__name__, help=argparse.SUPPRESS
+        )
     else:
-        parser.add_argument('method', help=argparse.SUPPRESS)
+        parser.add_argument("method", help=argparse.SUPPRESS)
 
     dispatchState, unknown = parser.parse_known_args(argv)
     dispatchState = vars(dispatchState)
@@ -416,29 +521,29 @@ def main(variables=None, default=None, argv=None,
     types = {}
 
     for param_name, sig in inspect.signature(callFunc).parameters.items():
-        _required =  sig.default == inspect.Parameter.empty
+        _required = sig.default == inspect.Parameter.empty
         args = ["--" + param_name]
         if "_" in param_name:
-            args.append('--' + param_name.replace('_', '-'))
+            args.append("--" + param_name.replace("_", "-"))
         if _required:
             default = inspect.Parameter.empty
         elif sig.default is None:
             default = None
         else:
-            default=t.serialize(sig.default)
+            default = t.serialize(sig.default)
 
         if sig.annotation != inspect.Parameter.empty:
-            types[param_name] = sig.annotation
+            types[param_name] = arg._wrap_type(sig.annotation)
         elif sig.default != inspect.Parameter.empty:
             types[param_name] = sig.default.__class__
         else:
             types[param_name] = str
 
-        if types[param_name] == bool:
+        if types[param_name] in (bool, t.Bool):
             group = parser.add_mutually_exclusive_group(required=_required)
-            group.add_argument(*args, dest=param_name, action='store_true')
-            negated = ['--no-'+a[2:] for a in args]
-            group.add_argument(*negated, dest=param_name, action='store_false')
+            group.add_argument(*args, dest=param_name, action="store_true")
+            negated = ["--no-" + a[2:] for a in args]
+            group.add_argument(*negated, dest=param_name, action="store_false")
             if default != None:
                 parser.set_defaults(**{param_name: default})
         else:
@@ -450,25 +555,35 @@ def main(variables=None, default=None, argv=None,
 
     if issubclass(return_type, pipeline.Node):
         if accepts_cloud:
-            parser.add_argument('--cloud', action='store_true')
-        parser.add_argument('--local', action='store_true')
-        parser.add_argument('--run', action='store_true')
-        parser.add_argument('--no-shell', action='store_true')
-        parser.add_argument('--no-clean', action='store_true')
-        parser.add_argument('--prebuild-images', action='store_true')
-        parser.add_argument('--sleep-when-done', action='store_true')
-        conducto_args = ["cloud", "local", "run", "no_shell", "no_clean", "prebuild_images", "sleep_when_done"]
+            parser.add_argument("--cloud", action="store_true")
+        parser.add_argument("--local", action="store_true")
+        parser.add_argument("--run", action="store_true")
+        parser.add_argument("--no-shell", action="store_true")
+        parser.add_argument("--no-clean", action="store_true")
+        parser.add_argument("--prebuild-images", action="store_true")
+        parser.add_argument("--sleep-when-done", action="store_true")
+        conducto_args = [
+            "cloud",
+            "local",
+            "run",
+            "no_shell",
+            "no_clean",
+            "prebuild_images",
+            "sleep_when_done",
+        ]
     else:
         conducto_args = []
 
     call_state = vars(parser.parse_args(argv))
-    call_state.pop('method')
+    call_state.pop("method")
 
-    conducto_state = {k:call_state.pop(k, None) for k in conducto_args}
+    conducto_state = {k: call_state.pop(k, None) for k in conducto_args}
 
-    call_state = {name: arg.Base(name, defaultType=types[name]).parseCL(value)
-                  for name, value in call_state.items()
-                  if name not in conducto_args and value != inspect.Parameter.empty}
+    call_state = {
+        name: arg.Base(name, defaultType=types[name]).parseCL(value)
+        for name, value in call_state.items()
+        if name not in conducto_args and value != inspect.Parameter.empty
+    }
 
     output = callFunc(**wrapper.getCallArgs(**call_state))
 
@@ -484,8 +599,9 @@ def main(variables=None, default=None, argv=None,
     if issubclass(return_type, pipeline.Node):
         if not isinstance(output, pipeline.Node):
             raise NodeMethodError(
-                f'Expected {callFunc.__name__} to return a Node, '
-                f'but instead it returned {repr(output)}')
+                f"Expected {callFunc.__name__} to return a Node, "
+                f"but instead it returned {repr(output)}"
+            )
 
         # Allow easier setting of attributes on any returned node. Most obviously
         # useful for env/image, but conceivable for the others to.
@@ -498,7 +614,9 @@ def main(variables=None, default=None, argv=None,
             if value is not None:
                 existing_value = getattr(output, key, None)
                 if existing_value is not None and existing_value != value:
-                    raise Exception(f"Trying to overwrite `{key}`={value} that is already set.")
+                    raise Exception(
+                        f"Trying to overwrite `{key}`={value} that is already set."
+                    )
                 setattr(output, key, value)
 
         # Read command-line args
@@ -516,15 +634,22 @@ def main(variables=None, default=None, argv=None,
                 log.log("BUILD_ONLY requested, and just finished building. Exiting.")
                 return
 
-            title = wrapper.title if wrapper.title != None \
-                else _get_default_title(is_local, specifiedFuncName, default_method_name)
+            title = (
+                wrapper.title
+                if wrapper.title != None
+                else _get_default_title(
+                    is_local, specifiedFuncName, default_method_name
+                )
+            )
             BM = constants.BuildMode
             output._build(
-                use_shell=not no_shell, title=title,
+                use_shell=not no_shell,
+                title=title,
                 tags=api.Pipeline.sanitize_tags(wrapper.tags),
                 prebuild_images=prebuild_images,
                 build_mode=BM.LOCAL if is_local else BM.DEPLOY_TO_CLOUD,
-                run=run, sleep_when_done=sleep_when_done
+                run=run,
+                sleep_when_done=sleep_when_done,
             )
         else:
             if t.Bool(os.getenv("__RUN_BY_WORKER__")):
@@ -533,7 +658,7 @@ def main(variables=None, default=None, argv=None,
                 simplify_attributes(output)
                 s = output.serialize()
                 print(f"<__conducto_serialization>{s}</__conducto_serialization>\n")
-            print(output.pretty())
+            print(output.pretty(strict=False))
     elif output is not None:
         pprint.pprint(output)
 

@@ -11,6 +11,7 @@ def show(id):
     Attach to a an active pipeline.  If it is sleeping it will be awakened.
     """
     from . import api, shell_ui
+
     pl = constants.PipelineLifecycle
 
     pipeline_id = id
@@ -31,8 +32,10 @@ def show(id):
         serialization = f"{local_basedir}/logs/{pipeline_id}/{cpser}"
 
         if not os.path.exists(serialization):
-            m = f"The serialization for {pipeline_id} could not be found.  "\
+            m = (
+                f"The serialization for {pipeline_id} could not be found.  "
                 "This is likely because it is local to another computer."
+            )
             host = pipeline["meta"].get("hostname", None)
             if host != None:
                 m += f"  Try waking it from '{host}' with conducto show."
@@ -49,17 +52,18 @@ def show(id):
 
     def local_wakeup():
         from conducto.internal import build
+
         build.run_in_local_container(token, pipeline_id)
 
     if status in pl.active | pl.standby:
         func = lambda: 0
-        starthelp = 'Connecting'
+        starthelp = "Connecting"
     elif status in pl.local:
         func = local_wakeup
-        starthelp = 'Waking'
+        starthelp = "Waking"
     elif status in pl.cloud:
         func = cloud_wakeup
-        starthelp = 'Waking'
+        starthelp = "Waking"
     else:
         raise RuntimeError(
             f"Pipeline status {pipeline['status']} for {pipeline_id} is not recognized."
@@ -88,10 +92,7 @@ def main():
     # _thisfile, file_to_execute, *arguments = sys.argv
     args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help", "show", "debug"):
-        variables = {
-            "show": show,
-            "debug": debug,
-        }
+        variables = {"show": show, "debug": debug}
         do.main(variables=variables)
     else:
         file_to_execute, *arguments = args

@@ -18,9 +18,10 @@ class Manager:
 
         # send request for manager service to launch this
         headers = api_utils.get_auth_headers(token)
-        data = json.dumps({'pipeline_id': pipeline_id})
+        data = json.dumps({"pipeline_id": pipeline_id})
         response = request_utils.post(
-            self.url + f'/manager/run', headers=headers, data=data)
+            self.url + f"/manager/run", headers=headers, data=data
+        )
         api_utils.get_data(response)
 
 

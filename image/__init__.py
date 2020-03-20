@@ -30,7 +30,17 @@ class Status:
     DONE = "done"
     ERROR = "error"
     CANCELLED = "cancelled"
-    order = [PENDING, QUEUED, PULLING, BUILDING, EXTENDING, PUSHING, DONE, ERROR, CANCELLED]
+    order = [
+        PENDING,
+        QUEUED,
+        PULLING,
+        BUILDING,
+        EXTENDING,
+        PUSHING,
+        DONE,
+        ERROR,
+        CANCELLED,
+    ]
 
 
 class Repository:
@@ -63,7 +73,9 @@ class Repository:
 
     def add(self, image):
         if image.name in self.images and self.images[image.name] != image:
-            raise self.DuplicateImageError(f"{image.name} already present with a different definition in this repository")
+            raise self.DuplicateImageError(
+                f"{image.name} already present with a different definition in this repository"
+            )
         self.images[image.name] = image
 
     def merge(self, repo):
@@ -77,8 +89,18 @@ class Repository:
 class Image:
     PATH_PREFIX = ""
 
-    def __init__(self, image=None, *, dockerfile=None, context=None,
-        context_url=None, context_branch=None, reqs_py=None, name=None, pre_built=False):
+    def __init__(
+        self,
+        image=None,
+        *,
+        dockerfile=None,
+        context=None,
+        context_url=None,
+        context_branch=None,
+        reqs_py=None,
+        name=None,
+        pre_built=False,
+    ):
 
         if name is None:
             name = names.NameGenerator.name()
@@ -86,7 +108,9 @@ class Image:
         self.name = name
 
         if image is not None and dockerfile is not None:
-            raise ValueError(f"Cannot specify both image ({image}) and dockerfile ({dockerfile})")
+            raise ValueError(
+                f"Cannot specify both image ({image}) and dockerfile ({dockerfile})"
+            )
         if image is None and dockerfile is None:
             # Default to user's current version of python, if none is specified
             image = f"python:{sys.version_info[0]}.{sys.version_info[1]}"
@@ -95,11 +119,13 @@ class Image:
         if context is not None and context_url is not None:
             raise ValueError(
                 f"Cannot specify both context ({context}) "
-                f"and context_url ({context_url})")
+                f"and context_url ({context_url})"
+            )
         if context_url is not None and context_branch is None:
             raise ValueError(
                 f"If specifying context_url ({context_url}) must "
-                f"also specify context_branch ({context_branch})")
+                f"also specify context_branch ({context_branch})"
+            )
 
         self.image = image
         self.dockerfile = dockerfile
@@ -116,7 +142,9 @@ class Image:
                     self.context = self._get_abs_path(context)
             elif dockerfile is not None:
                 self.dockerfile = self._get_abs_path(dockerfile)
-                assert os.path.isfile(Image.PATH_PREFIX + self.dockerfile), f"Image(dockerfile={dockerfile}) must point to a file"
+                assert os.path.isfile(
+                    Image.PATH_PREFIX + self.dockerfile
+                ), f"Image(dockerfile={dockerfile}) must point to a file"
                 if context is None:
                     context = os.path.dirname(self.dockerfile)
                 self.context = self._get_abs_path(context)
@@ -146,7 +174,7 @@ class Image:
             "context_url": self.context_url,
             "context_branch": self.context_branch,
             "reqs_py": self.reqs_py,
-            "pre_built": self.pre_built
+            "pre_built": self.pre_built,
         }
 
     def to_raw_image(self):
@@ -187,7 +215,9 @@ class Image:
 
     @property
     def name_cloud_extended(self):
-        return f"263615699688.dkr.ecr.us-east-2.amazonaws.com/{self.name_local_extended}"
+        return (
+            f"263615699688.dkr.ecr.us-east-2.amazonaws.com/{self.name_local_extended}"
+        )
 
     @property
     def cloud_buildable(self):
@@ -275,7 +305,11 @@ class Image:
         """
         if self.dockerfile is not None:
             # Build the specified dockerfile
-            build_args = ["-f", Image.PATH_PREFIX + self.dockerfile, Image.PATH_PREFIX + self.context]
+            build_args = [
+                "-f",
+                Image.PATH_PREFIX + self.dockerfile,
+                Image.PATH_PREFIX + self.context,
+            ]
             stdin = None
         else:
             # Create dockerfile from stdin. Replace "-f <dockerfile> <context>"
@@ -285,29 +319,41 @@ class Image:
             else:
                 build_args = ["-"]
             lines = dockerfile.lines_for_build_dockerfile(
-                self.image, self.reqs_py, self.context_url, self.context_branch)
+                self.image, self.reqs_py, self.context_url, self.context_branch
+            )
             stdin = ("\n".join(lines)).encode()
 
         out, err = await async_utils.run_and_check(
-            "docker", "build", "-t", self.name_built, *build_args, input=stdin)
+            "docker", "build", "-t", self.name_built, *build_args, input=stdin
+        )
         return out, err
 
     async def _extend(self):
         # Writes Dockerfile that extends user-provided image.
         lines = dockerfile.lines_for_extend_dockerfile(self.name_built)
-        text = '\n'.join(lines).encode()
-        out, err = await async_utils.run_and_check("docker", "build", "-t", self.name_local_extended, "-", input=text)
+        text = "\n".join(lines).encode()
+        out, err = await async_utils.run_and_check(
+            "docker", "build", "-t", self.name_local_extended, "-", input=text
+        )
         return out, err
 
     async def _push(self):
         # If push_to_cloud, tag the local image and push it
-        await async_utils.run_and_check("docker", "tag", self.name_local_extended, self.name_cloud_extended)
-        out, err = await async_utils.run_and_check("docker", "push", self.name_cloud_extended)
+        await async_utils.run_and_check(
+            "docker", "tag", self.name_local_extended, self.name_cloud_extended
+        )
+        out, err = await async_utils.run_and_check(
+            "docker", "push", self.name_cloud_extended
+        )
         return out, err
 
     def needs_building(self):
-        return self.dockerfile is not None or self.context is not None or \
-            self.context_url is not None or self.reqs_py is not None
+        return (
+            self.dockerfile is not None
+            or self.context is not None
+            or self.context_url is not None
+            or self.reqs_py is not None
+        )
 
 
 def make_all(node: "pipeline.Node", push_to_cloud):
@@ -331,7 +377,10 @@ def make_all(node: "pipeline.Node", push_to_cloud):
 
     # Run all the builds concurrently.
     # TODO: limit simultaneous builds using an asyncio.Semaphore
-    futs = [img.make(push_to_cloud=push_to_cloud, callback=_print_status) for img in images.values()]
+    futs = [
+        img.make(push_to_cloud=push_to_cloud, callback=_print_status)
+        for img in images.values()
+    ]
 
     asyncio.get_event_loop().run_until_complete(asyncio.gather(*futs))
     print(f"\r{log.Control.ERASE_LINE}", end="", flush=True)
@@ -360,15 +409,22 @@ class HistoryEntry:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if exc_type is not None:
             if self.end is not None:
-                raise Exception(f"Error in <HistoryEntry status={self.status}> after it was finished")
+                raise Exception(
+                    f"Error in <HistoryEntry status={self.status}> after it was finished"
+                )
             if issubclass(exc_type, subprocess.CalledProcessError):
                 self.finish(stdout=exc_val.stdout, stderr=exc_val.stderr)
             else:
                 self.finish(stderr=traceback.format_exc())
 
     def to_dict(self):
-        return {"status": self.status, "start": self.start, "end": self.end,
-                "stdout": self.stdout, "stderr": self.stderr}
+        return {
+            "status": self.status,
+            "start": self.start,
+            "end": self.end,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+        }
 
 
 def _to_str(s):

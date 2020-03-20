@@ -1,6 +1,7 @@
 def cpu(arg):
     """CPU can be 0.25, 0.5, or a whole number. TODO: AWS does have a maximum but we don't enforce that yet"""
-    if arg is None: return None
+    if arg is None:
+        return None
     if not isinstance(arg, (float, int)):
         raise ValueError(f"Invalid value for cpu: {repr(arg)}")
     if arg > 0 and (arg == 0.25 or arg == 0.5 or int(arg) == arg):
@@ -10,7 +11,8 @@ def cpu(arg):
 
 def gpu(arg):
     """GPU can be integers 0-4 right now."""
-    if arg is None: return None
+    if arg is None:
+        return None
     if not isinstance(arg, int):
         raise ValueError(f"Invalid value for gpu: {repr(arg)}")
     if 0 <= arg <= 4:
@@ -19,7 +21,8 @@ def gpu(arg):
 
 
 def mem(arg):
-    if arg is None: return None
+    if arg is None:
+        return None
     if not isinstance(arg, (float, int)):
         raise ValueError(f"Invalid value for mem: {repr(arg)}")
     if arg > 0 and (arg == 0.5 or int(arg) == arg):
@@ -39,8 +42,10 @@ def requires_docker(arg):
 
 
 def exectime(arg):
-    if arg is None: return None
+    if arg is None:
+        return None
     import datetime
+
     if isinstance(arg, (datetime.time, datetime.datetime)):
         return arg
     raise ValueError(f"Invalid exectime: {repr(arg)}")

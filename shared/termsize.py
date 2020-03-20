@@ -1,8 +1,10 @@
 import functools, os, time
 
-_THROTTLE_PER_S = 10 # Cache the terminal size to throttle computations to 10 per second.
+_THROTTLE_PER_S = (
+    10  # Cache the terminal size to throttle computations to 10 per second.
+)
 
-# TODO (kzhang): We may not _need_ to throttle this. From what I read, getting 
+# TODO (kzhang): We may not _need_ to throttle this. From what I read, getting
 # the terminal size should take on the order of a few microseconds.
 @functools.lru_cache(1)
 def _getTerminalSize(_cur_time: int):
@@ -20,7 +22,8 @@ def _getTerminalSize(_cur_time: int):
     def ioctl_GWINSZ(fd):
         try:
             import fcntl, termios, struct
-            cr = struct.unpack('hh', fcntl.ioctl(fd, termios.TIOCGWINSZ, '1234'))
+
+            cr = struct.unpack("hh", fcntl.ioctl(fd, termios.TIOCGWINSZ, "1234"))
             if not isinstance(cr, tuple) or len(cr) != 2 or cr[0] <= 0 or cr[1] <= 0:
                 return
         except:
@@ -36,7 +39,7 @@ def _getTerminalSize(_cur_time: int):
         except:
             pass
     if not cr:
-        cr = (env.get('LINES', 25), env.get('COLUMNS', 80))
+        cr = (env.get("LINES", 25), env.get("COLUMNS", 80))
     if env.get("FORCE_WIDTH", None):
         cr = (cr[0], int(env.get("FORCE_WIDTH")))
     return int(cr[1]), int(cr[0])

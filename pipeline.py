@@ -266,7 +266,9 @@ class Node:
             self[path][new] = node
             return
         if name in self.children or node.root == self.root or node.root != node:
-            raise TreeError("Adding this node violates the integrity of the pipeline")
+            raise TreeError(
+                f"Adding node {name} violates the integrity of the pipeline"
+            )
         self.children[name] = node
 
         self.repo.merge(node.repo)

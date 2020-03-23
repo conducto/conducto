@@ -1,5 +1,6 @@
 import asyncio
 import functools
+import subprocess
 import inspect
 import os
 import pipes
@@ -180,24 +181,12 @@ class _Wrapper(object):
 
     def to_command(self, *args, **kwargs):
         abspath = os.path.abspath(inspect.getfile(self.callFunc))
+        ctxpath = image_mod.Image.get_contextual_path(abspath)
         parts = [
             "conducto",
-            f"__conducto_path:{abspath}:endpath__",
+            f"__conducto_path:{ctxpath}:endpath__",
             self.callFunc.__name__,
         ]
-
-        import subprocess
-
-        PIPE = subprocess.PIPE
-        out, err = subprocess.Popen(
-            "git rev-parse --show-toplevel", shell=True, stdout=PIPE, stderr=PIPE
-        ).communicate()
-        if (
-            err.decode("utf-8").rstrip()
-            != "fatal: not a git repository (or any of the parent directories): .git"
-        ):
-            out = out.decode("utf-8").rstrip()
-            parts[1] = parts[1].replace(out, out + "/")
 
         sig = self.getSignature()
         bound = sig.bind(*args, **kwargs)

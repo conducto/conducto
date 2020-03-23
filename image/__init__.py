@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import concurrent.futures
+import functools
 import hashlib
 import json
 import os
@@ -16,8 +17,8 @@ from . import dockerfile, names
 
 
 def relpath(path):
-    abspath = os.path.abspath(path)
-    return f"__conducto_path:{abspath}:endpath__"
+    ctxpath = Image.get_contextual_path(path)
+    return f"__conducto_path:{ctxpath}:endpath__"
 
 
 class Status:
@@ -139,15 +140,15 @@ class Image:
         if not self.pre_built:
             if image is not None:
                 if context is not None:
-                    self.context = self._get_abs_path(context)
+                    self.context = self.get_contextual_path(context)
             elif dockerfile is not None:
-                self.dockerfile = self._get_abs_path(dockerfile)
+                self.dockerfile = self.get_contextual_path(dockerfile)
                 assert os.path.isfile(
                     Image.PATH_PREFIX + self.dockerfile
                 ), f"Image(dockerfile={dockerfile}) must point to a file"
                 if context is None:
                     context = os.path.dirname(self.dockerfile)
-                self.context = self._get_abs_path(context)
+                self.context = self.get_contextual_path(context)
 
         self._py_binary = None
         self.history = [HistoryEntry(Status.PENDING)]
@@ -188,18 +189,57 @@ class Image:
         }
 
     @staticmethod
-    def _get_abs_path(p):
+    def get_contextual_path(p):
         op = os.path
-        if op.isabs(p):
-            return p
-        else:
+
+        # Translate relative paths as starting from the file where they were defined.
+        if not op.isabs(p):
             stack = traceback.extract_stack()
             from_file = stack[-3].filename
             pipeline = op.join(op.dirname(op.dirname(__file__)), "pipeline.py")
             if op.realpath(from_file) == op.realpath(pipeline):
                 from_file = stack[-4].filename
             from_dir = op.dirname(from_file)
-            return op.realpath(op.join(from_dir, p))
+            p = op.realpath(op.join(from_dir, p))
+
+        # Apply context specified from outside this container. Needed for recursive
+        # do.lazy_py calls inside an Image with ".context".
+        ctx = os.getenv("CONDUCTO_CONTEXT")
+        if ctx:
+            external, internal = ctx.split(":", -1)
+            if p.startswith(internal):
+                p = p.replace(internal, external, 1)
+
+        # If ".context" wasn't set, find the git root so that we could possibly use this
+        # inside an Image with ".context_url" set.
+        elif op.exists(p):
+            if op.isfile(p):
+                dirname = op.dirname(p)
+            else:
+                dirname = p
+            git_root = Image._get_git_root(dirname)
+            if git_root:
+                p = p.replace(git_root, git_root + "/", 1)
+
+        return p
+
+    @staticmethod
+    @functools.lru_cache(maxsize=None)
+    def _get_git_root(dirpath):
+        result = None
+
+        try:
+            PIPE = subprocess.PIPE
+            args = ["git", "-C", dirpath, "rev-parse", "--show-toplevel"]
+            out, err = subprocess.Popen(args, stdout=PIPE, stderr=PIPE).communicate()
+
+            nongit = "fatal: not a git repository"
+            if not err.decode("utf-8").rstrip().startswith(nongit):
+                result = out.decode("utf-8").rstrip()
+        except FileNotFoundError as e:
+            # log, but essentially pass
+            log.debug("no git installation found, skipping directory indication")
+        return result
 
     @property
     def name_built(self):

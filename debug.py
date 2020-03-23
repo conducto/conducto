@@ -1,8 +1,9 @@
 import asyncio
 import subprocess
-import os
+import tempfile
 import time
 from conducto.shared.log import format
+from conducto.shared import constants
 
 NULL = subprocess.DEVNULL
 PIPE = subprocess.PIPE
@@ -40,6 +41,7 @@ async def get_exec_node_queue_stats(id, node, timestamp=None):
                         "type": "RENDER_NODE_DETAILS",
                         "payload": {
                             "node": node,
+                            "includeHiddenEnv": True,
                             **({"base": timestamp} if timestamp is not None else {}),
                         },
                     }
@@ -65,16 +67,15 @@ async def get_exec_node_queue_stats(id, node, timestamp=None):
         raise Exception(f"Timed out getting node details. Are {id} and {node} correct?")
 
 
-def get_param(payload, param):
+def get_param(payload, param, default=None):
     for name, val in payload:
         if name == param:
             return val
-    if param == "Env":
-        return {}
+    return default
 
 
 def start_container(payload):
-    image_name = get_param(payload, "image")["name_built"]
+    image_name = get_param(payload, "image", default={})["name_built"]
     import random
 
     container_name = "conducto_debug_" + str(random.randrange(1 << 64))
@@ -82,13 +83,14 @@ def start_container(payload):
 
     options = []
     if get_param(payload, "requires_docker"):
-        res = subprocess.Popen(["which", "docker"], stdout=PIPE, stderr=NULL)
-        out, _ = res.communicate()
-        out = out.decode("utf-8").strip()
-        options.append(f"-v {out}:/usr/bin/docker")
         options.append("-v /var/run/docker.sock:/var/run/docker.sock")
     options.append(f'--cpus {get_param(payload, "cpu")}')
-    options.append(f'--memory {get_param(payload, "mem") * 1023**3}')
+    options.append(f'--memory {get_param(payload, "mem") * 1024**3}')
+
+    # TODO: Should actually pass these variables from manager, iff local
+    local_basedir = constants.ConductoPaths.get_local_base_dir()
+    remote_basedir = "/usr/conducto/.conducto"
+    options.append(f"-v {local_basedir}:{remote_basedir}")
 
     command = f"docker run {' '.join(options)} --name={container_name} {image_name} tail -f /dev/null "
     subprocess.Popen(command, shell=True)
@@ -97,54 +99,57 @@ def start_container(payload):
 
 
 def dump_command(container_name, command):
-    TEMPFILE = "__conducto_tempfile_command"
-    # if os.path.exists(TEMPFILE):
-    #     raise Exception("Could not create command tempfile")
-    with open(TEMPFILE, "w+") as f:
-        f.write(command)
+    with tempfile.NamedTemporaryFile() as tmp:
+        with open(tmp.name, "w") as f:
+            f.write(command)
 
-    subp = subprocess.Popen(
-        ["docker", "exec", container_name, "pwd"], stdout=PIPE, stderr=PIPE
-    )
-    out, _ = subp.communicate()
-    command_location = out.decode("utf-8").strip() + "/conducto.cmd"
+        out = subprocess.check_output(
+            ["docker", "exec", container_name, "pwd"], stderr=PIPE
+        )
+        command_location = out.decode("utf-8").strip() + "/conducto.cmd"
 
-    subp = subprocess.Popen(
-        f"docker cp {TEMPFILE} {container_name}:{command_location}", shell=True
-    )
-    subp.wait()
-    os.remove(TEMPFILE)
+        subprocess.check_call(
+            f"docker cp {tmp.name} {container_name}:{command_location}", shell=True
+        )
     execute_in(container_name, f"chmod u+x {command_location}")
     print(format(f"Node command located at {command_location}", color="red"))
     print(format(f"Execute with ./conducto.cmd", color="red"))
 
 
 def execute_in(container_name, command):
-    subprocess.Popen(f"docker exec {container_name} {command}", shell=True).wait()
+    subprocess.check_call(f"docker exec {container_name} {command}", shell=True)
 
 
-def start_shell(container_name, env):
-    cmd = f"docker exec -it {env} {container_name} {{}}"
+def start_shell(container_name, env_list):
+    cmd = ["docker", "exec", "-it", *env_list, container_name]
     subp = subprocess.Popen(
-        f"docker exec {container_name} /bin/bash", shell=True, stdout=NULL, stderr=NULL
+        ["docker", "exec", container_name, "/bin/bash"], stdout=NULL, stderr=NULL
     )
     subp.wait()
     has_bash = subp.returncode == 0
     if has_bash:
-        subprocess.check_call(cmd.format("/bin/bash"), shell=True)
+        subprocess.call(cmd + ["/bin/bash"])
     else:
-        subprocess.check_call(cmd.format("/bin/sh"), shell=True)
-    subprocess.Popen(f"docker kill {container_name}", shell=True).wait()
-    subprocess.Popen(
-        f"docker rm {container_name}", shell=True, stdout=NULL, stderr=NULL
-    ).wait()
+        subprocess.call(cmd + ["/bin/sh"])
+    subprocess.call(["docker", "kill", container_name])
+    subprocess.call(["docker", "rm", container_name], stdout=NULL, stderr=NULL)
 
 
 async def debug(id, node, timestamp=None):
+    from . import api
+
     payload = await get_exec_node_queue_stats(id, node, timestamp)
-    env = " ".join(
-        f'-e "{key}={value}"' for key, value in get_param(payload, "Env").items()
-    )
+    env_dict = get_param(payload, "Env", default={})
+    secret_dict = get_param(payload, "Secret", default={})
+    autogen_dict = get_param(payload, "AutogenEnv", default={})
+
+    autogen_dict["CONDUCTO_DATA_TOKEN"] = api.Auth().get_token_from_shell()
+
+    env_list = []
+    for key, value in {**env_dict, **secret_dict, **autogen_dict}.items():
+        env_list += ["-e", f"{key}={value}"]
+
     container_name = start_container(payload)
     dump_command(container_name, get_param(payload, "commandSummary"))
-    start_shell(container_name, env)
+
+    start_shell(container_name, env_list)

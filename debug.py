@@ -140,7 +140,7 @@ async def debug(id, node, timestamp=None):
 
     payload = await get_exec_node_queue_stats(id, node, timestamp)
     env_dict = get_param(payload, "Env", default={})
-    secret_dict = get_param(payload, "Secret", default={})
+    secret_dict = get_param(payload, "Secrets", default={})
     autogen_dict = get_param(payload, "AutogenEnv", default={})
 
     autogen_dict["CONDUCTO_DATA_TOKEN"] = api.Auth().get_token_from_shell()

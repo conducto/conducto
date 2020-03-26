@@ -1,6 +1,7 @@
 import os
 import time
 import subprocess
+import functools
 import pipes
 import shutil
 import socket
@@ -8,7 +9,45 @@ import sys
 
 from conducto import api
 from conducto.shared import client_utils, constants, log, types as t
-from conducto.internal.host_detection import is_wsl
+import conducto.internal.host_detection as hostdet
+
+
+@functools.lru_cache(None)
+def _split_windocker(path):
+    chunks = path.split("//")
+    mangled = hostdet.windows_docker_path(chunks[0])
+    if len(chunks) > 1:
+        newctx = f"{mangled}//{chunks[1]}"
+    else:
+        newctx = mangled
+    return newctx
+
+
+def _validate_wsl_locations(node):
+    # collect contexts to convert to windows paths to mount in the manager
+    # docker container.
+
+    drives = set()
+
+    image_ids = []
+    imagelist = []
+    for child in node.stream():
+        if id(child.image) not in image_ids:
+            image_ids.append(id(child.image))
+            imagelist.append(child.image)
+
+    for img in imagelist:
+        path = img.context
+        if path:
+            newpath = _split_windocker(path)
+            img.context = newpath
+            drives.add(newpath[1])
+        path = img.dockerfile
+        if path:
+            newpath = _split_windocker(path)
+            img.dockerfile = newpath
+            drives.add(newpath[1])
+    return drives
 
 
 def build(
@@ -21,6 +60,10 @@ def build(
 ):
     assert node.parent is None
     assert node.name == "/"
+
+    if hostdet.is_wsl():
+        # Check if all node contexts can be mounted in docker.
+        _validate_wsl_locations(node)
 
     from .. import api, shell_ui
 
@@ -74,6 +117,9 @@ def build(
 def run_in_local_container(token, pipeline_id):
     # Remote base dir will be verified by container.
     local_basedir = constants.ConductoPaths.get_local_base_dir()
+    if hostdet.is_wsl():
+        local_basedir = os.path.realpath(local_basedir)
+        local_basedir = hostdet.windows_docker_path(local_basedir)
     remote_basedir = "/usr/conducto/.conducto"
 
     tag = api.Config().get_image_tag()
@@ -101,9 +147,6 @@ def run_in_local_container(token, pipeline_id):
         # to access config and serialization and write logs.
         "-v",
         f"{local_basedir}:{remote_basedir}",
-        # Mount whole system read-only to enable rebuilding images as needed
-        "--mount",
-        f"type=bind,source=/,target={constants.ConductoPaths.MOUNT_LOCATION},readonly",
         # Mount docker sock so we can spin out task workers.
         "-v",
         "/var/run/docker.sock:/var/run/docker.sock",
@@ -115,6 +158,22 @@ def run_in_local_container(token, pipeline_id):
         "-e",
         f"CONDUCTO_LOCAL_HOSTNAME={socket.gethostname()}",
     ]
+
+    if hostdet.is_wsl():
+        lsdrives = "docker run --rm -v /:/mnt/external alpine ls /mnt/external/host_mnt"
+        proc = subprocess.run(lsdrives, shell=True, stdout=subprocess.PIPE)
+
+        results = proc.stdout.decode("utf-8").split("\n")
+        drives = [s.strip().upper() for s in results if s.strip() != ""]
+
+        for d in drives:
+            # Mount whole system read-only to enable rebuilding images as needed
+            mount = f"type=bind,source={d}:/,target={constants.ConductoPaths.MOUNT_LOCATION}/{d},readonly"
+            flags += ["--mount", mount]
+    else:
+        # Mount whole system read-only to enable rebuilding images as needed
+        mount = f"type=bind,source=/,target={constants.ConductoPaths.MOUNT_LOCATION},readonly"
+        flags += ["--mount", mount]
 
     if _manager_debug():
         flags[0] = "-it"
@@ -143,7 +202,7 @@ def run_in_local_container(token, pipeline_id):
         serialization,
         "--local",
     ]
-    if is_wsl():
+    if hostdet.is_wsl():
         cmd_parts.append("--from_wsl")
 
     conducto_in_docker = os.environ.get("CONDUCTO_RUNNING_IN_DOCKER")

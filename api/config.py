@@ -1,6 +1,6 @@
 import os
+import subprocess
 import configparser
-import stat
 from conducto.shared import constants
 
 
@@ -38,13 +38,36 @@ class Config:
             self.write()
 
     def write(self):
-        configFile = self.__get_config_file()
+        config_file = self.__get_config_file()
         # Create config dir if doesn't exist.
-        configDir = os.path.dirname(configFile)
-        if not os.path.isdir(configDir):
-            os.mkdir(configDir)
-        with open(configFile, "w") as configFileHandle:
-            self.config.write(configFileHandle)
+        config_dir = os.path.dirname(config_file)
+        if not os.path.isdir(config_dir):
+            # local import due to import loop
+            import conducto.internal.host_detection as hostdet
+
+            if hostdet.is_wsl():
+                # Create .conducto directory in the window's users homedir.
+                # Symlink that to the linux user's homedir.  This is
+                # back-translated to a docker friendly path on docker mounting.
+
+                cmdline = ["cmd.exe", "/C", "echo %USERPROFILE%"]
+                proc = subprocess.run(cmdline, stdout=subprocess.PIPE)
+                winprofile = proc.stdout.decode("utf-8").strip()
+
+                cmdline = ["wslpath", "-u", winprofile]
+                proc = subprocess.run(cmdline, stdout=subprocess.PIPE)
+                homedir = proc.stdout.decode("utf-8").strip()
+
+                win_config_dir = os.path.join(homedir, ".conducto")
+                if not os.path.isdir(win_config_dir):
+                    os.mkdir(win_config_dir)
+
+                cmdline = ["ln", "-s", win_config_dir, config_dir]
+                subprocess.run(cmdline, stdout=subprocess.PIPE)
+            else:
+                os.mkdir(config_dir)
+        with open(config_file, "w") as config_fh:
+            self.config.write(config_fh)
 
     ############################################################
     # specific methods

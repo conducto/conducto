@@ -4,7 +4,7 @@ def isiterable(o):
     instance of string.  Otherwise return False.
 
     """
-    if isinstance(o, str):
+    if isinstance(o, (str, bytes)):
         return False
     try:
         iter(o)

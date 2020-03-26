@@ -8,6 +8,7 @@ import pprint
 import sys
 import typing
 
+import conducto.internal.host_detection as hostdet
 from ..shared import client_utils, constants, log, types as t
 
 from .. import api, callback, image as image_mod, pipeline
@@ -182,6 +183,10 @@ class _Wrapper(object):
     def to_command(self, *args, **kwargs):
         abspath = os.path.abspath(inspect.getfile(self.callFunc))
         ctxpath = image_mod.Image.get_contextual_path(abspath)
+        if hostdet.is_wsl():
+            import conducto.internal.build as cib
+
+            ctxpath = cib._split_windocker(ctxpath)
         parts = [
             "conducto",
             f"__conducto_path:{ctxpath}:endpath__",

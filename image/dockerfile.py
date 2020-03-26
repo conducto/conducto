@@ -31,11 +31,11 @@ def lines_for_build_dockerfile(image, reqs_py, context_url, context_branch):
         else:
             yield "RUN pip install " + " ".join(reqs_py)
 
-    code_dir = "/usr/conducto"
+    code_dir = "/mnt/context"
     yield f"WORKDIR {code_dir}"
 
     if context_url:
-        yield f"ADD http://worldtimeapi.org/api/ip /tmp/time"  # cache busting
+        yield f"ADD https://www.random.org/cgi-bin/randbyte?nbytes=10&format=h /tmp/time"  # cache busting
         yield f"RUN git clone --single-branch --branch {context_branch} {context_url} {code_dir}"
     else:
         yield f"COPY . {code_dir}"

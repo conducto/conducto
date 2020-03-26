@@ -11,6 +11,7 @@ import time
 import traceback
 import typing
 
+import conducto.internal.host_detection as hostdet
 from conducto.shared import async_utils, log
 from .. import pipeline
 from . import dockerfile, names
@@ -18,6 +19,10 @@ from . import dockerfile, names
 
 def relpath(path):
     ctxpath = Image.get_contextual_path(path)
+    if hostdet.is_wsl():
+        import conducto.internal.build as cib
+
+        ctxpath = cib._split_windocker(ctxpath)
     return f"__conducto_path:{ctxpath}:endpath__"
 
 
@@ -143,9 +148,6 @@ class Image:
                     self.context = self.get_contextual_path(context)
             elif dockerfile is not None:
                 self.dockerfile = self.get_contextual_path(dockerfile)
-                assert os.path.isfile(
-                    Image.PATH_PREFIX + self.dockerfile
-                ), f"Image(dockerfile={dockerfile}) must point to a file"
                 if context is None:
                     context = os.path.dirname(self.dockerfile)
                 self.context = self.get_contextual_path(context)

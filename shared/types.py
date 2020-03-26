@@ -59,7 +59,9 @@ def is_NewType(typ):
 def _serializer(obj):
     if hasattr(obj, "to_str"):
         return obj.to_str
-    if type(obj) == list:
+    if isinstance(obj, bytes):
+        return obj.decode
+    if isinstance(obj, list):
         return lambda: LIST_DELIM.join(map(serialize, obj))
     return obj.__str__
 
@@ -67,8 +69,9 @@ def _serializer(obj):
 def _deserializer(typ):
     if hasattr(typ, "from_str"):
         return typ.from_str
-    else:
-        return typ
+    if typ == bytes:
+        return str.encode
+    return typ
 
 
 def serialize(obj):

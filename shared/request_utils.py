@@ -3,6 +3,7 @@ import json
 import re
 import urllib
 import urllib.request
+from urllib.parse import urlparse
 
 
 def _add_status_code(response):
@@ -34,6 +35,10 @@ def _get_json_bytes(data):
     if isinstance(data, str):
         data = data.encode("utf8")
     return data
+
+
+def parse(url):
+    return urlparse(url)
 
 
 def get(url, headers=None, params=None):

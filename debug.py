@@ -1,9 +1,11 @@
+import os
 import asyncio
 import subprocess
 import tempfile
 import time
 from conducto.shared.log import format
 from conducto.shared import constants
+import conducto.internal.host_detection as hostdet
 
 NULL = subprocess.DEVNULL
 PIPE = subprocess.PIPE
@@ -89,6 +91,9 @@ def start_container(payload):
 
     # TODO: Should actually pass these variables from manager, iff local
     local_basedir = constants.ConductoPaths.get_local_base_dir()
+    if hostdet.is_wsl():
+        local_basedir = os.path.realpath(local_basedir)
+        local_basedir = hostdet.windows_docker_path(local_basedir)
     remote_basedir = "/usr/conducto/.conducto"
     options.append(f"-v {local_basedir}:{remote_basedir}")
 

@@ -10,6 +10,7 @@ import sys
 import time
 import traceback
 import typing
+import uuid
 
 import conducto.internal.host_detection as hostdet
 from conducto.shared import async_utils, log
@@ -360,13 +361,21 @@ class Image:
                 build_args = ["-f", "-", Image.PATH_PREFIX + self.context]
             else:
                 build_args = ["-"]
+            build_args += ["--build-arg", f"CONDUCTO_CACHE_BUSTER={uuid.uuid4()}"]
             lines = dockerfile.lines_for_build_dockerfile(
                 self.image, self.reqs_py, self.context_url, self.context_branch
             )
             stdin = ("\n".join(lines)).encode()
 
         out, err = await async_utils.run_and_check(
-            "docker", "build", "-t", self.name_built, *build_args, input=stdin
+            "docker",
+            "build",
+            "-t",
+            self.name_built,
+            "--label",
+            "conducto",
+            *build_args,
+            input=stdin,
         )
         return out, err
 
@@ -375,7 +384,14 @@ class Image:
         lines = dockerfile.lines_for_extend_dockerfile(self.name_built)
         text = "\n".join(lines).encode()
         out, err = await async_utils.run_and_check(
-            "docker", "build", "-t", self.name_local_extended, "-", input=text
+            "docker",
+            "build",
+            "-t",
+            self.name_local_extended,
+            "--label",
+            "conducto",
+            "-",
+            input=text,
         )
         return out, err
 

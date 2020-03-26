@@ -53,16 +53,16 @@ class _Data:
             shutil.copy(ctx.get_path(name), file)
 
     @classmethod
-    def gets(cls, name, *, byte_range=None):
+    def gets(cls, name, *, byte_range=None) -> bytes:
         ctx = cls._ctx()
         if ctx.is_s3:
             kwargs = {}
             if byte_range:
                 begin, end = byte_range
                 kwargs["Range"] = f"bytes {begin}-{end}"
-            return ctx.get_s3_obj(name).get(**kwargs)["Body"].read().decode()
+            return ctx.get_s3_obj(name).get(**kwargs)["Body"].read()
         else:
-            with open(ctx.get_path(name), "r") as f:
+            with open(ctx.get_path(name), "rb") as f:
                 if byte_range:
                     begin, end = byte_range
                     f.seek(begin)
@@ -83,15 +83,14 @@ class _Data:
             shutil.copy(file, path)
 
     @classmethod
-    def puts(cls, name, obj):
+    def puts(cls, name, obj: bytes):
         ctx = cls._ctx()
         if ctx.is_s3:
             ctx.get_s3_obj(name).put(Body=obj)
         else:
             path = ctx.get_path(name)
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            mode = "wb" if isinstance(obj, bytes) else "w"
-            with open(path, mode) as f:
+            with open(path, "wb") as f:
                 f.write(obj)
 
     @classmethod

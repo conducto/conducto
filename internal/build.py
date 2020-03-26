@@ -143,6 +143,8 @@ def run_in_local_container(token, pipeline_id):
         container_name,
         "--hostname",
         container_name,
+        "--label",
+        "conducto",
         # Mount local conducto basedir on container. Allow TaskServer
         # to access config and serialization and write logs.
         "-v",

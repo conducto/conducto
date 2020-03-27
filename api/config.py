@@ -50,20 +50,37 @@ class Config:
                 # Symlink that to the linux user's homedir.  This is
                 # back-translated to a docker friendly path on docker mounting.
 
-                cmdline = ["cmd.exe", "/C", "echo %USERPROFILE%"]
-                proc = subprocess.run(cmdline, stdout=subprocess.PIPE)
-                winprofile = proc.stdout.decode("utf-8").strip()
+                fallback_error = """\
+There was an error creating the conducto configuration files at ~/.conducto.
+The .conducto folder must be accessible to docker and so it must be on a
+Windows drive.  You can set that up manually by executing the following
+commands:
 
-                cmdline = ["wslpath", "-u", winprofile]
-                proc = subprocess.run(cmdline, stdout=subprocess.PIPE)
-                homedir = proc.stdout.decode("utf-8").strip()
+    mkdir /mnt/c/Users/<winuser>/.conducto
+    ln -sf /mnt/c/Users/<winuser>/.conducto ~/.conducto
+"""
 
-                win_config_dir = os.path.join(homedir, ".conducto")
-                if not os.path.isdir(win_config_dir):
-                    os.mkdir(win_config_dir)
+                try:
+                    cmdline = ["wslpath", "-u", r"C:\Windows\system32\cmd.exe"]
+                    proc = subprocess.run(cmdline, stdout=subprocess.PIPE)
+                    cmdpath = proc.stdout.decode("utf-8").strip()
 
-                cmdline = ["ln", "-s", win_config_dir, config_dir]
-                subprocess.run(cmdline, stdout=subprocess.PIPE)
+                    cmdline = [cmdpath, "/C", "echo %USERPROFILE%"]
+                    proc = subprocess.run(cmdline, stdout=subprocess.PIPE)
+                    winprofile = proc.stdout.decode("utf-8").strip()
+
+                    cmdline = ["wslpath", "-u", winprofile]
+                    proc = subprocess.run(cmdline, stdout=subprocess.PIPE)
+                    homedir = proc.stdout.decode("utf-8").strip()
+
+                    win_config_dir = os.path.join(homedir, ".conducto")
+                    if not os.path.isdir(win_config_dir):
+                        os.mkdir(win_config_dir)
+
+                    cmdline = ["ln", "-s", win_config_dir, config_dir]
+                    subprocess.run(cmdline, stdout=subprocess.PIPE)
+                except subprocess.CalledProcessError as e:
+                    raise RuntimeError(fallback_error)
             else:
                 os.mkdir(config_dir)
         with open(config_file, "w") as config_fh:

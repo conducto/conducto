@@ -15,6 +15,7 @@ async def run_and_check(*args, input=None, stop_on_error=True):
         *args, stdin=PIPE, stdout=PIPE, stderr=PIPE
     )
     stdout, stderr = await proc.communicate(input=input)
+
     if stop_on_error and proc.returncode != 0:
         cmd_str = " ".join(pipes.quote(a) for a in args)
         try:

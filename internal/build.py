@@ -15,7 +15,7 @@ import conducto.internal.host_detection as hostdet
 @functools.lru_cache(None)
 def _split_windocker(path):
     chunks = path.split("//")
-    mangled = hostdet.windows_docker_path(chunks[0])
+    mangled = hostdet.wsl_host_docker_path(chunks[0])
     if len(chunks) > 1:
         newctx = f"{mangled}//{chunks[1]}"
     else:
@@ -90,7 +90,11 @@ def build(
         log.debug(f"Connecting to pipeline_id={pipeline_id}")
 
     def local_deploy():
-        clean_log_dirs(token)
+        # TODO (apeng) Leaving this out for now
+        # when we run conducto in a container for our tests
+        # this has a tendency to blow up all the logs, including
+        # the logs of the running superpipe, which breaks it completely
+        # clean_log_dirs(token)
 
         # Save to ~/.conducto/ -- write serialization.
         local_progdir = constants.ConductoPaths.get_local_path(pipeline_id)
@@ -117,9 +121,38 @@ def build(
 def run_in_local_container(token, pipeline_id):
     # Remote base dir will be verified by container.
     local_basedir = constants.ConductoPaths.get_local_base_dir()
+
     if hostdet.is_wsl():
         local_basedir = os.path.realpath(local_basedir)
+        local_basedir = hostdet.wsl_host_docker_path(local_basedir)
+    elif hostdet.is_windows():
         local_basedir = hostdet.windows_docker_path(local_basedir)
+    else:
+
+        subp = subprocess.Popen(
+            "head -1 /proc/self/cgroup|cut -d/ -f3", shell=True, stdout=subprocess.PIPE
+        )
+        container_id, err = subp.communicate()
+        container_id = container_id.decode("utf-8").strip()
+
+        if container_id:
+            # Mount to the ~/.conducto of the host machine and not of the container
+            import json
+
+            subp = subprocess.Popen(
+                f"docker inspect -f '{{{{ json .Mounts }}}}' {container_id}",
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            mount_data, err = subp.communicate()
+            if subp.returncode == 0:
+                mounts = json.loads(mount_data)
+                for mount in mounts:
+                    if mount["Destination"] == local_basedir:
+                        local_basedir = mount["Source"]
+                        break
+
     remote_basedir = "/usr/conducto/.conducto"
 
     tag = api.Config().get_image_tag()
@@ -160,6 +193,10 @@ def run_in_local_container(token, pipeline_id):
         "-e",
         f"CONDUCTO_LOCAL_HOSTNAME={socket.gethostname()}",
     ]
+
+    for env_var in "CONDUCTO_URL", "CONDUCTO_CONFIG", "IMAGE_TAG":
+        if os.environ.get(env_var):
+            flags.extend(["-e", f"{env_var}={os.environ[env_var]}"])
 
     if hostdet.is_wsl():
         lsdrives = "docker run --rm -v /:/mnt/external alpine ls /mnt/external/host_mnt"

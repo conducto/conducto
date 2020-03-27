@@ -2,6 +2,10 @@ import platform
 import subprocess
 
 
+def is_windows():
+    return platform.system().lower() == "windows"
+
+
 def is_wsl():
     return "microsoft" in platform.uname().version.lower()
 
@@ -25,10 +29,19 @@ def windows_drive_path(path):
     return winpath
 
 
-def windows_docker_path(path):
+def wsl_host_docker_path(path):
     """
     Returns the windows path with forward slashes.  This is the format docker
     wants in the -v switch.
     """
     winpath = windows_drive_path(path)
+    return f"/{winpath[0]}{winpath[2:]}"
+
+
+def windows_docker_path(path):
+    """
+    Returns the windows path with forward slashes.  This is the format docker
+    wants in the -v switch.
+    """
+    winpath = path.replace("\\", "/")
     return f"/{winpath[0]}{winpath[2:]}"

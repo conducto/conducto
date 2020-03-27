@@ -9,11 +9,15 @@ import typing
 import socket
 import re
 import concurrent.futures
+import select
+
 import websockets
 
 if sys.platform != "win32":
     import termios
     import tty
+else:
+    import msvcrt
 from .. import api
 from ..shared import constants, log, types as t
 from ..shared.constants import State
@@ -422,21 +426,22 @@ class ShellUI(object):
         self.gather_handle.cancel()
 
 
-class _KeyReaderProtocol(asyncio.Protocol):
-    callback: typing.Callable
-
-    def data_received(self, data):
-        super().data_received(data)
-        self.callback(data)
+def stdin_data():
+    return select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], [])
 
 
 async def stream_as_char_generator(loop, stream):
-    reader = asyncio.StreamReader(loop=loop)
-    reader_protocol = asyncio.StreamReaderProtocol(reader)
-    await loop.connect_read_pipe(lambda: reader_protocol, stream)
+    if sys.platform != "win32":
+        has_key = stdin_data
+        read_key = lambda: stream.read(1)
+    else:
+        has_key = msvcrt.kbhit
+        read_key = lambda: msvcrt.getch().decode("ascii")
 
     while True:
-        char = await reader.read(1)
-        if not char:  # EOF.
-            break
-        yield char.decode()
+        await asyncio.sleep(0.05)
+        if has_key():
+            char = read_key()
+            if not char:  # EOF.
+                break
+            yield char

@@ -1,5 +1,6 @@
-import os
 import asyncio
+import os
+import re
 import subprocess
 import tempfile
 import time
@@ -58,7 +59,7 @@ async def get_exec_node_queue_stats(id, node, timestamp=None):
                 raise Exception("Connection closed before receiving node info")
         finally:
             await conn.close()
-        if "queueStatsDiff" not in payload:
+        if "queueStatsCurrent" not in payload:
             raise Exception(f"Node {node} is not exec")
         payload["queueStats"].append(["commandSummary", payload["commandSummary"]])
         return payload["queueStats"]
@@ -81,7 +82,7 @@ def start_container(payload):
     import random
 
     container_name = "conducto_debug_" + str(random.randrange(1 << 64))
-    print(format("Launching docker container...", color="red"))
+    print("Launching docker container...")
 
     options = []
     if get_param(payload, "requires_docker"):
@@ -93,6 +94,8 @@ def start_container(payload):
     local_basedir = constants.ConductoPaths.get_local_base_dir()
     if hostdet.is_wsl():
         local_basedir = os.path.realpath(local_basedir)
+        local_basedir = hostdet.wsl_host_docker_path(local_basedir)
+    elif hostdet.is_windows():
         local_basedir = hostdet.windows_docker_path(local_basedir)
     remote_basedir = "/usr/conducto/.conducto"
     options.append(f"-v {local_basedir}:{remote_basedir}")
@@ -117,12 +120,52 @@ def dump_command(container_name, command):
             f"docker cp {tmp.name} {container_name}:{command_location}", shell=True
         )
     execute_in(container_name, f"chmod u+x {command_location}")
-    print(format(f"Node command located at {command_location}", color="red"))
-    print(format(f"Execute with ./conducto.cmd", color="red"))
+    print(f"Execute command by running {format('./conducto.cmd', color='cyan')}")
+
+
+def get_linux_flavor(container_name):
+    cmd = 'sh -c "cat /etc/*-release | grep ^ID="'
+    output = execute_in(container_name, cmd).decode("utf8").strip()
+
+    flavor = re.search(r"^ID=(.*)", output, re.M)
+    flavor = flavor.groups()[0].strip().strip('"')
+
+    if "ubuntu" in flavor or "debian" in flavor:
+        return "debian"
+    elif "alpine" in flavor:
+        return "alpine"
+    else:
+        return f"unknown - {flavor}"
 
 
 def execute_in(container_name, command):
-    subprocess.check_call(f"docker exec {container_name} {command}", shell=True)
+    return subprocess.check_output(
+        f"docker exec {container_name} {command}", shell=True
+    )
+
+
+def print_editor_commands(container_name):
+    flavor = get_linux_flavor(container_name)
+    if flavor == "ubuntu":
+        uid_str = execute_in(container_name, "id -u")
+        base = "apt-get update"
+        each = "apt-get install"
+        if int(uid_str) != 0:
+            base = f"sudo {base}"
+            each = f"sudo {each}"
+    elif flavor == "alpine":
+        base = "apk update"
+        each = "apk add"
+    else:
+        return
+
+    editors = {"vim": "blue", "emacs": "cyan", "nano": "green"}
+    print("To install an editor, run:", end="")
+    sep = ""
+    for editor, color in editors.items():
+        print(sep, format(f"{base} && {each} {editor}", color=color), end="")
+        sep = " or"
+    print()
 
 
 def start_shell(container_name, env_list):
@@ -155,6 +198,7 @@ async def debug(id, node, timestamp=None):
         env_list += ["-e", f"{key}={value}"]
 
     container_name = start_container(payload)
+    print_editor_commands(container_name)
     dump_command(container_name, get_param(payload, "commandSummary"))
 
     start_shell(container_name, env_list)

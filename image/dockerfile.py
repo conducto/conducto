@@ -1,3 +1,4 @@
+import asyncio
 import functools
 import packaging.version
 import re
@@ -7,10 +8,11 @@ from conducto.shared import async_utils, client_utils
 from .. import api
 
 
-def lines_for_build_dockerfile(image, reqs_py, context_url, context_branch):
-    yield f"FROM {image}"
+async def lines_for_build_dockerfile(image, reqs_py, context_url, context_branch):
+    lines = [f"FROM {image}"]
+
     if reqs_py:
-        py_binary, _py_version = get_python_version(image)
+        py_binary, _py_version = await get_python_version(image)
         if py_binary is None:
             raise Exception(
                 f"Cannot find suitable python in {image} for installing {reqs_py}"
@@ -19,44 +21,47 @@ def lines_for_build_dockerfile(image, reqs_py, context_url, context_branch):
         if api.Config().get("dev", "who"):
             non_conducto_reqs_py = [r for r in reqs_py if r != "conducto"]
             if non_conducto_reqs_py:
-                yield "RUN pip install " + " ".join(non_conducto_reqs_py)
+                lines.append("RUN pip install " + " ".join(non_conducto_reqs_py))
 
             if "conducto" in reqs_py:
                 image = "conducto"
                 tag = api.Config().get_image_tag(default=None)
                 if tag is not None:
                     image = f"{image}:{tag}"
-                yield f"COPY --from={image} /tmp/conducto /tmp/conducto"
-                yield "RUN pip install -e /tmp/conducto"
+                lines.append(f"COPY --from={image} /tmp/conducto /tmp/conducto")
+                lines.append("RUN pip install -e /tmp/conducto")
         else:
-            yield "RUN pip install " + " ".join(reqs_py)
+            lines.append("RUN pip install " + " ".join(reqs_py))
 
     code_dir = "/mnt/context"
-    yield f"WORKDIR {code_dir}"
+    lines.append(f"WORKDIR {code_dir}")
 
     if context_url:
-        yield "ARG CONDUCTO_CACHE_BUSTER"
-        yield f"RUN echo $CONDUCTO_CACHE_BUSTER"
-        yield f"RUN git clone --single-branch --branch {context_branch} {context_url} {code_dir}"
+        lines.append("ARG CONDUCTO_CACHE_BUSTER")
+        lines.append(f"RUN echo $CONDUCTO_CACHE_BUSTER")
+        lines.append(
+            f"RUN git clone --single-branch --branch {context_branch} {context_url} {code_dir}"
+        )
     else:
-        yield f"COPY . {code_dir}"
+        lines.append(f"COPY . {code_dir}")
+    return lines
 
 
 async def lines_for_extend_dockerfile(user_image):
     lines = [f"FROM {user_image}"]
 
     # TODO: Use Docker commands instead of RUN where possible.
-    linux_flavor, linux_version = _get_linux_flavor_and_version(user_image)
+    linux_flavor, linux_version = await _get_linux_flavor_and_version(user_image)
 
     # Determine python version and binary.
-    acceptable_binary, pyvers = get_python_version(user_image)
+    acceptable_binary, pyvers = await get_python_version(user_image)
 
     default_python = None
     if pyvers is not None:
-        which_python = client_utils.subprocess_run(
-            ["docker", "run", "--rm", user_image, "which", acceptable_binary]
+        which_python, _ = await async_utils.run_and_check(
+            "docker", "run", "--rm", user_image, "which", acceptable_binary
         )
-        default_python = which_python.stdout.decode("utf8").strip()
+        default_python = which_python.decode("utf8").strip()
 
     if _is_debian(linux_flavor):
         if linux_version == "10":  # buster
@@ -108,11 +113,20 @@ class UnsupportedPythonException(Exception):
 
 @functools.lru_cache()
 def pull_conducto_worker(worker_image):
-    return async_utils.run_and_check("docker", "pull", worker_image)
+    return asyncio.ensure_future(
+        async_utils.run_and_check("docker", "pull", worker_image)
+    )
 
 
-@functools.lru_cache()
-def get_python_version(user_image):
+# Note: we don't need caching here except on get_python_version
+# because we already have caching mechanisms above
+# each image gets their .build called once, and everything below _get_python_version
+# is called just once per name_built
+
+
+@async_utils.async_cache
+async def get_python_version(user_image):
+
     for binary in [
         "python",
         "python3",
@@ -122,7 +136,7 @@ def get_python_version(user_image):
         "python3.8",
     ]:
         try:
-            version = _get_python_version(user_image, binary)
+            version = await _get_python_version(user_image, binary)
         except (
             subprocess.CalledProcessError,
             LowPException,
@@ -134,7 +148,7 @@ def get_python_version(user_image):
     return None, None
 
 
-def _get_python_version(user_image, python_binary) -> packaging.version.Version:
+async def _get_python_version(user_image, python_binary) -> packaging.version.Version:
     """Gets python version within a Docker image.
     Args:
         user_image: image name
@@ -145,37 +159,43 @@ def _get_python_version(user_image, python_binary) -> packaging.version.Version:
         supprocess.CalledProcessError if binary doesn't exist
         LowPException if version is too low
     """
-    python_version = re.sub(
-        r"^Python\s+",
-        r"",
-        subprocess.check_output(
-            ["docker", "run", "--rm", user_image, python_binary, "--version"],
-            stderr=subprocess.PIPE,
-        ).decode("utf8"),
-        re.IGNORECASE,
-    ).strip()
+
+    proc = await asyncio.create_subprocess_exec(
+        "docker",
+        "run",
+        "--rm",
+        user_image,
+        python_binary,
+        "--version",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    out, err = await proc.communicate()
+    out = out.decode("utf-8")
+
+    python_version = re.sub(r"^Python\s+", r"", out, re.IGNORECASE,).strip()
     python_version = packaging.version.Version(python_version)
     if python_version < packaging.version.Version("3.5"):
         raise LowPException("")
     return python_version
 
 
-def _get_linux_flavor_and_version(user_image):
-    output = (
-        subprocess.check_output(
-            f'docker run --rm {user_image} sh -c "cat /etc/*-release" | '
-            f'grep -e "^ID=" -e "^VERSION_ID="',
-            shell=True,
-            stderr=subprocess.PIPE,
-        )
-        .decode("utf8")
-        .strip()
-    )
+async def _get_linux_flavor_and_version(user_image):
 
-    flavor = re.search(r"^ID=(.*)", output, re.M)
+    subp = await asyncio.create_subprocess_shell(
+        f'docker run --rm {user_image} sh -c "cat /etc/*-release" | '
+        f'grep -e "^ID=" -e "^VERSION_ID="',
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    out, err = await subp.communicate()
+    out = out.decode("utf-8").strip()
+
+    flavor = re.search(r"^ID=(.*)", out, re.M)
     flavor = flavor.groups()[0].strip().strip('"')
 
-    version = re.search(r"^VERSION_ID=(.*)", output, re.M)
+    version = re.search(r"^VERSION_ID=(.*)", out, re.M)
     version = version.groups()[0].strip().strip('"')
 
     return flavor, version

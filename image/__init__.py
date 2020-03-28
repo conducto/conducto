@@ -362,7 +362,7 @@ class Image:
             else:
                 build_args = ["-"]
             build_args += ["--build-arg", f"CONDUCTO_CACHE_BUSTER={uuid.uuid4()}"]
-            lines = dockerfile.lines_for_build_dockerfile(
+            lines = await dockerfile.lines_for_build_dockerfile(
                 self.image, self.reqs_py, self.context_url, self.context_branch
             )
             stdin = ("\n".join(lines)).encode()

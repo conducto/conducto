@@ -6,6 +6,18 @@ import traceback
 from . import log
 
 
+def async_cache(fxn):
+    memo = {}
+
+    async def wrapper(*args):
+        key = tuple(args)
+        if key not in memo:
+            memo[key] = asyncio.ensure_future(fxn(*args))
+        return await memo[key]
+
+    return wrapper
+
+
 async def run_and_check(*args, input=None, stop_on_error=True):
     log.info("Running:", " ".join(pipes.quote(a) for a in args))
     if input is not None:

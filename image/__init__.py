@@ -381,7 +381,11 @@ class Image:
 
     async def _extend(self):
         # Writes Dockerfile that extends user-provided image.
-        lines = dockerfile.lines_for_extend_dockerfile(self.name_built)
+        lines, worker_image = await dockerfile.lines_for_extend_dockerfile(
+            self.name_built
+        )
+        if "/" in worker_image:
+            await dockerfile.pull_conducto_worker(worker_image)
         text = "\n".join(lines).encode()
         out, err = await async_utils.run_and_check(
             "docker",

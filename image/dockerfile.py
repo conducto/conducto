@@ -3,7 +3,7 @@ import packaging.version
 import re
 import subprocess
 
-from conducto.shared import client_utils
+from conducto.shared import async_utils, client_utils
 from .. import api
 
 
@@ -42,8 +42,8 @@ def lines_for_build_dockerfile(image, reqs_py, context_url, context_branch):
         yield f"COPY . {code_dir}"
 
 
-def lines_for_extend_dockerfile(user_image):
-    yield f"FROM {user_image}"
+async def lines_for_extend_dockerfile(user_image):
+    lines = [f"FROM {user_image}"]
 
     # TODO: Use Docker commands instead of RUN where possible.
     linux_flavor, linux_version = _get_linux_flavor_and_version(user_image)
@@ -66,15 +66,15 @@ def lines_for_extend_dockerfile(user_image):
         else:
             raise UnsupportedPythonException(f"Unsupported Python version {pyvers}")
         if pyvers is None:
-            yield "RUN apt-get update"
-            yield f"RUN apt-get install -y python3.7-dev"
+            lines.append("RUN apt-get update")
+            lines.append(f"RUN apt-get install -y python3.7-dev")
             pyvers = (3, 7)
             default_python = "/usr/bin/python3.7"
     elif _is_alpine(linux_flavor):
         suffix = "alpine"
         if pyvers is None:
-            yield "RUN apk update"
-            yield f"RUN apk add --update python3-dev"
+            lines.append("RUN apk update")
+            lines.append(f"RUN apk add --update python3-dev")
             pyvers = (3, 8)
             default_python = "/usr/bin/python3"
     else:
@@ -88,9 +88,10 @@ def lines_for_extend_dockerfile(user_image):
     if dev_tag is not None:
         image = f"worker-dev"
         tag += f"-{dev_tag}"
-    source_image = f"{image}:{tag}"
-    yield f"COPY --from={source_image} /opt/conducto_venv /opt/conducto_venv"
-    yield f"RUN ln -sf {default_python} /opt/conducto_venv/bin/python3"
+    worker_image = f"{image}:{tag}"
+    lines.append(f"COPY --from={worker_image} /opt/conducto_venv /opt/conducto_venv")
+    lines.append(f"RUN ln -sf {default_python} /opt/conducto_venv/bin/python3")
+    return lines, worker_image
 
 
 class LowPException(Exception):
@@ -103,6 +104,11 @@ class UnsupportedLinuxException(Exception):
 
 class UnsupportedPythonException(Exception):
     pass
+
+
+@functools.lru_cache()
+def pull_conducto_worker(worker_image):
+    return async_utils.run_and_check("docker", "pull", worker_image)
 
 
 @functools.lru_cache()

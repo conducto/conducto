@@ -136,7 +136,7 @@ class ShellUI(object):
             api.Manager().launch(self.get_token(), pipeline_id)
             await self.wait_pgw()
 
-        payload = {"type": "START_PROGRAM", "payload": None}
+        payload = {"type": "SET_AUTORUN", "payload": {"value": True}}
         await self.pgw_socket.send(json.dumps(payload))
 
     async def sleep_pipeline(self):

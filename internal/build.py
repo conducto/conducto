@@ -130,7 +130,10 @@ def run_in_local_container(token, pipeline_id):
     else:
 
         subp = subprocess.Popen(
-            "head -1 /proc/self/cgroup|cut -d/ -f3", shell=True, stdout=subprocess.PIPE
+            "head -1 /proc/self/cgroup|cut -d/ -f3",
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
         )
         container_id, err = subp.communicate()
         container_id = container_id.decode("utf-8").strip()
@@ -153,7 +156,8 @@ def run_in_local_container(token, pipeline_id):
                         local_basedir = mount["Source"]
                         break
 
-    remote_basedir = "/usr/conducto/.conducto"
+    # The homedir inside the manager is /root
+    remote_basedir = "/root/.conducto"
 
     tag = api.Config().get_image_tag()
     manager_image = constants.ImageUtil.get_manager_image(tag)
@@ -244,86 +248,22 @@ def run_in_local_container(token, pipeline_id):
     if hostdet.is_wsl():
         cmd_parts.append("--from_wsl")
 
-    conducto_in_docker = os.environ.get("CONDUCTO_RUNNING_IN_DOCKER")
-    if conducto_in_docker:
-        # If we are launching a pipeline from with-in a docker container, the
-        # .conducto folder may only reside in the (outer) docker container.
-        # However the -v bind switch assumes the outer bound directory is on
-        # the machine with the docker daemon.  This is an imperfect
-        # work-around to recreate the way that the serialization is passed to
-        # the new manager container in the .conducto folder.
-        # See https://circleci.com/docs/2.0/building-docker-images/#mounting-folders
-
-        # This rips out the -v .conducto:.conducto parameter pair
-        for index, pair in enumerate(zip(flags[:-1], flags[1:])):
-            x, y = pair
-            if x == "-v" and ".conducto" in y:
-                # remove x & y
-                skinny_flags = flags[:index] + flags[index + 2 :]
-                break
-        else:
-            raise ValueError(f"Cannot find '-v .conducto:.conducto' args in {flags}")
-        skinny_flags += ["-e", f"CONDUCTO_RUNNING_IN_DOCKER={conducto_in_docker}"]
-
-        volname = f"dotconducto_{pipeline_id}"
-
-        docker_parts = [
-            "docker",
-            "create",
-            "-v",
-            remote_basedir,
-            "--name",
-            volname,
-            "alpine:3.11",
-            "/bin/true",
-        ]
+    if manager_image.startswith("conducto/"):
+        docker_parts = ["docker", "pull", manager_image]
         log.debug(" ".join(pipes.quote(s) for s in docker_parts))
         client_utils.subprocess_run(
             docker_parts,
             capture_output=capture_output,
-            msg="error build dummy volume container",
+            msg="Error pulling manager container",
         )
-        docker_parts = ["docker", "cp"] + [
-            local_basedir + "/.",
-            f"{volname}:{remote_basedir}",
-        ]
-        log.debug(" ".join(pipes.quote(s) for s in docker_parts))
-        client_utils.subprocess_run(
-            docker_parts,
-            capture_output=capture_output,
-            msg="error copying .conducto pipeline",
-        )
-        docker_parts = (
-            ["docker", "run"]
-            + skinny_flags
-            + ["--volumes-from", volname]
-            + [manager_image]
-            + cmd_parts
-        )
-        log.debug(" ".join(pipes.quote(s) for s in docker_parts))
-        client_utils.subprocess_run(
-            docker_parts,
-            capture_output=capture_output,
-            msg="Error starting manager container",
-        )
-    else:
-        # Pull manager image if from dockerhub.
-        if manager_image.startswith("conducto/"):
-            docker_parts = ["docker", "pull", manager_image]
-            log.debug(" ".join(pipes.quote(s) for s in docker_parts))
-            client_utils.subprocess_run(
-                docker_parts,
-                capture_output=capture_output,
-                msg="Error pulling manager container",
-            )
-        # Run manager container.
-        docker_parts = ["docker", "run"] + flags + [manager_image] + cmd_parts
-        log.debug(" ".join(pipes.quote(s) for s in docker_parts))
-        client_utils.subprocess_run(
-            docker_parts,
-            msg="Error starting manager container",
-            capture_output=capture_output,
-        )
+    # Run manager container.
+    docker_parts = ["docker", "run"] + flags + [manager_image] + cmd_parts
+    log.debug(" ".join(pipes.quote(s) for s in docker_parts))
+    client_utils.subprocess_run(
+        docker_parts,
+        msg="Error starting manager container",
+        capture_output=capture_output,
+    )
 
     # When in debug mode the manager is run attached and it makes no sense to
     # follow that up with waiting for the manager to start.

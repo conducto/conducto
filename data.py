@@ -25,6 +25,7 @@ class _Context:
             m = re.search("^s3://(.*?)/(.*)", self.uri)
             self.bucket, self.key_root = m.group(1, 2)
         else:
+            self.uri = os.path.expanduser(self.uri)
             self.is_s3 = False
 
     def get_s3_key(self, name):

@@ -98,23 +98,29 @@ class ConductoPaths:
         return f"{user_id}/{pipeline_id}"
 
     @staticmethod
-    def get_local_base_dir():
+    def get_local_base_dir(expand=True):
         defaultBaseDir = os.path.join("~", ".conducto")
         baseDir = os.environ.get("CONDUCTO_BASE_DIR", defaultBaseDir)
-        return os.path.expanduser(baseDir)
+        if expand:
+            baseDir = os.path.expanduser(baseDir)
+        return baseDir
 
     @staticmethod
-    def get_local_docker_config_dir():
-        defaultBaseDir = os.path.join("~", ".docker")
+    def get_local_docker_config_dir(expand=True):
         baseDir = os.environ.get("DOCKER_CONFIG_BASE_DIR", None)
-        return os.path.expanduser(baseDir) if baseDir else None
+        if expand and baseDir:
+            baseDir = os.path.expanduser(baseDir)
+        return baseDir
 
     @staticmethod
-    def get_local_path(pipeline_id):
-        baseDir = ConductoPaths.get_local_base_dir()
+    def get_local_path(pipeline_id, expand=True):
+        baseDir = ConductoPaths.get_local_base_dir(expand=False)
         defaultLogDir = os.path.join(baseDir, "logs")
         logDir = os.environ.get("CONDUCTO_LOG_DIR", defaultLogDir)
-        return os.path.expanduser(os.path.join(logDir, pipeline_id))
+        if expand:
+            return os.path.expanduser(os.path.join(logDir, pipeline_id))
+        else:
+            return os.path.join(logDir, pipeline_id)
 
 
 class PipelineLifecycle:

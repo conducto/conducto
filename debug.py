@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import os
 import re
 import subprocess
@@ -97,7 +98,7 @@ def start_container(payload):
         local_basedir = hostdet.wsl_host_docker_path(local_basedir)
     elif hostdet.is_windows():
         local_basedir = hostdet.windows_docker_path(local_basedir)
-    remote_basedir = "/usr/conducto/.conducto"
+    remote_basedir = f"{get_home_dir_for_image(image_name)}/.conducto"
     options.append(f"-v {local_basedir}:{remote_basedir}")
 
     command = f"docker run {' '.join(options)} --name={container_name} {image_name} tail -f /dev/null "
@@ -110,17 +111,27 @@ def dump_command(container_name, command):
     with tempfile.NamedTemporaryFile() as tmp:
         with open(tmp.name, "w") as f:
             f.write(command)
+            if not command.endswith("\n"):
+                f.write("\n")
 
-        out = subprocess.check_output(
-            ["docker", "exec", container_name, "pwd"], stderr=PIPE
-        )
-        command_location = out.decode("utf-8").strip() + "/conducto.cmd"
+        command_location = get_work_dir_for_container(container_name) + "/conducto.cmd"
 
         subprocess.check_call(
             f"docker cp {tmp.name} {container_name}:{command_location}", shell=True
         )
     execute_in(container_name, f"chmod u+x {command_location}")
     print(f"Execute command by running {format('./conducto.cmd', color='cyan')}")
+
+
+def get_work_dir_for_container(container_name):
+    return execute_in(container_name, "pwd").decode().strip()
+
+
+def get_home_dir_for_image(image_name):
+    output = subprocess.check_output(
+        ["docker", "run", "--rm", "-it", image_name, "sh", "-c", "cd ~; pwd"]
+    )
+    return output.decode().strip()
 
 
 def get_linux_flavor(container_name):

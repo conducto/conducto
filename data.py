@@ -31,13 +31,13 @@ class _Context:
             self.is_s3 = False
 
     def get_s3_key(self, name):
-        return os.path.join(self.key_root, name)
+        return _safe_join(self.key_root, name)
 
     def get_s3_obj(self, name):
         return self.s3.Object(self.bucket, self.get_s3_key(name))
 
     def get_path(self, name):
-        return os.path.join(self.uri, name)
+        return _safe_join(self.uri, name)
 
 
 class _Data:
@@ -116,7 +116,7 @@ class _Data:
                 names = os.listdir(path)
             except OSError:
                 return []
-            return [os.path.join(prefix, name) for name in sorted(names)]
+            return [_safe_join(prefix, name) for name in sorted(names)]
 
     @classmethod
     def exists(cls, name):
@@ -161,7 +161,7 @@ class _Data:
         data_path = f"conducto-cache/{identifier}/{checksum}.tar.gz"
         tario = io.BytesIO()
         with tarfile.TarFile(fileobj=tario, mode="w") as cmdtar:
-            cmdtar.add(save_dir)
+            cmdtar.add(save_dir, arcname=os.path.basename(os.path.normpath(save_dir)))
         cls.puts(data_path, tario.getvalue())
 
     @classmethod
@@ -185,3 +185,9 @@ class PermData(_Data):
     @staticmethod
     def _ctx():
         return _Context(base="PERM")
+
+
+def _safe_join(*parts):
+    parts = list(parts)
+    parts[1:] = [p.lstrip(os.path.sep) for p in parts[1:]]
+    return os.path.join(*parts)

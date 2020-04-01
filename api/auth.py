@@ -52,8 +52,10 @@ class Auth:
         data = self._get_data(response)
         return data
 
-    def get_token_from_shell(self, login: dict = None) -> typing.Optional[t.Token]:
-        return self._get_token_from_shell(login=login, forceRefresh=False)
+    def get_token_from_shell(
+        self, login: dict = None, force=False
+    ) -> typing.Optional[t.Token]:
+        return self._get_token_from_shell(login=login, forceRefresh=force)
 
     def get_unverified_claims(self, token: t.Token) -> dict:
         # Returns a dict of *unverified* claims decoded from token.

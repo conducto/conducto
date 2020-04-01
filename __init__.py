@@ -4,6 +4,7 @@ from .shared.constants import SameContainer
 from .image import Image, relpath
 from .data import TempData, PermData
 from .util import env_bool
+from ._version import __version__
 
 __all__ = [
     "Exec",

@@ -36,7 +36,7 @@ async def get_exec_node_queue_stats(id, node, timestamp=None):
         from . import api
         import json
 
-        token = api.Auth().get_token_from_shell()
+        token = api.Auth().get_token_from_shell(force=True)
         conn = await api.connect_to_pipeline(token, id)
         try:
             await conn.send(

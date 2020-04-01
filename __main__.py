@@ -18,7 +18,7 @@ def show(id):
     pl = constants.PipelineLifecycle
 
     pipeline_id = id
-    token = api.Auth().get_token_from_shell()
+    token = api.Auth().get_token_from_shell(force=True)
     try:
         pipeline = api.Pipeline().get(token, pipeline_id)
     except api.InvalidResponse as e:
@@ -56,7 +56,7 @@ def show(id):
     def local_wakeup():
         from conducto.internal import build
 
-        build.run_in_local_container(token, pipeline_id)
+        build.run_in_local_container(token, pipeline_id, update_token=True)
 
     if status in pl.active | pl.standby:
         func = lambda: 0
@@ -94,7 +94,14 @@ def _load_file_module(filename):
 def main():
     # _thisfile, file_to_execute, *arguments = sys.argv
     args = sys.argv[1:]
-    if not args or args[0] in ("-h", "--help", "show", "debug", "livedebug"):
+    if not args or args[0] in (
+        "-h",
+        "--help",
+        "--version",
+        "show",
+        "debug",
+        "livedebug",
+    ):
         variables = {"show": show, "debug": debug, "livedebug": livedebug}
         co.main(variables=variables)
     else:

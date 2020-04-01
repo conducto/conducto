@@ -6,10 +6,20 @@ import pipes
 import shutil
 import socket
 import sys
+from http import HTTPStatus as hs
 
 from conducto import api
 from conducto.shared import client_utils, constants, log, types as t
 import conducto.internal.host_detection as hostdet
+
+
+@functools.lru_cache(None)
+def docker_available_drives():
+    lsdrives = "docker run --rm -v /:/mnt/external alpine ls /mnt/external/host_mnt"
+    proc = subprocess.run(lsdrives, shell=True, stdout=subprocess.PIPE)
+
+    results = proc.stdout.decode("utf-8").split("\n")
+    return [s.strip().upper() for s in results if s.strip() != ""]
 
 
 @functools.lru_cache(None)
@@ -52,6 +62,7 @@ def _wsl_translate_locations(node):
 
 def _windows_translate_locations(node):
     # Convert image contexts to format that docker understands.
+    drives = set()
 
     image_ids = []
     imagelist = []
@@ -65,10 +76,13 @@ def _windows_translate_locations(node):
         if path:
             newpath = hostdet.windows_docker_path(path)
             img.context = newpath
+            drives.add(newpath[1])
         path = img.dockerfile
         if path:
             newpath = hostdet.windows_docker_path(path)
             img.dockerfile = newpath
+            drives.add(newpath[1])
+    return drives
 
 
 def build(
@@ -83,13 +97,22 @@ def build(
     assert node.name == "/"
 
     if hostdet.is_wsl():
-        _wsl_translate_locations(node)
+        required_drives = _wsl_translate_locations(node)
     elif hostdet.is_windows():
-        _windows_translate_locations(node)
+        required_drives = _windows_translate_locations(node)
+
+    if hostdet.is_wsl() or hostdet.is_windows():
+        available = docker_available_drives()
+        unavailable = set(required_drives).difference(available)
+        if len(unavailable) > 0:
+            msg = f"The drive {unavailable.pop()} is used in an image context, but is not available in Docker.   Review your Docker Desktop file sharing settings."
+            raise hostdet.WindowsMapError(msg)
 
     from .. import api, shell_ui
 
-    node.token = token = api.Auth().get_token_from_shell()
+    # refresh the token for every pipeline launch
+    # Force in case of cognito change
+    node.token = token = api.Auth().get_token_from_shell(force=True)
 
     serialization = node.serialize()
 
@@ -140,7 +163,7 @@ def build(
         func()
 
 
-def run_in_local_container(token, pipeline_id):
+def run_in_local_container(token, pipeline_id, update_token=False):
     # Remote base dir will be verified by container.
     local_basedir = constants.ConductoPaths.get_local_base_dir()
 
@@ -225,11 +248,7 @@ def run_in_local_container(token, pipeline_id):
             flags.extend(["-e", f"{env_var}={os.environ[env_var]}"])
 
     if hostdet.is_wsl() or hostdet.is_windows():
-        lsdrives = "docker run --rm -v /:/mnt/external alpine ls /mnt/external/host_mnt"
-        proc = subprocess.run(lsdrives, shell=True, stdout=subprocess.PIPE)
-
-        results = proc.stdout.decode("utf-8").split("\n")
-        drives = [s.strip().upper() for s in results if s.strip() != ""]
+        drives = docker_available_drives()
 
         for d in drives:
             # Mount whole system read-only to enable rebuilding images as needed
@@ -267,6 +286,9 @@ def run_in_local_container(token, pipeline_id):
         serialization,
         "--local",
     ]
+
+    if update_token:
+        cmd_parts += ["--update_token", "--token", token]
 
     if manager_image.startswith("conducto/"):
         docker_parts = ["docker", "pull", manager_image]

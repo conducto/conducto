@@ -418,8 +418,11 @@ class ShellUI(object):
             #    consistent with the one_line renderer (i.e. in the middle of
             #    no-where)
             print(
-                f"\r\nTo reconnect:"
-                f"\r\nconducto show --id={self.pipeline['pipeline_id']}",
+                log.format(
+                    f"\r\nTo reconnect, run:"
+                    f"\r\nconducto show --id={self.pipeline['pipeline_id']}",
+                    color="cyan",
+                ),
                 end="",
             )
         self.quitting = True

@@ -6,6 +6,7 @@ import subprocess
 
 from conducto.shared import async_utils, client_utils
 from .. import api
+from .._version import __version__
 
 
 async def lines_for_build_dockerfile(image, reqs_py, context_url, context_branch):
@@ -18,20 +19,20 @@ async def lines_for_build_dockerfile(image, reqs_py, context_url, context_branch
                 f"Cannot find suitable python in {image} for installing {reqs_py}"
             )
 
-        if api.Config().get("dev", "who"):
-            non_conducto_reqs_py = [r for r in reqs_py if r != "conducto"]
-            if non_conducto_reqs_py:
-                lines.append("RUN pip install " + " ".join(non_conducto_reqs_py))
+        non_conducto_reqs_py = [r for r in reqs_py if r != "conducto"]
+        if non_conducto_reqs_py:
+            lines.append("RUN pip install " + " ".join(non_conducto_reqs_py))
 
-            if "conducto" in reqs_py:
+        if "conducto" in reqs_py:
+            if api.Config().get("dev", "who"):
                 image = "conducto"
                 tag = api.Config().get_image_tag(default=None)
                 if tag is not None:
                     image = f"{image}:{tag}"
                 lines.append(f"COPY --from={image} /tmp/conducto /tmp/conducto")
                 lines.append("RUN pip install -e /tmp/conducto")
-        else:
-            lines.append("RUN pip install " + " ".join(reqs_py))
+            else:
+                lines.append(f"RUN pip install conducto=={__version__}")
 
     code_dir = "/mnt/context"
     lines.append(f"WORKDIR {code_dir}")

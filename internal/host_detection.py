@@ -14,6 +14,10 @@ class WSLMapError(Exception):
     pass
 
 
+class WindowsMapError(Exception):
+    pass
+
+
 def windows_drive_path(path):
     """
     Returns the windows path with forward slashes.  This is the format docker

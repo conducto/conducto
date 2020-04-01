@@ -10,6 +10,7 @@ import typing
 
 import conducto.internal.host_detection as hostdet
 from ..shared import client_utils, constants, log, types as t
+from .._version import __version__
 
 from .. import api, callback, image as image_mod, pipeline
 from . import arg
@@ -153,6 +154,7 @@ class _Wrapper(object):
             "env": env,
             "image": image,
             "requires_docker": requires_docker,
+            "doc": func.__doc__,
         }
         self.title = title
         self.tags = api.Pipeline.sanitize_tags(tags)
@@ -489,7 +491,7 @@ def main(
         node_usage = ""
 
     usage_message = (
-        f"{prog} [-h] <method> [< --arg1 val1 --arg2 val2 ...>]\n"
+        f"{prog}[-h] <method> [< --arg1 val1 --arg2 val2 ...>]\n"
         + f"{node_usage}\n"
         + valid_methods
     )
@@ -497,6 +499,12 @@ def main(
     default_method_name = default.__name__ if default != None else None
 
     parser = argparse.ArgumentParser(prog=prog, usage=usage_message)
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=__version__,
+        help="show conducto package version",
+    )
     if default is not None:
         parser.add_argument(
             "method", nargs="?", default=default.__name__, help=argparse.SUPPRESS

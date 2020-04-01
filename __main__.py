@@ -1,9 +1,12 @@
 import sys
 import os.path
 import importlib.util
-import conducto as do
+import colorama
+import conducto as co
 from conducto.shared import constants
-from conducto.debug import debug
+from conducto.debug import debug, livedebug
+
+colorama.init()
 
 
 def show(id):
@@ -91,9 +94,9 @@ def _load_file_module(filename):
 def main():
     # _thisfile, file_to_execute, *arguments = sys.argv
     args = sys.argv[1:]
-    if not args or args[0] in ("-h", "--help", "show", "debug"):
-        variables = {"show": show, "debug": debug}
-        do.main(variables=variables)
+    if not args or args[0] in ("-h", "--help", "show", "debug", "livedebug"):
+        variables = {"show": show, "debug": debug, "livedebug": livedebug}
+        co.main(variables=variables)
     else:
         file_to_execute, *arguments = args
 
@@ -103,7 +106,7 @@ def main():
 
         module = _load_file_module(file_to_execute)
         variables = {k: getattr(module, k) for k in dir(module)}
-        do.main(variables=variables, argv=arguments)
+        co.main(variables=variables, argv=arguments)
 
 
 if __name__ == "__main__":

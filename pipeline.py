@@ -69,6 +69,7 @@ class Node:
         "suppress_errors",
         "same_container",
         "env",
+        "doc",
         "_repo",
         "_autorun",
         "_sleep_when_done",
@@ -88,6 +89,7 @@ class Node:
         same_container=constants.SameContainer.INHERIT,
         image: typing.Union[str, image_mod.Image] = None,
         image_name=None,
+        doc=None,
     ):
         self.id_generator, self.id_root = itertools.count(), self
         self.id = None
@@ -117,6 +119,8 @@ class Node:
 
         self.env = env or {}
 
+        self.doc = doc
+
         self.result = {}
         if name is not None:
             if not Node._CONTEXT_STACK:
@@ -135,7 +139,7 @@ class Node:
         self.suppress_errors = suppress_errors
         self.same_container = same_container
 
-        # These are only to be set on the root node, and only by do.main().
+        # These are only to be set on the root node, and only by co.main().
         self._autorun = None
         self._sleep_when_done = None
 
@@ -310,17 +314,18 @@ class Node:
                     (event, cb.to_literal()) for event, cb in self._callbacks
                 ],
                 "type": self.__class__.__name__,
-                "command": getattr(self, "command", None),
                 "suppress_errors": getattr(self, "suppress_errors", False),
                 "same_container": getattr(
                     self, "same_container", constants.SameContainer.INHERIT
                 ),
             },
+            **({"doc": self.doc} if self.doc else {}),
             **(
                 {"stop_on_error": self.stop_on_error}
                 if isinstance(self, Serial)
                 else {}
             ),
+            **({"command": self.command} if isinstance(self, Exec) else {}),
         }
 
     def serialize(self, pretty=False):
@@ -613,6 +618,7 @@ class Serial(Node):
         same_container=constants.SameContainer.INHERIT,
         image: typing.Union[str, image_mod.Image] = None,
         image_name=None,
+        doc=None,
     ):
         super().__init__(
             env=env,
@@ -626,5 +632,6 @@ class Serial(Node):
             same_container=same_container,
             image=image,
             image_name=image_name,
+            doc=doc,
         )
         self.stop_on_error = stop_on_error

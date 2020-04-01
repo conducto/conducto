@@ -1,10 +1,10 @@
 import asyncio
-import functools
 import os
 import re
 import subprocess
-import tempfile
 import time
+import tarfile
+import io
 from conducto.shared.log import format
 from conducto.shared import constants
 import conducto.internal.host_detection as hostdet
@@ -20,7 +20,7 @@ PIPE = subprocess.PIPE
 #   env set up.
 # - "run": running this container, with all env, and running the
 #   node's command as well
-# - "liverun": only available if using do.Image(root="..."), similar to run
+# - "liverun": only available if using co.Image(root="..."), similar to run
 #   except that it bind mounts your root directory inside the image so that
 #   you get your latest code.
 # - "debug": similar to run except that instead of starting the docker shell
@@ -78,16 +78,29 @@ def get_param(payload, param, default=None):
     return default
 
 
-def start_container(payload):
-    image_name = get_param(payload, "image", default={})["name_built"]
+def start_container(payload, live):
     import random
+
+    image = get_param(payload, "image", default={})
+    image_name = image["name_built"]
+
+    if live and not image.get("context"):
+        raise ValueError(
+            f"Cannot do livedebug for image {image['name']} because it does not have a context"
+        )
 
     container_name = "conducto_debug_" + str(random.randrange(1 << 64))
     print("Launching docker container...")
+    if live:
+        print("Context will be mounted read-only")
+        print(
+            "Make modifications on the host machine, and they will be reflected in the container."
+        )
 
     options = []
     if get_param(payload, "requires_docker"):
         options.append("-v /var/run/docker.sock:/var/run/docker.sock")
+
     options.append(f'--cpus {get_param(payload, "cpu")}')
     options.append(f'--memory {get_param(payload, "mem") * 1024**3}')
 
@@ -98,33 +111,65 @@ def start_container(payload):
         local_basedir = hostdet.wsl_host_docker_path(local_basedir)
     elif hostdet.is_windows():
         local_basedir = hostdet.windows_docker_path(local_basedir)
+
     remote_basedir = f"{get_home_dir_for_image(image_name)}/.conducto"
     options.append(f"-v {local_basedir}:{remote_basedir}")
 
+    if live:
+        bind_loc = get_work_dir_for_container(image)
+        options.append(f"-v {image['context']}:{bind_loc}:ro")
+
     command = f"docker run {' '.join(options)} --name={container_name} {image_name} tail -f /dev/null "
+
     subprocess.Popen(command, shell=True)
     time.sleep(1)
     return container_name
 
 
-def dump_command(container_name, command):
-    with tempfile.NamedTemporaryFile() as tmp:
-        with open(tmp.name, "w") as f:
-            f.write(command)
-            if not command.endswith("\n"):
-                f.write("\n")
+def dump_command(container_name, command, live):
+    # Create in-memory tar file since docker will take that on stdin with no
+    # tempfile needed.
+    tario = io.BytesIO()
+    with tarfile.TarFile(fileobj=tario, mode="w") as cmdtar:
+        content = command
+        if not content.endswith("\n"):
+            content += "\n"
+        tfile = tarfile.TarInfo("conducto.cmd")
+        tfile.size = len(content)
+        cmdtar.addfile(tfile, io.BytesIO(content.encode("utf-8")))
 
-        command_location = get_work_dir_for_container(container_name) + "/conducto.cmd"
+    command_location = "/" if live else get_work_dir_for_container(container_name)
 
-        subprocess.check_call(
-            f"docker cp {tmp.name} {container_name}:{command_location}", shell=True
+    args = ["docker", "cp", "-", f"{container_name}:{command_location}"]
+    proc = subprocess.run(args, input=tario.getvalue(), stdout=PIPE, stderr=PIPE)
+    if proc.returncode != 0:
+        stderr = proc.stderr.decode("utf-8").strip()
+        raise RuntimeError(f"error placing conducto.cmd: ({stderr})")
+
+    execute_in(container_name, f"chmod u+x {command_location}/conducto.cmd")
+    if live:
+        print(f"Execute command by running {format('sh /conducto.cmd', color='cyan')}")
+    else:
+        print(f"Execute command by running {format(f'.conducto.cmd', color='cyan')}")
+
+
+def get_work_dir_for_container(image_details):
+    if type(image_details) == dict:
+        output = subprocess.check_output(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-it",
+                image_details["name_built"],
+                "sh",
+                "-c",
+                "pwd",
+            ]
         )
-    execute_in(container_name, f"chmod u+x {command_location}")
-    print(f"Execute command by running {format('./conducto.cmd', color='cyan')}")
+        return output.decode().strip()
 
-
-def get_work_dir_for_container(container_name):
-    return execute_in(container_name, "pwd").decode().strip()
+    return execute_in(image_details, "pwd").decode().strip()
 
 
 def get_home_dir_for_image(image_name):
@@ -194,10 +239,11 @@ def start_shell(container_name, env_list):
     subprocess.call(["docker", "rm", container_name], stdout=NULL, stderr=NULL)
 
 
-async def debug(id, node, timestamp=None):
+async def _debug(id, node, live, timestamp):
     from . import api
 
     payload = await get_exec_node_queue_stats(id, node, timestamp)
+
     env_dict = get_param(payload, "Env", default={})
     secret_dict = get_param(payload, "Secrets", default={})
     autogen_dict = get_param(payload, "AutogenEnv", default={})
@@ -208,8 +254,17 @@ async def debug(id, node, timestamp=None):
     for key, value in {**env_dict, **secret_dict, **autogen_dict}.items():
         env_list += ["-e", f"{key}={value}"]
 
-    container_name = start_container(payload)
-    print_editor_commands(container_name)
-    dump_command(container_name, get_param(payload, "commandSummary"))
+    container_name = start_container(payload, live)
+    if not live:
+        print_editor_commands(container_name)
+    dump_command(container_name, get_param(payload, "commandSummary"), live)
 
     start_shell(container_name, env_list)
+
+
+async def debug(id, node, timestamp=None):
+    await _debug(id, node, False, timestamp)
+
+
+async def livedebug(id, node, timestamp=None):
+    await _debug(id, node, True, timestamp)

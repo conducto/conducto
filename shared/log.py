@@ -1,6 +1,13 @@
 import contextlib, hashlib, io, multiprocessing, os, re, sys, time, traceback
 from . import types as t
 
+try:
+    import conducto.internal.host_detection as hostdet
+
+    is_windows = hostdet.is_windows
+except ImportError:
+    is_windows = lambda: False
+
 
 class Control:
     ERASE_LINE = "\033[K"
@@ -69,7 +76,7 @@ def format(s, color=None, bold=True, underline=False, dim=False):
     equates to specifying cyan).
 
     """
-    if "TERM" not in os.environ:
+    if "TERM" not in os.environ and not is_windows():
         # Some terminals cannot handle colors, so don't add any codes.
         return s
 

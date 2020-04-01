@@ -23,9 +23,9 @@ def _split_windocker(path):
     return newctx
 
 
-def _validate_wsl_locations(node):
-    # collect contexts to convert to windows paths to mount in the manager
-    # docker container.
+def _wsl_translate_locations(node):
+    # Convert image contexts to Windows host paths in the format that docker
+    # understands.
 
     drives = set()
 
@@ -50,6 +50,27 @@ def _validate_wsl_locations(node):
     return drives
 
 
+def _windows_translate_locations(node):
+    # Convert image contexts to format that docker understands.
+
+    image_ids = []
+    imagelist = []
+    for child in node.stream():
+        if id(child.image) not in image_ids:
+            image_ids.append(id(child.image))
+            imagelist.append(child.image)
+
+    for img in imagelist:
+        path = img.context
+        if path:
+            newpath = hostdet.windows_docker_path(path)
+            img.context = newpath
+        path = img.dockerfile
+        if path:
+            newpath = hostdet.windows_docker_path(path)
+            img.dockerfile = newpath
+
+
 def build(
     node,
     build_mode=constants.BuildMode.DEPLOY_TO_CLOUD,
@@ -62,8 +83,9 @@ def build(
     assert node.name == "/"
 
     if hostdet.is_wsl():
-        # Check if all node contexts can be mounted in docker.
-        _validate_wsl_locations(node)
+        _wsl_translate_locations(node)
+    elif hostdet.is_windows():
+        _windows_translate_locations(node)
 
     from .. import api, shell_ui
 
@@ -202,7 +224,7 @@ def run_in_local_container(token, pipeline_id):
         if os.environ.get(env_var):
             flags.extend(["-e", f"{env_var}={os.environ[env_var]}"])
 
-    if hostdet.is_wsl():
+    if hostdet.is_wsl() or hostdet.is_windows():
         lsdrives = "docker run --rm -v /:/mnt/external alpine ls /mnt/external/host_mnt"
         proc = subprocess.run(lsdrives, shell=True, stdout=subprocess.PIPE)
 
@@ -245,8 +267,6 @@ def run_in_local_container(token, pipeline_id):
         serialization,
         "--local",
     ]
-    if hostdet.is_wsl():
-        cmd_parts.append("--from_wsl")
 
     if manager_image.startswith("conducto/"):
         docker_parts = ["docker", "pull", manager_image]

@@ -16,7 +16,7 @@ from . import arg
 
 
 # Validate arguments for the given function without calling it.
-# This is useful for raising early errors on `do.lazy_py()`
+# This is useful for raising early errors on `co.lazy_py()`
 def _validate_args(wrapper, *args, **kwargs):
     params = wrapper.getSignature().parameters
 
@@ -70,7 +70,7 @@ def lazy_py(func, *args, **kwargs) -> pipeline.Node:
         # Do a GenJobs/GridJobs if a Node is returned
         if issubclass(return_type, pipeline.Exec):
             raise ValueError(
-                "Cannot call do.lazy_py() on a function that returns an Exec(). "
+                "Cannot call co.lazy_py() on a function that returns an Exec(). "
                 "Don't defer that Exec(), just do it."
             )
 
@@ -187,6 +187,8 @@ class _Wrapper(object):
             import conducto.internal.build as cib
 
             ctxpath = cib._split_windocker(ctxpath)
+        elif hostdet.is_windows():
+            ctxpath = hostdet.windows_docker_path(ctxpath)
         parts = [
             "conducto",
             f"__conducto_path:{ctxpath}:endpath__",
@@ -432,7 +434,11 @@ def main(
     doesnt_return_node = []
 
     for name, fxn in methods.items():
-        sig = inspect.signature(fxn)
+        try:
+            # ignore builtin functions, i.e. heapq.heappush
+            sig = inspect.signature(fxn)
+        except ValueError:
+            continue
         if issubclass(sig.return_annotation, pipeline.Node):
             returns_node.append((fxn, name))
         else:
@@ -589,7 +595,7 @@ def main(
     # There are two possibilities with buildable methods (ones returning a Node):
     # - If user requested --build, then call build()
     # - Otherwise dumping the serialized Node to stdout, for user to view or for
-    #   do.lazy_py to deserialize and import.
+    #   co.lazy_py to deserialize and import.
     if issubclass(return_type, pipeline.Node):
         if not isinstance(output, pipeline.Node):
             raise NodeMethodError(

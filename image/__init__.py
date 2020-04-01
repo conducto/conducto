@@ -24,6 +24,8 @@ def relpath(path):
         import conducto.internal.build as cib
 
         ctxpath = cib._split_windocker(ctxpath)
+    elif hostdet.is_windows():
+        ctxpath = hostdet.windows_docker_path(ctxpath)
     return f"__conducto_path:{ctxpath}:endpath__"
 
 
@@ -206,7 +208,7 @@ class Image:
             p = op.realpath(op.join(from_dir, p))
 
         # Apply context specified from outside this container. Needed for recursive
-        # do.lazy_py calls inside an Image with ".context".
+        # co.lazy_py calls inside an Image with ".context".
         ctx = os.getenv("CONDUCTO_CONTEXT")
         if ctx:
             external, internal = ctx.split(":", -1)

@@ -1,5 +1,7 @@
 import os
 import re
+import io
+import tarfile
 
 
 class _Context:
@@ -139,6 +141,38 @@ class _Data:
             return result["ContentLength"]
         else:
             return os.stat(ctx.get_path(name)).st_size
+
+    @classmethod
+    def clear_cache(cls, identifier, checksum=None):
+        data_path = f"conducto-cache/{identifier}"
+        if checksum is None:
+            for file in cls.list(data_path):
+                cls.delete(file)
+        else:
+            cls.delete(f"{data_path}/{checksum}.tar.gz")
+
+    @classmethod
+    def cache_exists(cls, identifier, checksum):
+        data_path = f"conducto-cache/{identifier}/{checksum}.tar.gz"
+        return cls.exists(data_path)
+
+    @classmethod
+    def save_cache(cls, save_dir, identifier, checksum):
+        data_path = f"conducto-cache/{identifier}/{checksum}.tar.gz"
+        tario = io.BytesIO()
+        with tarfile.TarFile(fileobj=tario, mode="w") as cmdtar:
+            cmdtar.add(save_dir)
+        cls.puts(data_path, tario.getvalue())
+
+    @classmethod
+    def restore_cache(cls, restore_dir, identifier, checksum):
+        data_path = f"conducto-cache/{identifier}/{checksum}.tar.gz"
+        if not cls.cache_exists(identifier, checksum):
+            raise FileNotFoundError("Cache not found")
+        byte_array = cls.gets(data_path)
+        file_like = io.BytesIO(byte_array)
+        tar = tarfile.open(fileobj=file_like)
+        tar.extractall(path=restore_dir)
 
 
 class TempData(_Data):

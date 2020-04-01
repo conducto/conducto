@@ -65,6 +65,13 @@ class ManagerAppParams:
     POLL_INTERVAL_SECS = 0.25
 
 
+class PgwParams:
+    # 6 MB
+    WEBSOCKET_FRAME_BYTES = 6 * 1024 ** 2
+    # 5 MB
+    MAX_DATA_BYTES = 5 * 1024 ** 2
+
+
 class RdParams:
     WAIT_IN_USE_TIME = 180
 

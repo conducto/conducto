@@ -52,6 +52,11 @@ def _wsl_translate_locations(node):
             newpath = _split_windocker(path)
             img.copy_dir = newpath
             drives.add(newpath[1])
+        path = img.context
+        if path:
+            newpath = _split_windocker(path)
+            img.context = newpath
+            drives.add(newpath[1])
         path = img.dockerfile
         if path:
             newpath = _split_windocker(path)
@@ -76,6 +81,11 @@ def _windows_translate_locations(node):
         if path:
             newpath = hostdet.windows_docker_path(path)
             img.copy_dir = newpath
+            drives.add(newpath[1])
+        path = img.context
+        if path:
+            newpath = hostdet.windows_docker_path(path)
+            img.context = newpath
             drives.add(newpath[1])
         path = img.dockerfile
         if path:

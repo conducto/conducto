@@ -18,6 +18,7 @@ if sys.platform != "win32":
     import tty
 else:
     import msvcrt
+    import win32api
 from .. import api
 from ..shared import constants, log, types as t
 from ..shared.constants import State
@@ -77,6 +78,8 @@ def connect(
     pipeline = api.Pipeline().get(token, pipeline_id)
 
     ui = ShellUI(token, pipeline, startfunc, starthelp)
+    if sys.platform == "win32":
+        win32api.SetConsoleCtrlHandler(ui.ctrl_c, True)
     try:
         asyncio.get_event_loop().run_until_complete(ui.run())
     except Exception:
@@ -321,6 +324,11 @@ class ShellUI(object):
                                 listener.update_node("/", self.pipeline["meta"])
             except websockets.ConnectionClosedError:
                 pass
+
+    def ctrl_c(self, a, b=None):
+        # This is the windows control C handler
+        self.quit(display_reconnect=True)
+        return True
 
     async def key_loop(self):
         """

@@ -8,8 +8,10 @@ from conducto.shared import async_utils, client_utils
 from .. import api
 from .._version import __version__
 
+COPY_DIR = "/mnt/context"
 
-async def lines_for_build_dockerfile(image, reqs_py, context_url, context_branch):
+
+async def text_for_build_dockerfile(image, reqs_py, copy_url, copy_branch):
     lines = [f"FROM {image}"]
 
     if reqs_py:
@@ -30,25 +32,24 @@ async def lines_for_build_dockerfile(image, reqs_py, context_url, context_branch
                 if tag is not None:
                     image = f"{image}:{tag}"
                 lines.append(f"COPY --from={image} /tmp/conducto /tmp/conducto")
-                lines.append("RUN pip install -e /tmp/conducto")
+                lines.append(f"RUN {py_binary} -m pip install -e /tmp/conducto")
             else:
-                lines.append(f"RUN pip install conducto=={__version__}")
+                lines.append(f"RUN {py_binary} -m pip install conducto=={__version__}")
 
-    code_dir = "/mnt/context"
-    lines.append(f"WORKDIR {code_dir}")
+    lines.append(f"WORKDIR {COPY_DIR}")
 
-    if context_url:
+    if copy_url:
         lines.append("ARG CONDUCTO_CACHE_BUSTER")
         lines.append(f"RUN echo $CONDUCTO_CACHE_BUSTER")
         lines.append(
-            f"RUN git clone --single-branch --branch {context_branch} {context_url} {code_dir}"
+            f"RUN git clone --single-branch --branch {copy_branch} {copy_url} {COPY_DIR}"
         )
     else:
-        lines.append(f"COPY . {code_dir}")
-    return lines
+        lines.append(f"COPY . {COPY_DIR}")
+    return "\n".join(lines)
 
 
-async def lines_for_extend_dockerfile(user_image):
+async def text_for_extend_dockerfile(user_image):
     lines = [f"FROM {user_image}"]
 
     # TODO: Use Docker commands instead of RUN where possible.
@@ -97,7 +98,7 @@ async def lines_for_extend_dockerfile(user_image):
     worker_image = f"{image}:{tag}"
     lines.append(f"COPY --from={worker_image} /opt/conducto_venv /opt/conducto_venv")
     lines.append(f"RUN ln -sf {default_python} /opt/conducto_venv/bin/python3")
-    return lines, worker_image
+    return "\n".join(lines), worker_image
 
 
 class LowPException(Exception):
@@ -122,7 +123,7 @@ def pull_conducto_worker(worker_image):
 # Note: we don't need caching here except on get_python_version
 # because we already have caching mechanisms above
 # each image gets their .build called once, and everything below _get_python_version
-# is called just once per name_built
+# is called just once per name_complete
 
 
 @async_utils.async_cache
@@ -184,8 +185,7 @@ async def _get_python_version(user_image, python_binary) -> packaging.version.Ve
 async def _get_linux_flavor_and_version(user_image):
 
     subp = await asyncio.create_subprocess_shell(
-        f'docker run --rm {user_image} sh -c "cat /etc/*-release" | '
-        f'grep -e "^ID=" -e "^VERSION_ID="',
+        f'docker run --rm {user_image} sh -c "cat /etc/*-release"',
         shell=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -193,11 +193,17 @@ async def _get_linux_flavor_and_version(user_image):
     out, err = await subp.communicate()
     out = out.decode("utf-8").strip()
 
-    flavor = re.search(r"^ID=(.*)", out, re.M)
-    flavor = flavor.groups()[0].strip().strip('"')
+    flavor = None
+    version = None
 
-    version = re.search(r"^VERSION_ID=(.*)", out, re.M)
-    version = version.groups()[0].strip().strip('"')
+    # Now we filter out only lines that start with ID= & VERSION_ID= for flavor
+    # and version respectively.
+    outlines = [line.strip() for line in out.split("\n")]
+    for line in outlines:
+        if line.startswith("ID="):
+            flavor = line[len("ID=") :].strip().strip('"')
+        if line.startswith("VERSION_ID="):
+            version = line[len("VERSION_ID=") :].strip().strip('"')
 
     return flavor, version
 

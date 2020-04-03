@@ -15,7 +15,7 @@ import uuid
 import conducto.internal.host_detection as hostdet
 from conducto.shared import async_utils, log
 from .. import pipeline
-from . import dockerfile, names
+from . import dockerfile as dockerfile_mod, names
 
 
 def relpath(path):
@@ -34,6 +34,7 @@ class Status:
     QUEUED = "queued"
     PULLING = "pulling"
     BUILDING = "building"
+    COMPLETING = "completing"
     EXTENDING = "extending"
     PUSHING = "pushing"
     DONE = "done"
@@ -44,6 +45,7 @@ class Status:
         QUEUED,
         PULLING,
         BUILDING,
+        COMPLETING,
         EXTENDING,
         PUSHING,
         DONE,
@@ -104,9 +106,11 @@ class Image:
         *,
         dockerfile=None,
         context=None,
-        context_url=None,
-        context_branch=None,
+        copy_dir=None,
+        copy_url=None,
+        copy_branch=None,
         reqs_py=None,
+        path_map=None,
         name=None,
         pre_built=False,
     ):
@@ -125,37 +129,45 @@ class Image:
             image = f"python:{sys.version_info[0]}.{sys.version_info[1]}"
             if not reqs_py:
                 reqs_py = ["conducto"]
-        if context is not None and context_url is not None:
+        if copy_dir is not None and copy_url is not None:
             raise ValueError(
-                f"Cannot specify both context ({context}) "
-                f"and context_url ({context_url})"
+                f"Cannot specify both copy_dir ({copy_dir}) "
+                f"and copy_url ({copy_url})"
             )
-        if context_url is not None and context_branch is None:
+        if copy_url is not None and copy_branch is None:
             raise ValueError(
-                f"If specifying context_url ({context_url}) must "
-                f"also specify context_branch ({context_branch})"
+                f"If specifying copy_url ({copy_url}) must "
+                f"also specify copy_branch ({copy_branch})"
             )
 
         self.image = image
         self.dockerfile = dockerfile
         self.context = context
-        self.context_url = context_url
-        self.context_branch = context_branch
+        self.copy_dir = copy_dir
+        self.copy_url = copy_url
+        self.copy_branch = copy_branch
         self.reqs_py = reqs_py
+        self.path_map = path_map
 
         self.pre_built = pre_built
 
         if not self.pre_built:
-            if image is not None:
-                if context is not None:
-                    self.context = self.get_contextual_path(context)
-            elif dockerfile is not None:
+            if dockerfile is not None:
                 self.dockerfile = self.get_contextual_path(dockerfile)
                 if context is None:
                     context = os.path.dirname(self.dockerfile)
                 self.context = self.get_contextual_path(context)
 
-        self._py_binary = None
+            if copy_dir is not None:
+                self.copy_dir = self.get_contextual_path(copy_dir)
+                self.path_map = {self.copy_dir: dockerfile_mod.COPY_DIR}
+
+        if self.path_map:
+            self.path_map = {
+                self.get_contextual_path(external): internal
+                for external, internal in self.path_map.items()
+            }
+
         self.history = [HistoryEntry(Status.PENDING)]
 
         if self.pre_built:
@@ -177,9 +189,11 @@ class Image:
             "image": self.image,
             "dockerfile": self.dockerfile,
             "context": self.context,
-            "context_url": self.context_url,
-            "context_branch": self.context_branch,
+            "copy_dir": self.copy_dir,
+            "copy_url": self.copy_url,
+            "copy_branch": self.copy_branch,
             "reqs_py": self.reqs_py,
+            "path_map": self.path_map,
             "pre_built": self.pre_built,
         }
 
@@ -188,9 +202,11 @@ class Image:
             "image": self.image,
             "dockerfile": self.dockerfile,
             "context": self.context,
-            "context_url": self.context_url,
-            "context_branch": self.context_branch,
+            "copy_dir": self.copy_dir,
+            "copy_url": self.copy_url,
+            "copy_branch": self.copy_branch,
             "reqs_py": self.reqs_py,
+            "path_map": self.path_map,
         }
 
     @staticmethod
@@ -208,15 +224,16 @@ class Image:
             p = op.realpath(op.join(from_dir, p))
 
         # Apply context specified from outside this container. Needed for recursive
-        # co.lazy_py calls inside an Image with ".context".
-        ctx = os.getenv("CONDUCTO_CONTEXT")
-        if ctx:
-            external, internal = ctx.split(":", -1)
-            if p.startswith(internal):
-                p = p.replace(internal, external, 1)
+        # co.lazy_py calls inside an Image with ".path_map".
+        path_map_text = os.getenv("CONDUCTO_PATH_MAP")
+        if path_map_text:
+            path_map = json.loads(path_map_text)
+            for external, internal in path_map.items():
+                if p.startswith(internal):
+                    p = p.replace(internal, external, 1)
 
-        # If ".context" wasn't set, find the git root so that we could possibly use this
-        # inside an Image with ".context_url" set.
+        # If ".copy_dir" wasn't set, find the git root so that we could possibly use this
+        # inside an Image with ".copy_url" set.
         elif op.exists(p):
             if op.isfile(p):
                 dirname = op.dirname(p)
@@ -255,8 +272,18 @@ class Image:
             return self.image
 
     @property
+    def name_complete(self):
+        if self.needs_completing():
+            key = json.dumps(self.to_raw_image()).encode()
+            return "conducto_complete:" + hashlib.md5(key).hexdigest()
+        else:
+            return self.name_built
+
+    @property
     def name_local_extended(self):
-        return "conducto_extended:" + hashlib.md5(self.name_built.encode()).hexdigest()
+        return (
+            "conducto_extended:" + hashlib.md5(self.name_complete.encode()).hexdigest()
+        )
 
     @property
     def name_cloud_extended(self):
@@ -266,7 +293,7 @@ class Image:
 
     @property
     def cloud_buildable(self):
-        return self.context is None
+        return self.copy_dir is None
 
     @property
     def status(self):
@@ -308,6 +335,13 @@ class Image:
                 out, err = await self._build()
                 st.finish(out, err)
 
+        # If needed, copy files into the image and install packages
+        if self.needs_completing():
+            with self._new_status(Status.COMPLETING) as st:
+                callback()
+                out, err = await self._complete()
+                st.finish(out, err)
+
         with self._new_status(Status.EXTENDING) as st:
             callback()
             out, err = await self._extend()
@@ -345,30 +379,17 @@ class Image:
 
     async def _build(self):
         """
-        "Build" this image. If a specific image is named, pull it to local.
+        "Build" this image. If a Dockerfile is specified, build it first. If copy_* or
+        reqs_py are specified, auto-generate a Dockerfile and add them.
         Otherwise, run 'docker build', possibly auto-generating a Dockerfile.
         """
-        if self.dockerfile is not None:
-            # Build the specified dockerfile
-            build_args = [
-                "-f",
-                Image.PATH_PREFIX + self.dockerfile,
-                Image.PATH_PREFIX + self.context,
-            ]
-            stdin = None
-        else:
-            # Create dockerfile from stdin. Replace "-f <dockerfile> <context>"
-            # with "-"
-            if self.context:
-                build_args = ["-f", "-", Image.PATH_PREFIX + self.context]
-            else:
-                build_args = ["-"]
-            build_args += ["--build-arg", f"CONDUCTO_CACHE_BUSTER={uuid.uuid4()}"]
-            lines = await dockerfile.lines_for_build_dockerfile(
-                self.image, self.reqs_py, self.context_url, self.context_branch
-            )
-            stdin = ("\n".join(lines)).encode()
-
+        assert self.dockerfile is not None
+        # Build the specified dockerfile
+        build_args = [
+            "-f",
+            Image.PATH_PREFIX + self.dockerfile,
+            Image.PATH_PREFIX + self.context,
+        ]
         out, err = await async_utils.run_and_check(
             "docker",
             "build",
@@ -377,18 +398,40 @@ class Image:
             "--label",
             "conducto",
             *build_args,
-            input=stdin,
+        )
+        return out, err
+
+    async def _complete(self):
+        # Create dockerfile from stdin. Replace "-f <dockerfile> <copy_dir>"
+        # with "-"
+        if self.copy_dir:
+            build_args = ["-f", "-", Image.PATH_PREFIX + self.copy_dir]
+        else:
+            build_args = ["-"]
+        build_args += ["--build-arg", f"CONDUCTO_CACHE_BUSTER={uuid.uuid4()}"]
+        text = await dockerfile_mod.text_for_build_dockerfile(
+            self.name_built, self.reqs_py, self.copy_url, self.copy_branch
+        )
+
+        out, err = await async_utils.run_and_check(
+            "docker",
+            "build",
+            "-t",
+            self.name_complete,
+            "--label",
+            "conducto",
+            *build_args,
+            input=text.encode(),
         )
         return out, err
 
     async def _extend(self):
         # Writes Dockerfile that extends user-provided image.
-        lines, worker_image = await dockerfile.lines_for_extend_dockerfile(
-            self.name_built
+        text, worker_image = await dockerfile_mod.text_for_extend_dockerfile(
+            self.name_complete
         )
         if "/" in worker_image:
-            await dockerfile.pull_conducto_worker(worker_image)
-        text = "\n".join(lines).encode()
+            await dockerfile_mod.pull_conducto_worker(worker_image)
         out, err = await async_utils.run_and_check(
             "docker",
             "build",
@@ -397,7 +440,7 @@ class Image:
             "--label",
             "conducto",
             "-",
-            input=text,
+            input=text.encode(),
         )
         return out, err
 
@@ -412,10 +455,12 @@ class Image:
         return out, err
 
     def needs_building(self):
+        return self.dockerfile is not None
+
+    def needs_completing(self):
         return (
-            self.dockerfile is not None
-            or self.context is not None
-            or self.context_url is not None
+            self.copy_dir is not None
+            or self.copy_url is not None
             or self.reqs_py is not None
         )
 
@@ -426,8 +471,8 @@ def make_all(node: "pipeline.Node", push_to_cloud):
         if n.user_set["image_name"]:
             img = n.repo[n.user_set["image_name"]]
             img.pre_built = True
-            if img.name_built not in images:
-                images[img.name_built] = img
+            if img.name_complete not in images:
+                images[img.name_complete] = img
 
     def _print_status():
         line = "Preparing images:"

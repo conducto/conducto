@@ -10,7 +10,7 @@ def ci_cd(projects=utils.get_projects()) -> co.Serial:
     # User the standard python 3.8 image as a base and add all files from
     # the current dir. We also need to install conducto in the image in
     # order to dynamically generate the tree with lazy_py in test().
-    img = co.Image(image="python:3.8", context=".", reqs_py=["conducto"])
+    img = co.Image(image="python:3.8", copy_dir=".", reqs_py=["conducto"])
 
     output = co.Serial(image=img)
     output["Build"] = build(projects)
@@ -23,7 +23,7 @@ def build(projects: typing.List[str]) -> co.Parallel:
     "Build projects in parallel, using simple shell command."
 
     # Override the parent image to use one with docker installed.
-    img = co.Image(image="docker:19.03", context=".")
+    img = co.Image(image="docker:19.03", copy_dir=".")
 
     output = co.Parallel(image=img, requires_docker=True)
     for project in projects:

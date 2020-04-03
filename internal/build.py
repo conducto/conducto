@@ -47,10 +47,10 @@ def _wsl_translate_locations(node):
             imagelist.append(child.image)
 
     for img in imagelist:
-        path = img.context
+        path = img.copy_dir
         if path:
             newpath = _split_windocker(path)
-            img.context = newpath
+            img.copy_dir = newpath
             drives.add(newpath[1])
         path = img.dockerfile
         if path:
@@ -72,10 +72,10 @@ def _windows_translate_locations(node):
             imagelist.append(child.image)
 
     for img in imagelist:
-        path = img.context
+        path = img.copy_dir
         if path:
             newpath = hostdet.windows_docker_path(path)
-            img.context = newpath
+            img.copy_dir = newpath
             drives.add(newpath[1])
         path = img.dockerfile
         if path:

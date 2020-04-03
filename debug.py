@@ -82,11 +82,11 @@ def start_container(payload, live):
     import random
 
     image = get_param(payload, "image", default={})
-    image_name = image["name_built"]
+    image_name = image["name_complete"]
 
-    if live and not image.get("context"):
+    if live and not image.get("path_map"):
         raise ValueError(
-            f"Cannot do livedebug for image {image['name']} because it does not have a context"
+            f"Cannot do livedebug for image {image['name']} because it does not have a `copy_dir` or `path_map`"
         )
 
     container_name = "conducto_debug_" + str(random.randrange(1 << 64))
@@ -116,8 +116,8 @@ def start_container(payload, live):
     options.append(f"-v {local_basedir}:{remote_basedir}")
 
     if live:
-        bind_loc = get_work_dir_for_container(image)
-        options.append(f"-v {image['context']}:{bind_loc}:ro")
+        for external, internal in image["path_map"].items():
+            options.append(f"-v {external}:{internal}:ro")
 
     command = f"docker run {' '.join(options)} --name={container_name} {image_name} tail -f /dev/null "
 
@@ -161,7 +161,7 @@ def get_work_dir_for_container(image_details):
                 "run",
                 "--rm",
                 "-it",
-                image_details["name_built"],
+                image_details["name_complete"],
                 "sh",
                 "-c",
                 "pwd",

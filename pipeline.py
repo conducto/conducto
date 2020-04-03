@@ -569,21 +569,21 @@ class Exec(Node):
             if not strict and img is None:
                 return self.command
 
-            context = img.context
+            copy_dir = img.copy_dir
 
-            if "//" in self.command and context is None and img.context_url:
-                context = (
+            if "//" in self.command and copy_dir is None and img.copy_url:
+                copy_dir = (
                     re.search("__conducto_path:(.*?):endpath__", self.command)
                     .group(1)
                     .split("//")[0]
                 )
 
             def repl(match):
-                if context is None:
+                if copy_dir is None:
                     raise ValueError(
-                        f"Node must be in Image with .context or a valid .context_url set. Node={self}. Image={img.to_dict()}"
+                        f"Node must be in Image with .copy_dir or .copy_url set. Node={self}. Image={img.to_dict()}"
                     )
-                return os.path.relpath(match.group(1), context)
+                return os.path.relpath(match.group(1), copy_dir)
 
             return re.sub("__conducto_path:(.*?):endpath__", repl, self.command)
         else:

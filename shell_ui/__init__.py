@@ -60,9 +60,9 @@ class Listener(object):
 def connect_url(pipeline_id):
     config = api.Config()
     if config.get_url().find("conducto.com") > 0:
-        url = f"https://conduc.to/a/p/{pipeline_id}"
+        url = f"https://conduc.to/{pipeline_id}"
     elif config.get_url().find("test.conducto.io") > 0:
-        url = f"https://test.conduc.to/a/p/{pipeline_id}"
+        url = f"https://test.conduc.to/{pipeline_id}"
     else:
         base = config.get_url()
         if base[-1:] != "/":

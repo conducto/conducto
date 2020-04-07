@@ -174,6 +174,16 @@ class _Data:
         tar = tarfile.open(fileobj=file_like)
         tar.extractall(path=restore_dir)
 
+    @classmethod
+    def url(cls, name):
+        # Convert CamelCase to snake_case
+        # https://stackoverflow.com/questions/1175208/elegant-python-function-to-convert-camelcase-to-snake-case
+        data_type = re.sub(r"(?<!^)(?=[A-Z])", "_", cls.__name__).lower()
+
+        pipeline_id = os.environ["CONDUCTO_PIPELINE_ID"]
+        conducto_url = os.environ["CONDUCTO_AUTO_URL"]
+        return f"{conducto_url}/pgw/data/{pipeline_id}/{data_type}/{name}"
+
 
 class TempData(_Data):
     @staticmethod

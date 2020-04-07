@@ -299,6 +299,16 @@ class Image:
     def status(self):
         return self.history[-1].status
 
+    @property
+    def build_error(self):
+        if self.history[-1].status == Status.ERROR:
+            h = self.history[-1]
+            if h.stderr:
+                return h.stderr
+            else:
+                return h.stdout
+        return None
+
     async def make(self, push_to_cloud, callback=lambda: None):
         # Only call _make() once, and all other calls should just return the
         # same result.
@@ -363,7 +373,9 @@ class Image:
             yield entry
         except subprocess.CalledProcessError as e:
             entry.finish(e.stdout, e.stderr)
-            self.history.append(HistoryEntry(Status.ERROR, finish=True))
+            x = HistoryEntry(Status.ERROR, finish=True)
+            x.finish(e.stdout, e.stderr)
+            self.history.append(x)
             raise
         except (asyncio.CancelledError, concurrent.futures.CancelledError):
             entry.finish(None, None)

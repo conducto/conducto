@@ -147,6 +147,16 @@ class _Wrapper(object):
 
         self.callFunc = func
 
+        # Most docstrings are indented like this:
+        # def func():
+        #     """
+        #     Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod
+        #     tempor incididunt ut labore et dolore magna aliqua.
+        #     """
+        # This extra space will render the docstring as a code block in markdown, which
+        # isn't usually what we want. log.unindent intelligently removes this indent.
+        doc = log.unindent(func.__doc__) if func.__doc__ else None
+
         self.exec_params = {
             "mem": mem,
             "cpu": cpu,
@@ -154,7 +164,7 @@ class _Wrapper(object):
             "env": env,
             "image": image,
             "requires_docker": requires_docker,
-            "doc": func.__doc__,
+            "doc": doc,
         }
         self.title = title
         self.tags = api.Pipeline.sanitize_tags(tags)
@@ -413,6 +423,18 @@ def main(
     requires_docker=False,
     image: typing.Union[None, str, image_mod.Image] = None,
 ):
+    try:
+        import colorama
+
+        # This is designed to be run once at the start of a program.  Python import
+        # semantics is that __init__ is not re-run so this colorizes ansi colors on
+        # Windows for any program that imports conducto.
+        colorama.init()
+    except ImportError:
+        # we pass if the colorama module is not installed, we only install it
+        # on windows.
+        pass
+
     # in case we ever add functionality where argv is an empty list
     if argv is None:
         argv = list(sys.argv[1:])
@@ -561,12 +583,23 @@ def main(
 
     return_type = wrapper.getSignature().return_annotation
 
+    def bool_mutex_group(parser, base, default=None):
+        group = parser.add_mutually_exclusive_group(required=False)
+        group.add_argument(f"--{base}", dest=base, action="store_true")
+        group.add_argument(f"--no-{base}", dest=base, action="store_false")
+        if default != None:
+            parser.set_defaults(**{base: default})
+
     if issubclass(return_type, pipeline.Node):
+        default_shell = t.Bool(config.get("launch", "show_shell", default=False))
+        default_app = t.Bool(config.get("launch", "show_app", default=True))
+
         if accepts_cloud:
             parser.add_argument("--cloud", action="store_true")
         parser.add_argument("--local", action="store_true")
         parser.add_argument("--run", action="store_true")
-        parser.add_argument("--no-shell", action="store_true")
+        bool_mutex_group(parser, "shell", default=default_shell)
+        bool_mutex_group(parser, "app", default=default_app)
         parser.add_argument("--no-clean", action="store_true")
         parser.add_argument("--prebuild-images", action="store_true")
         parser.add_argument("--sleep-when-done", action="store_true")
@@ -574,7 +607,8 @@ def main(
             "cloud",
             "local",
             "run",
-            "no_shell",
+            "shell",
+            "app",
             "no_clean",
             "prebuild_images",
             "sleep_when_done",
@@ -630,7 +664,8 @@ def main(
         # Read command-line args
         is_cloud = conducto_state["cloud"]
         is_local = conducto_state["local"]
-        no_shell = conducto_state["no_shell"]
+        use_app = conducto_state["app"]
+        use_shell = conducto_state["shell"]
         no_clean = conducto_state["no_clean"]
         run = conducto_state["run"]
         sleep_when_done = conducto_state["sleep_when_done"]
@@ -651,7 +686,8 @@ def main(
             )
             BM = constants.BuildMode
             output._build(
-                use_shell=not no_shell,
+                use_shell=use_shell,
+                use_app=use_app,
                 title=title,
                 tags=api.Pipeline.sanitize_tags(wrapper.tags),
                 prebuild_images=prebuild_images,

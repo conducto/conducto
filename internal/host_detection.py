@@ -1,3 +1,4 @@
+import os
 import platform
 import subprocess
 
@@ -6,8 +7,32 @@ def is_windows():
     return platform.system().lower() == "windows"
 
 
+def is_mac():
+    return platform.system().lower() == "darwin"
+
+
 def is_wsl():
     return "microsoft" in platform.uname().version.lower()
+
+
+def system_open(url):
+    """
+    Open the URL (or file) in the default browser (or application).
+    """
+    sanitized = url.replace(";", r"\;").replace("&", r"\&")
+    if is_windows():
+        os.startfile(url)
+    elif is_wsl():
+        os.system(f'powershell.exe /c start "{sanitized}"')
+    elif is_mac():
+        os.system(f'open "{sanitized}"')
+    else:
+        # assumed linux with DISPLAY variable
+        if os.environ.get("DISPLAY", None):
+            # Redirect output to dev-null because gui programs on linux print
+            # things which look scary but have little to do with the user level
+            # reality
+            os.system(f'xdg-open "{sanitized}" > /dev/null 2>&1')
 
 
 class WSLMapError(Exception):

@@ -100,7 +100,8 @@ def build(
     build_mode=constants.BuildMode.DEPLOY_TO_CLOUD,
     tags=None,
     title=None,
-    use_shell=True,
+    use_shell=False,
+    use_app=True,
     retention=7,
 ):
     assert node.parent is None
@@ -135,7 +136,9 @@ def build(
     )
 
     url = shell_ui.connect_url(pipeline_id)
-    print(f"Starting!  View at {url}")
+    u_url = log.format(url, underline=True)
+    suffix = "ing" if use_app else ""
+    print(f"Starting!  View{suffix} at {u_url}")
 
     def cloud_deploy():
         # Get a token, serialize, and then deploy to AWS. Once that
@@ -166,6 +169,9 @@ def build(
         func = cloud_deploy
     else:
         func = local_deploy
+
+    if use_app:
+        hostdet.system_open(url)
 
     if use_shell and not _manager_debug():
         shell_ui.connect(token, pipeline_id, func, "Deploying")

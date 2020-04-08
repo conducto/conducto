@@ -1,7 +1,9 @@
 import os
-import re
 import io
+import re
+import sys
 import tarfile
+import typing
 
 
 class _Context:
@@ -47,6 +49,9 @@ class _Data:
 
     @classmethod
     def get(cls, name, file):
+        """
+        Get object at `name`, store it to `file`.
+        """
         ctx = cls._ctx()
         if ctx.is_s3:
             return ctx.get_s3_obj(name).download_file(file)
@@ -56,7 +61,10 @@ class _Data:
             shutil.copy(ctx.get_path(name), file)
 
     @classmethod
-    def gets(cls, name, *, byte_range=None) -> bytes:
+    def gets(cls, name, *, byte_range: typing.List[int] = None) -> bytes:
+        """
+        Return object at `name`. Optionally restrict to the given `byte_range`.
+        """
         ctx = cls._ctx()
         if ctx.is_s3:
             kwargs = {}
@@ -75,6 +83,9 @@ class _Data:
 
     @classmethod
     def put(cls, name, file):
+        """
+        Store object in `file` to `name`.
+        """
         ctx = cls._ctx()
         if ctx.is_s3:
             ctx.get_s3_obj(name).upload_file(file)
@@ -98,6 +109,9 @@ class _Data:
 
     @classmethod
     def delete(cls, name):
+        """
+        Delete object at `name`.
+        """
         ctx = cls._ctx()
         if ctx.is_s3:
             return ctx.get_s3_obj(name).delete()
@@ -106,6 +120,10 @@ class _Data:
 
     @classmethod
     def list(cls, prefix):
+        """
+        Return names of objects that start with `prefix`.
+        """
+        # TODO: make this more like listdir or more like glob. Right now pattern matching is inconsistent between local and cloud.
         ctx = cls._ctx()
         if ctx.is_s3:
             bkt = ctx.s3.Bucket(ctx.bucket)
@@ -120,6 +138,9 @@ class _Data:
 
     @classmethod
     def exists(cls, name):
+        """
+        Test if there is an object at `name`.
+        """
         ctx = cls._ctx()
         if ctx.is_s3:
             import botocore.exceptions
@@ -143,8 +164,11 @@ class _Data:
             return os.stat(ctx.get_path(name)).st_size
 
     @classmethod
-    def clear_cache(cls, identifier, checksum=None):
-        data_path = f"conducto-cache/{identifier}"
+    def clear_cache(cls, name, checksum=None):
+        """
+        Clear cache at `name` with `checksum`, clears all `name` cache if no `checksum`.
+        """
+        data_path = f"conducto-cache/{name}"
         if checksum is None:
             for file in cls.list(data_path):
                 cls.delete(file)
@@ -152,22 +176,31 @@ class _Data:
             cls.delete(f"{data_path}/{checksum}.tar.gz")
 
     @classmethod
-    def cache_exists(cls, identifier, checksum):
-        data_path = f"conducto-cache/{identifier}/{checksum}.tar.gz"
+    def cache_exists(cls, name, checksum):
+        """
+        Test if there is a cache at `name` with `checksum`.
+        """
+        data_path = f"conducto-cache/{name}/{checksum}.tar.gz"
         return cls.exists(data_path)
 
     @classmethod
-    def save_cache(cls, save_dir, identifier, checksum):
-        data_path = f"conducto-cache/{identifier}/{checksum}.tar.gz"
+    def save_cache(cls, name, checksum, save_dir):
+        """
+        Save `save_dir` to cache at `name` with `checksum`.
+        """
+        data_path = f"conducto-cache/{name}/{checksum}.tar.gz"
         tario = io.BytesIO()
         with tarfile.TarFile(fileobj=tario, mode="w") as cmdtar:
             cmdtar.add(save_dir, arcname=os.path.basename(os.path.normpath(save_dir)))
         cls.puts(data_path, tario.getvalue())
 
     @classmethod
-    def restore_cache(cls, restore_dir, identifier, checksum):
-        data_path = f"conducto-cache/{identifier}/{checksum}.tar.gz"
-        if not cls.cache_exists(identifier, checksum):
+    def restore_cache(cls, name, checksum, restore_dir):
+        """
+        Restore cache at `name` with `checksum` to `restore_dir`.
+        """
+        data_path = f"conducto-cache/{name}/{checksum}.tar.gz"
+        if not cls.cache_exists(name, checksum):
             raise FileNotFoundError("Cache not found")
         byte_array = cls.gets(data_path)
         file_like = io.BytesIO(byte_array)
@@ -176,6 +209,9 @@ class _Data:
 
     @classmethod
     def url(cls, name):
+        """
+        Get url for object at `name`.
+        """
         # Convert CamelCase to snake_case
         # https://stackoverflow.com/questions/1175208/elegant-python-function-to-convert-camelcase-to-snake-case
         data_type = re.sub(r"(?<!^)(?=[A-Z])", "_", cls.__name__).lower()
@@ -184,14 +220,42 @@ class _Data:
         conducto_url = os.environ["CONDUCTO_AUTO_URL"]
         return f"{conducto_url}/pgw/data/{pipeline_id}/{data_type}/{name}"
 
+    @classmethod
+    def _main(cls):
+        import conducto as co
 
-class TempData(_Data):
+        variables = {
+            "delete": cls.delete,
+            "exists": cls.exists,
+            "get": cls.get,
+            "gets": cls.gets,
+            "list": cls.list,
+            "put": cls.put,
+            "puts": cls._puts_from_command_line,
+            "url": cls.url,
+            "cache-exists": cls.cache_exists,
+            "clear-cache": cls.clear_cache,
+            "save-cache": cls.save_cache,
+            "restore-cache": cls.restore_cache,
+        }
+        co.main(variables=variables)
+
+    @classmethod
+    def _puts_from_command_line(cls, name):
+        """
+        Read object from stdin and store it to `name`.
+        """
+        obj = sys.stdin.read().encode()
+        return cls.puts(name, obj)
+
+
+class temp_data(_Data):
     @staticmethod
     def _ctx():
         return _Context(base="TEMP")
 
 
-class PermData(_Data):
+class perm_data(_Data):
     @staticmethod
     def _ctx():
         return _Context(base="PERM")

@@ -906,6 +906,32 @@ def getFileAndLine(back=0):
     return (basename, frameOfInterest[1], frameOfInterest[2])  # (file, line, method)
 
 
+def unindent(string):
+    """
+    Return an unindented copy of the passed `string`.
+
+    Replace each occurrence in `string` of a newline followed by spaces with a
+    newline followed by the number of spaces by which said occurrence exceeds the
+    minimum number of spaces in any such occurrence.  Further strip all whitespace
+    from both ends of the resulting string before returning it.
+
+    """
+    # Expand tabs to be 4 spaces long
+    string = string.replace("\t", "    ")
+
+    # Find minimum indentation distance
+    indents = [len(match) for match in re.findall("\n( +)\S", string)]
+    if indents:
+        minIndent = min(indents)
+
+        # Unindent by that much
+        string = string.replace("\n" + " " * minIndent, "\n")
+        string = string.strip()
+        return string
+    else:
+        return string
+
+
 # Set the default log level from the environment, if it is specified
 if _utils.ENV_VAR_NAME in os.environ:
     base_logger.SetLogLevel(_utils.normalize(getLogLevel()))

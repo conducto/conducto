@@ -1,12 +1,9 @@
 import sys
 import os.path
 import importlib.util
-import colorama
 import conducto as co
-from conducto.shared import constants
+from conducto.shared import constants, log
 from conducto.debug import debug, livedebug
-
-colorama.init()
 
 
 def show(id):
@@ -48,7 +45,8 @@ def show(id):
             sys.exit(1)
 
     url = shell_ui.connect_url(pipeline_id)
-    print(f"View at {url}")
+    u_url = log.format(url, underline=True)
+    print(f"View at {u_url}")
 
     def cloud_wakeup():
         api.Manager().launch(token, pipeline_id)

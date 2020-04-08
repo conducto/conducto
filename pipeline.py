@@ -455,33 +455,13 @@ class Node:
             prebuild_images=prebuild_images,
         )
 
-    def launch_cloud(
-        self,
-        tags=None,
-        title=None,
-        use_shell=True,
-        retention=7,
-        run=False,
-        sleep_when_done=False,
-        prebuild_images=False,
-    ):
-        self._build(
-            build_mode=constants.BuildMode.DEPLOY_TO_CLOUD,
-            tags=tags,
-            title=title,
-            use_shell=use_shell,
-            retention=retention,
-            run=run,
-            sleep_when_done=sleep_when_done,
-            prebuild_images=prebuild_images,
-        )
-
     def _build(
         self,
         build_mode=constants.BuildMode.LOCAL,
         tags=None,
         title=None,
-        use_shell=True,
+        use_shell=False,
+        use_app=False,
         prebuild_images=False,
         retention=7,
         run=False,
@@ -500,7 +480,15 @@ class Node:
 
         from conducto.internal import build
 
-        return build.build(self, build_mode, tags, title, use_shell, retention)
+        return build.build(
+            self,
+            build_mode,
+            tags=tags,
+            title=title,
+            use_shell=use_shell,
+            use_app=use_app,
+            retention=retention,
+        )
 
     def pretty(self, strict=True):
         buf = []

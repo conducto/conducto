@@ -69,7 +69,7 @@ def connect_url(pipeline_id):
         if base[-1:] != "/":
             base += "/"
         url = f"{base}app/p/{pipeline_id}"
-    return log.format(url, underline=True)
+    return url
 
 
 def connect(

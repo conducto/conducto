@@ -538,7 +538,21 @@ class Exec(Node):
 
     __slots__ = ("command",)
 
-    def __init__(self, command, **kwargs):
+    def __init__(self, command, *args, **kwargs):
+        if callable(command):
+            from .glue import method
+
+            wrapper = method.Wrapper(command)
+            method.validate_args(wrapper, *args, **kwargs)
+            command = wrapper.to_command(*args, **kwargs)
+            kwargs = wrapper.get_exec_params(*args, **kwargs)
+            args = []
+
+        if args:
+            raise ValueError(
+                f"Only allowed arg is command. Got:\n  command={repr(command)}\n  args={args}\n  kwargs={kwargs}"
+            )
+
         super().__init__(**kwargs)
 
         # Instance variables

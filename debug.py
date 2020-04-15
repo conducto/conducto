@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import os
 import re
 import subprocess
@@ -117,6 +118,8 @@ def start_container(payload, live):
 
     if live:
         for external, internal in image["path_map"].items():
+            if not os.path.isabs(internal):
+                internal = get_work_dir_for_image(image_name) + "/" + internal
             options.append(f"-v {external}:{internal}:ro")
 
     command = f"docker run {' '.join(options)} --name={container_name} {image_name} tail -f /dev/null "
@@ -138,38 +141,27 @@ def dump_command(container_name, command, live):
         tfile.size = len(content)
         cmdtar.addfile(tfile, io.BytesIO(content.encode("utf-8")))
 
-    command_location = "/" if live else get_work_dir_for_container(container_name)
-
-    args = ["docker", "cp", "-", f"{container_name}:{command_location}"]
+    args = ["docker", "cp", "-", f"{container_name}:/"]
     proc = subprocess.run(args, input=tario.getvalue(), stdout=PIPE, stderr=PIPE)
     if proc.returncode != 0:
         stderr = proc.stderr.decode("utf-8").strip()
         raise RuntimeError(f"error placing conducto.cmd: ({stderr})")
 
-    execute_in(container_name, f"chmod u+x {command_location}/conducto.cmd")
-    if live:
-        print(f"Execute command by running {format('sh /conducto.cmd', color='cyan')}")
-    else:
-        print(f"Execute command by running {format(f'.conducto.cmd', color='cyan')}")
+    execute_in(container_name, f"chmod u+x /conducto.cmd")
+    print(f"Execute command by running {format('sh /conducto.cmd', color='cyan')}")
 
 
-def get_work_dir_for_container(image_details):
-    if type(image_details) == dict:
-        output = subprocess.check_output(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "-it",
-                image_details["name_complete"],
-                "sh",
-                "-c",
-                "pwd",
-            ]
-        )
-        return output.decode().strip()
+@functools.lru_cache()
+def get_work_dir_for_image(image_name):
+    output = subprocess.check_output(
+        ["docker", "run", "--rm", "-it", image_name, "sh", "-c", "pwd",]
+    )
+    return output.decode().strip()
 
-    return execute_in(image_details, "pwd").decode().strip()
+
+@functools.lru_cache()
+def get_work_dir_for_container(container_name):
+    return execute_in(container_name, "pwd").decode().strip()
 
 
 def get_home_dir_for_image(image_name):

@@ -163,10 +163,14 @@ class Image:
                 self.path_map = {self.copy_dir: dockerfile_mod.COPY_DIR}
 
         if self.path_map:
-            self.path_map = {
-                self.get_contextual_path(external): internal
-                for external, internal in self.path_map.items()
-            }
+            # Don't use a dict comprehension here - get_contextual_path looks back a
+            # specific number of frames in the stack to determine context, but a dict
+            # comprehension adds an extra layer that messes it up.
+            tmp_path_map = {}
+            for external, internal in self.path_map.items():
+                external = self.get_contextual_path(external)
+                tmp_path_map[external] = internal
+            self.path_map = tmp_path_map
 
         self.history = [HistoryEntry(Status.PENDING)]
 

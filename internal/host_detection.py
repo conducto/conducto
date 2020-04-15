@@ -1,4 +1,5 @@
 import os
+import sys
 import platform
 import subprocess
 
@@ -13,6 +14,20 @@ def is_mac():
 
 def is_wsl():
     return "microsoft" in platform.uname().version.lower()
+
+
+def host_exec():
+    venv = os.environ.get("VIRTUAL_ENV", None)
+    # woah, os.path.sep vs. os.pathsep -- gotta be kidding
+    pathdirs = os.environ["PATH"].split(os.pathsep)
+    dirname = os.path.dirname(sys.executable)
+
+    if venv is not None:
+        return sys.executable
+    elif dirname in pathdirs:
+        return os.path.basename(sys.executable)
+    else:
+        return sys.executable
 
 
 def system_open(url):

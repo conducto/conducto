@@ -33,13 +33,13 @@ def build(projects: typing.List[str]) -> co.Parallel:
 
 
 def test(projects: typing.List[str]) -> co.Parallel:
-    "Group tests by project, all in parallel, with the co.lazy_py helper"
+    "Group tests by project, all in parallel."
     output = co.Parallel()
     for project in projects:
         output[project] = co.Parallel()
         for name in utils.get_tests(project):
-            # co.lazy_py makes a node that calls the given method and args,
-            output[project][name] = co.lazy_py(utils.run_test, project, test=name)
+            # co.Exec often accepts a command string. In this case it takes (func, *args, **kwargs),
+            output[project][name] = co.Exec(utils.run_test, project, test=name)
     return output
 
 

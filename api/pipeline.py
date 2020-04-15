@@ -17,6 +17,12 @@ class Pipeline:
     ) -> t.PipelineId:
         headers = api_utils.get_auth_headers(token)
         in_data = {"command": command, "cloud": cloud, **kwargs}
+        # set the executable
+        if "executable" not in kwargs:
+            # conducto.internal has limited availability
+            import conducto.internal.host_detection as hostdet
+
+            in_data["executable"] = hostdet.host_exec()
         if "tags" in kwargs:
             in_data["tags"] = self.sanitize_tags(in_data["tags"])
         response = request_utils.post(

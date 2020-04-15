@@ -16,9 +16,9 @@ from .. import api, callback, image as image_mod, pipeline
 from . import arg
 
 
-# Validate arguments for the given function without calling it.
-# This is useful for raising early errors on `co.lazy_py()`
-def _validate_args(wrapper, *args, **kwargs):
+# Validate arguments for the given function without calling it. This is useful for
+# raising early errors on `co.lazy_py()` or `co.Exec(func, *args, **kwargs).
+def validate_args(wrapper, *args, **kwargs):
     params = wrapper.getSignature().parameters
 
     # TODO (kzhang): can target function have a `*args` or `**kwargs` in the
@@ -61,26 +61,23 @@ def lazy_shell(command, node_type, env=None, **exec_args) -> pipeline.Node:
 
 
 def lazy_py(func, *args, **kwargs) -> pipeline.Node:
-    wrapper = _Wrapper.get_or_create(func)
+    wrapper = Wrapper.get_or_create(func)
     return_type = wrapper.getSignature().return_annotation
 
     exec_params = wrapper.get_exec_params(*args, **kwargs)
 
-    _validate_args(wrapper, *args, **kwargs)
-    if issubclass(return_type, pipeline.Node):
-        # Do a GenJobs/GridJobs if a Node is returned
-        if issubclass(return_type, pipeline.Exec):
-            raise ValueError(
-                "Cannot call co.lazy_py() on a function that returns an Exec(). "
-                "Don't defer that Exec(), just do it."
-            )
+    validate_args(wrapper, *args, **kwargs)
 
-        env = exec_params.pop("env", {})
-        return lazy_shell(
-            wrapper.to_command(*args, **kwargs), return_type, env, **exec_params
+    if not issubclass(return_type, (pipeline.Parallel, pipeline.Serial)):
+        raise ValueError(
+            "Can only call co.lazy_py() on a function that returns a Parallel or Serial "
+            f"node, but got: {return_type}"
         )
-    else:
-        return pipeline.Exec(wrapper.to_command(*args, **kwargs), **exec_params)
+
+    env = exec_params.pop("env", {})
+    return lazy_shell(
+        wrapper.to_command(*args, **kwargs), return_type, env, **exec_params
+    )
 
 
 def meta(
@@ -108,7 +105,7 @@ def meta(
             requires_docker=requires_docker,
         )
 
-    func._conducto_wrapper = _Wrapper(
+    func._conducto_wrapper = Wrapper(
         func,
         mem=mem,
         cpu=cpu,
@@ -126,7 +123,7 @@ class NodeMethodError(Exception):
     pass
 
 
-class _Wrapper(object):
+class Wrapper(object):
     def __init__(
         self,
         func,
@@ -186,7 +183,9 @@ class _Wrapper(object):
         # These are the core arguments that define the args and kwargs that the
         # function is able to understand as inputs.
         args = arg._FuncArgs.FromFunction(self.function)
-        args.helpStr = self.function.__doc__
+        args.helpStr = (
+            log.unindent(self.function.__doc__) if self.function.__doc__ else None
+        )
         return args
 
     def getSignature(self):
@@ -210,6 +209,12 @@ class _Wrapper(object):
         sig = self.getSignature()
         bound = sig.bind(*args, **kwargs)
         for k, v in bound.arguments.items():
+            if v is True:
+                parts.append(f"--{k}")
+                continue
+            if v is False:
+                parts.append(f"--no-{k}")
+                continue
             if not client_utils.isiterable(v):
                 v = [v]
             parts += ["--{}={}".format(k, t.LIST_DELIM.join(map(t.serialize, v)))]
@@ -299,7 +304,7 @@ class _Wrapper(object):
         if hasattr(func, "_conducto_wrapper"):
             return func._conducto_wrapper
         else:
-            return _Wrapper(func)
+            return Wrapper(func)
 
 
 def _get_common(tuples):
@@ -579,7 +584,7 @@ def main(
         else:
             parser.add_argument(*args, required=_required, default=default)
 
-    wrapper = _Wrapper.get_or_create(callFunc)
+    wrapper = Wrapper.get_or_create(callFunc)
 
     return_type = wrapper.getSignature().return_annotation
 
@@ -660,6 +665,10 @@ def main(
                         f"Trying to overwrite `{key}`={value} that is already set."
                     )
                 setattr(output, key, value)
+
+        # Set the doc on the Node
+        if output.doc is None and callFunc.__doc__ is not None:
+            output.doc = log.unindent(callFunc.__doc__)
 
         # Read command-line args
         is_cloud = conducto_state["cloud"]

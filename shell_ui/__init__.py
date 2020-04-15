@@ -22,6 +22,7 @@ else:
 from .. import api
 from ..shared import constants, log, types as t
 from ..shared.constants import State
+import conducto.internal.host_detection as hostdet
 
 
 if sys.version_info < (3, 7):
@@ -428,7 +429,7 @@ class ShellUI(object):
             print(
                 log.format(
                     f"\r\nTo reconnect, run:"
-                    f"\r\nconducto show --id={self.pipeline['pipeline_id']}",
+                    f"\r\n{hostdet.host_exec()} -m conducto show --id={self.pipeline['pipeline_id']}",
                     color="cyan",
                 ),
                 end="",

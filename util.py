@@ -1,6 +1,10 @@
+import importlib
+import inspect
 import os
+import re
+import traceback
 from . import pipeline
-from .shared import types as t
+from .shared import log, types as t
 
 
 def env_bool(key):
@@ -73,3 +77,36 @@ def makedatenodes(baseNode, dates, makeLeafNode=False, reverse=True, nodeType=No
         reverse=reverse,
         nodeType=nodeType,
     )
+
+
+def magic_doc(*, func=None, doc_only=False):
+    if func is None:
+        st = traceback.extract_stack()
+        func_name = st[-2].name
+        module_name = os.path.basename(st[-2].filename).split(".py")[0]
+        module = importlib.import_module(module_name)
+        func = getattr(module, func_name)
+    else:
+        module = inspect.getmodule(func)
+
+    docstring = func.__doc__
+    if docstring is not None:
+        # Strip out the docstring from the function.
+        code = inspect.getsource(func)
+        for quote in '"""', "'''", '"', "'":
+            if f"{quote}{docstring}{quote}" in code:
+                # This first step leaves a blank line with whitespace, so the second
+                # step removes it.
+                code = code.replace(f"{quote}{docstring}{quote}", "", 1)
+                code = re.sub("\n\s+\n", "\n", code, 1)
+                break
+    else:
+        docstring = module.__doc__
+        code = inspect.getsource(func)
+
+    pretty_doc = log.unindent(docstring)
+
+    if doc_only:
+        return pretty_doc
+    else:
+        return f"{pretty_doc}\n\n```python\n{code}\n```"

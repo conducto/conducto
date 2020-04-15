@@ -16,7 +16,7 @@ import conducto.internal.host_detection as hostdet
 @functools.lru_cache(None)
 def docker_available_drives():
     lsdrives = "docker run --rm -v /:/mnt/external alpine ls /mnt/external/host_mnt"
-    proc = subprocess.run(lsdrives, shell=True, stdout=subprocess.PIPE)
+    proc = subprocess.run(lsdrives, shell=True, check=True, stdout=subprocess.PIPE)
 
     results = proc.stdout.decode("utf-8").split("\n")
     return [s.strip().upper() for s in results if s.strip() != ""]

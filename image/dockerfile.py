@@ -2,6 +2,7 @@ import asyncio
 import functools
 import packaging.version
 import re
+import pipes
 import subprocess
 
 from conducto.shared import async_utils, client_utils
@@ -15,7 +16,25 @@ async def text_for_build_dockerfile(image, reqs_py, copy_url, copy_branch):
     lines = [f"FROM {image}"]
 
     if reqs_py:
-        py_binary, _py_version = await get_python_version(image)
+        py_binary, _py_version, pip_binary = await get_python_version(image)
+
+        if reqs_py and not pip_binary:
+            # install pip as per distro
+            linux_flavor, linux_version = await _get_linux_flavor_and_version(image)
+
+            if _is_debian(linux_flavor):
+                lines.append("RUN apt-get update")
+                # this will install python too
+                lines.append(f"RUN apt-get install -y python3-pip")
+                pip_binary = "pip3"
+                py_binary = "python3"
+            elif _is_alpine(linux_flavor):
+                lines.append("RUN apk update")
+                # this will install pip3 as well
+                lines.append(f"RUN apk add --update python3")
+                pip_binary = "pip3"
+                py_binary = "python3"
+
         if py_binary is None:
             raise Exception(
                 f"Cannot find suitable python in {image} for installing {reqs_py}"
@@ -23,7 +42,7 @@ async def text_for_build_dockerfile(image, reqs_py, copy_url, copy_branch):
 
         non_conducto_reqs_py = [r for r in reqs_py if r != "conducto"]
         if non_conducto_reqs_py:
-            lines.append("RUN pip install " + " ".join(non_conducto_reqs_py))
+            lines.append(f"RUN {pip_binary} install " + " ".join(non_conducto_reqs_py))
 
         if "conducto" in reqs_py:
             if api.Config().get("dev", "who"):
@@ -56,7 +75,7 @@ async def text_for_extend_dockerfile(user_image):
     linux_flavor, linux_version = await _get_linux_flavor_and_version(user_image)
 
     # Determine python version and binary.
-    acceptable_binary, pyvers = await get_python_version(user_image)
+    acceptable_binary, pyvers, pip_binary = await get_python_version(user_image)
 
     default_python = None
     if pyvers is not None:
@@ -128,6 +147,7 @@ def pull_conducto_worker(worker_image):
 
 @async_utils.async_cache
 async def get_python_version(user_image):
+    pyresults = [None, None]
 
     for binary in [
         "python",
@@ -139,15 +159,27 @@ async def get_python_version(user_image):
     ]:
         try:
             version = await _get_python_version(user_image, binary)
+            pyresults = [binary, version.release[0:2]]
+            break
         except (
             subprocess.CalledProcessError,
             LowPException,
             packaging.version.InvalidVersion,
         ):
             pass
-        else:
-            return binary, version.release[0:2]
-    return None, None
+
+    pipresults = None
+    # if no python, there is no point in looking for pip
+    if pyresults[0]:
+        for binary in ["pip", "pip3"]:
+            try:
+                version = await _get_pip_version(user_image, binary)
+                pipresults = binary
+                break
+            except subprocess.CalledProcessError:
+                pass
+
+    return pyresults[0], pyresults[1], pipresults
 
 
 async def _get_python_version(user_image, python_binary) -> packaging.version.Version:
@@ -180,6 +212,42 @@ async def _get_python_version(user_image, python_binary) -> packaging.version.Ve
     if python_version < packaging.version.Version("3.5"):
         raise LowPException("")
     return python_version
+
+
+async def _get_pip_version(user_image, pip_binary) -> packaging.version.Version:
+    """Gets pip version within a Docker image.
+    Args:
+        user_image: image name
+        pip_binary: Python binary (e.g. pip3)
+    Returns:
+        packaging.version.Version object
+    Raises:
+        supprocess.CalledProcessError if binary doesn't exist
+    """
+
+    words = [
+        "docker",
+        "run",
+        "--rm",
+        user_image,
+        pip_binary,
+        "--version",
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *words, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    out, err = await proc.communicate()
+    out = out.decode("utf-8")
+
+    if proc.returncode != 0:
+        cmdstr = " ".join(pipes.quote(a) for a in words)
+        raise subprocess.CalledProcessError(proc.returncode, cmdstr, out, err)
+
+    # we don't really care about the pip version, but I retain it here for
+    # similarity with the python version of this function.
+    pip_version = re.search(r"^pip ([0-9.]+)", out)
+    pip_version = packaging.version.Version(pip_version.group(1))
+    return pip_version
 
 
 async def _get_linux_flavor_and_version(user_image):

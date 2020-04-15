@@ -4,6 +4,7 @@ import re
 import sys
 import tarfile
 import typing
+import urllib.parse
 
 
 class _Context:
@@ -218,7 +219,8 @@ class _Data:
 
         pipeline_id = os.environ["CONDUCTO_PIPELINE_ID"]
         conducto_url = os.environ["CONDUCTO_AUTO_URL"]
-        return f"{conducto_url}/pgw/data/{pipeline_id}/{data_type}/{name}"
+        qname = urllib.parse.quote(name)
+        return f"{conducto_url}/pgw/data/{pipeline_id}/{data_type}/{qname}"
 
     @classmethod
     def _main(cls):

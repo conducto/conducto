@@ -5,6 +5,7 @@ from .image import Image, relpath
 from .data import temp_data, perm_data
 from .util import env_bool
 from ._version import __version__
+from . import api
 
 __all__ = [
     "Exec",
@@ -20,4 +21,5 @@ __all__ = [
     "relpath",
     "SameContainer",
     "env_bool",
+    "api",
 ]

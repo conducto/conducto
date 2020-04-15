@@ -932,6 +932,46 @@ def unindent(string):
         return string
 
 
+def indent(string, spaces=4, tabs=0, notAtStart=False, notAtEnd=False):
+    """
+    Return a str copy of the input where the sequence
+
+    - `tabs` (default: 0) horizontal tab characters, followed by
+    - `spaces` (default: 4) space characters
+
+    has been inserted
+
+    - before the first character of the input, and
+    - after every newline in the input
+
+    If `notAtStart` is True (default: False), then do not insert the indentation
+    sequence before the start of the input.
+
+    If `notAtEnd` is True (default: False), then do not insert the indentation
+    sequence at the end of the input even if the final character is a newline.
+
+    NOTE: Encode each tab character as 'backslash t' rather than as ASCII HT.
+
+    """
+
+    indentationSequence = "\t" * tabs + " " * spaces
+    newlineIndentationSequence = "\n" + indentationSequence
+
+    result = io.StringIO()
+
+    if not notAtStart:
+        result.write(indentationSequence)
+
+    if not notAtEnd or not string.endswith("\n"):
+        result.write(string.replace("\n", newlineIndentationSequence))
+    else:
+        result.write(
+            string.replace("\n", newlineIndentationSequence, string.count("\n") - 1)
+        )
+
+    return result.getvalue()
+
+
 # Set the default log level from the environment, if it is specified
 if _utils.ENV_VAR_NAME in os.environ:
     base_logger.SetLogLevel(_utils.normalize(getLogLevel()))

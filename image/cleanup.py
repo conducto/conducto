@@ -45,9 +45,10 @@ async def cleanup(label, age):
     # Set stop_on_error=False because some images cannot be deleted and that's okay.
     # This can happen if some containers are still running, or if they're basic images
     # like 'python' or 'alpine' that are used by images outside of this label.
-    await async_utils.run_and_check(
-        "docker", "image", "rm", *to_delete, stop_on_error=False
-    )
+    if to_delete:
+        await async_utils.run_and_check(
+            "docker", "image", "rm", *to_delete, stop_on_error=False
+        )
 
 
 def _parse_age(duration) -> float:

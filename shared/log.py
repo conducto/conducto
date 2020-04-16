@@ -108,7 +108,7 @@ def format(s, color=None, bold=True, underline=False, dim=False):
     if not codes:
         return s
     codeStr = ";".join(codes)
-    return "\033[{}m{}\033[0m".format(codeStr, s)
+    return f"\033[{codeStr}m{s}\033[0m"
 
 
 def strip_format(string):
@@ -367,6 +367,7 @@ class base_logger(object):
         framecolor - default: non-bold Color.TRUEWHITE
         color .... - Color to apply to each *arg (default: None)
         bold ..... - if True (default), and `color` is in effect, use bold ANSIColors.  No effect otherwise.
+        underline  - if True and `color` is in effect, use underlines ANSIColors. No effect otherwise.
 
         nofw ..... - if True, do NOT enforce a fixed width on the memory and stack frame presentation
 
@@ -402,6 +403,7 @@ class base_logger(object):
         mindent = kwargs.get("mindent", 2)
         indentNewLines = kwargs.get("indentNewLines", None)
         bold = kwargs.get("bold", True)
+        underline = kwargs.get("underline", False)
         color = kwargs.get("color", None)
         delim = kwargs.get("delim", " ")
 
@@ -533,7 +535,10 @@ class base_logger(object):
                     message.write(delim.join(str(arg) for arg in args))
                 else:
                     message.write(
-                        delim.join(format(arg, color=color, bold=bold) for arg in args)
+                        delim.join(
+                            format(arg, color=color, bold=bold, underline=underline)
+                            for arg in args
+                        )
                     )
         messageStr = message.getvalue()
         if indentNewLines and 0:

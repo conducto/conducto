@@ -93,9 +93,10 @@ def start_container(payload, live):
     container_name = "conducto_debug_" + str(random.randrange(1 << 64))
     print("Launching docker container...")
     if live:
-        print("Context will be mounted read-only")
+        print("Context will be mounted read-write")
         print(
-            "Make modifications on the host machine, and they will be reflected in the container."
+            "Make modifications on your local  machine, "
+            "and they will be reflected in the container."
         )
 
     options = []
@@ -120,7 +121,7 @@ def start_container(payload, live):
         for external, internal in image["path_map"].items():
             if not os.path.isabs(internal):
                 internal = get_work_dir_for_image(image_name) + "/" + internal
-            options.append(f"-v {external}:{internal}:ro")
+            options.append(f"-v {external}:{internal}")
 
     command = f"docker run {' '.join(options)} --name={container_name} {image_name} tail -f /dev/null "
 
@@ -154,14 +155,24 @@ def dump_command(container_name, command, live):
 @functools.lru_cache()
 def get_work_dir_for_image(image_name):
     output = subprocess.check_output(
-        ["docker", "run", "--rm", "-it", image_name, "sh", "-c", "pwd",]
+        ["docker", "image", "inspect", "--format", "{{.Config.WorkingDir}}", image_name]
     )
     return output.decode().strip()
 
 
 @functools.lru_cache()
 def get_work_dir_for_container(container_name):
-    return execute_in(container_name, "pwd").decode().strip()
+    output = subprocess.check_output(
+        [
+            "docker",
+            "container",
+            "inspect",
+            "--format",
+            "{{.Config.WorkingDir}}",
+            container_name,
+        ]
+    )
+    return output.decode().strip()
 
 
 def get_home_dir_for_image(image_name):

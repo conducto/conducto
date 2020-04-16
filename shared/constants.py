@@ -3,7 +3,15 @@ import string
 
 
 def skip(base_state):
+    if base_state in State.skipped:
+        return base_state
     return base_state + "_skipped"
+
+
+def unskip(skipped_state):
+    if skipped_state in State.unskipped:
+        return skipped_state
+    return skipped_state[:-8]
 
 
 class State:
@@ -19,9 +27,9 @@ class State:
     in_progress = {QUEUED, RUNNING}
     finished = {DONE, WARNING, ERROR, WORKER_ERROR}
 
-    stopped |= {skip(s) for s in stopped}
-    in_progress |= {skip(s) for s in in_progress}
-    finished |= {skip(s) for s in finished}
+    stopped |= {s + "_skipped" for s in stopped}
+    in_progress |= {s + "_skipped" for s in in_progress}
+    finished |= {s + "_skipped" for s in finished}
 
     all = stopped | in_progress
 
@@ -29,6 +37,7 @@ class State:
     unskipped = {s for s in all if not s.endswith("_skipped")}
 
     skip = skip
+    unskip = unskip
 
 
 QSUB_KWARGS = ["cpu", "mem", "gpu", "image", "requires_docker"]

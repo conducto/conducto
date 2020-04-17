@@ -70,6 +70,8 @@ class Node:
         "same_container",
         "env",
         "doc",
+        "title",
+        "tags",
         "_repo",
         "_autorun",
         "_sleep_when_done",
@@ -90,6 +92,8 @@ class Node:
         image: typing.Union[str, image_mod.Image] = None,
         image_name=None,
         doc=None,
+        title=None,
+        tags: typing.Iterable = None,
     ):
         self.id_generator, self.id_root = itertools.count(), self
         self.id = None
@@ -120,6 +124,8 @@ class Node:
         self.env = env or {}
 
         self.doc = doc
+        self.title = title
+        self.tags = self.sanitize_tags(tags)
 
         self.result = {}
         if name is not None:
@@ -305,28 +311,28 @@ class Node:
             return True
 
     def describe(self):
-        return {
+        output = {
             **self.user_set,
             **{"__env__" + key: value for key, value in self.env.items()},
-            **{
-                "id": self,
-                "callbacks": [
-                    (event, cb.to_literal()) for event, cb in self._callbacks
-                ],
-                "type": self.__class__.__name__,
-                "suppress_errors": getattr(self, "suppress_errors", False),
-                "same_container": getattr(
-                    self, "same_container", constants.SameContainer.INHERIT
-                ),
-            },
-            **({"doc": self.doc} if self.doc else {}),
-            **(
-                {"stop_on_error": self.stop_on_error}
-                if isinstance(self, Serial)
-                else {}
-            ),
-            **({"command": self.command} if isinstance(self, Exec) else {}),
+            "id": self,
+            "callbacks": [(event, cb.to_literal()) for event, cb in self._callbacks],
+            "type": self.__class__.__name__,
         }
+        if self.doc:
+            output["doc"] = self.doc
+        if self.title:
+            output["title"] = self.title
+        if self.tags:
+            output["tags"] = self.tags
+        if self.same_container != constants.SameContainer.INHERIT:
+            output["same_container"] = self.same_container
+        if self.suppress_errors:
+            output["suppress_errors"] = self.suppress_errors
+        if isinstance(self, Serial):
+            output["stop_on_error"] = self.stop_on_error
+        if isinstance(self, Exec):
+            output["command"] = self.command
+        return output
 
     def serialize(self, pretty=False):
         def validate_env(node):
@@ -436,8 +442,6 @@ class Node:
 
     def launch_local(
         self,
-        tags=None,
-        title=None,
         use_shell=True,
         retention=7,
         run=False,
@@ -446,8 +450,6 @@ class Node:
     ):
         self._build(
             build_mode=constants.BuildMode.LOCAL,
-            tags=tags,
-            title=title,
             use_shell=use_shell,
             retention=retention,
             run=run,
@@ -458,8 +460,6 @@ class Node:
     def _build(
         self,
         build_mode=constants.BuildMode.LOCAL,
-        tags=None,
-        title=None,
         use_shell=False,
         use_app=False,
         prebuild_images=False,
@@ -481,13 +481,7 @@ class Node:
         from conducto.internal import build
 
         return build.build(
-            self,
-            build_mode,
-            tags=tags,
-            title=title,
-            use_shell=use_shell,
-            use_app=use_app,
-            retention=retention,
+            self, build_mode, use_shell=use_shell, use_app=use_app, retention=retention,
         )
 
     def pretty(self, strict=True):
@@ -529,6 +523,20 @@ class Node:
             node._pretty(
                 this_node_prefix, this_child_prefix, new_index_str, buf, strict
             )
+
+    @staticmethod
+    def sanitize_tags(val):
+        if val is None:
+            return val
+        elif isinstance(val, (bytes, str)):
+            return [val]
+        elif isinstance(val, (list, tuple, set)):
+            for v in val:
+                if not isinstance(v, (bytes, str)):
+                    raise TypeError(f"Expected list of strings, got: {repr(v)}")
+            return val
+        else:
+            raise TypeError(f"Cannot convert {repr(val)} to list of strings.")
 
 
 class Exec(Node):

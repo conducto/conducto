@@ -10,7 +10,7 @@ import typing
 
 import conducto.internal.host_detection as hostdet
 from ..shared import client_utils, constants, log, types as t
-from .._version import __version__
+from .._version import __version__, __sha1__
 
 from .. import api, callback, image as image_mod, pipeline
 from . import arg
@@ -89,8 +89,6 @@ def meta(
     env=None,
     image=None,
     requires_docker=None,
-    title=None,
-    tags=None,
 ):
     if func is None:
         return functools.partial(
@@ -100,8 +98,6 @@ def meta(
             gpu=gpu,
             image=image,
             env=env,
-            title=title,
-            tags=tags,
             requires_docker=requires_docker,
         )
 
@@ -111,8 +107,6 @@ def meta(
         cpu=cpu,
         gpu=gpu,
         env=env,
-        title=title,
-        tags=tags,
         image=image,
         requires_docker=requires_docker,
     )
@@ -131,9 +125,7 @@ class Wrapper(object):
         cpu=None,
         gpu=None,
         env=None,
-        title=None,
         image=None,
-        tags=None,
         requires_docker=None,
     ):
 
@@ -163,8 +155,6 @@ class Wrapper(object):
             "requires_docker": requires_docker,
             "doc": doc,
         }
-        self.title = title
-        self.tags = api.Pipeline.sanitize_tags(tags)
 
     def get_exec_params(self, *args, **kwargs):
         output = {}
@@ -529,7 +519,7 @@ def main(
     parser.add_argument(
         "--version",
         action="version",
-        version=__version__,
+        version=f"{__version__} (sha1={__sha1__})",
         help="show conducto package version",
     )
     if default is not None:
@@ -686,19 +676,14 @@ def main(
                 log.log("BUILD_ONLY requested, and just finished building. Exiting.")
                 return
 
-            title = (
-                wrapper.title
-                if wrapper.title != None
-                else _get_default_title(
+            if output.title is None:
+                output.title = _get_default_title(
                     is_local, specifiedFuncName, default_method_name
                 )
-            )
             BM = constants.BuildMode
             output._build(
                 use_shell=use_shell,
                 use_app=use_app,
-                title=title,
-                tags=api.Pipeline.sanitize_tags(wrapper.tags),
                 prebuild_images=prebuild_images,
                 build_mode=BM.LOCAL if is_local else BM.DEPLOY_TO_CLOUD,
                 run=run,

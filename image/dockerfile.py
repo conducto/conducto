@@ -20,7 +20,11 @@ async def text_for_build_dockerfile(image, reqs_py, copy_url, copy_branch):
 
         if reqs_py and not pip_binary:
             # install pip as per distro
-            linux_flavor, linux_version = await _get_linux_flavor_and_version(image)
+            (
+                linux_flavor,
+                linux_version,
+                linux_name,
+            ) = await _get_linux_flavor_and_version(image)
 
             if _is_debian(linux_flavor):
                 lines.append("RUN apt-get update")
@@ -71,8 +75,9 @@ async def text_for_build_dockerfile(image, reqs_py, copy_url, copy_branch):
 async def text_for_extend_dockerfile(user_image):
     lines = [f"FROM {user_image}"]
 
-    # TODO: Use Docker commands instead of RUN where possible.
-    linux_flavor, linux_version = await _get_linux_flavor_and_version(user_image)
+    linux_flavor, linux_version, linux_name = await _get_linux_flavor_and_version(
+        user_image
+    )
 
     # Determine python version and binary.
     acceptable_binary, pyvers, pip_binary = await get_python_version(user_image)
@@ -85,12 +90,17 @@ async def text_for_extend_dockerfile(user_image):
         default_python = which_python.decode("utf8").strip()
 
     if _is_debian(linux_flavor):
-        if linux_version == "10":  # buster
+        if linux_version == "10" or "buster" in linux_name:  # buster
             suffix = "slim-buster"
-        elif linux_version == "9":  # stretch
+        elif linux_version == "9" or "stretch" in linux_name:  # stretch
             suffix = "slim-stretch"
         else:
-            raise UnsupportedPythonException(f"Unsupported Python version {pyvers}")
+            raise UnsupportedPythonException(
+                f"Unsupported Python version {pyvers} for "
+                f"linux_flavor={linux_flavor}, "
+                f"linux_version={linux_version}, "
+                f"linux_name={linux_name}"
+            )
         if pyvers is None:
             lines.append("RUN apt-get update")
             lines.append(f"RUN apt-get install -y python3.7-dev")
@@ -263,6 +273,7 @@ async def _get_linux_flavor_and_version(user_image):
 
     flavor = None
     version = None
+    pretty_name = None
 
     # Now we filter out only lines that start with ID= & VERSION_ID= for flavor
     # and version respectively.
@@ -272,8 +283,10 @@ async def _get_linux_flavor_and_version(user_image):
             flavor = line[len("ID=") :].strip().strip('"')
         if line.startswith("VERSION_ID="):
             version = line[len("VERSION_ID=") :].strip().strip('"')
+        if line.startswith("PRETTY_NAME="):
+            pretty_name = line[len("PRETTY_NAME=") :].strip().strip('"')
 
-    return flavor, version
+    return flavor, version, pretty_name
 
 
 def _is_debian(linux_flavor):

@@ -98,8 +98,6 @@ def _windows_translate_locations(node):
 def build(
     node,
     build_mode=constants.BuildMode.DEPLOY_TO_CLOUD,
-    tags=None,
-    title=None,
     use_shell=False,
     use_app=True,
     retention=7,
@@ -132,7 +130,12 @@ def build(
     # Register pipeline, get <pipeline_id>
     cloud = build_mode == constants.BuildMode.DEPLOY_TO_CLOUD
     pipeline_id = api.Pipeline().create(
-        token, command, cloud=cloud, retention=retention, tags=tags or [], title=title
+        token,
+        command,
+        cloud=cloud,
+        retention=retention,
+        tags=node.tags or [],
+        title=node.title,
     )
 
     url = shell_ui.connect_url(pipeline_id)

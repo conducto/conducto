@@ -4,7 +4,7 @@ from .shared.constants import SameContainer
 from .image import Image, relpath
 from .data import temp_data, perm_data
 from .util import env_bool
-from ._version import __version__
+from ._version import __version__, __sha1__
 from . import api
 
 __all__ = [

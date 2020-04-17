@@ -1,4 +1,3 @@
-import json
 from .. import api
 from ..shared import constants, types as t, request_utils
 from . import api_utils
@@ -15,6 +14,8 @@ class Pipeline:
     def create(
         self, token: t.Token, command: str, cloud: bool, **kwargs
     ) -> t.PipelineId:
+        from ..pipeline import Node
+
         headers = api_utils.get_auth_headers(token)
         in_data = {"command": command, "cloud": cloud, **kwargs}
         # set the executable
@@ -24,7 +25,7 @@ class Pipeline:
 
             in_data["executable"] = hostdet.host_exec()
         if "tags" in kwargs:
-            in_data["tags"] = self.sanitize_tags(in_data["tags"])
+            in_data["tags"] = Node.sanitize_tags(in_data["tags"])
         response = request_utils.post(
             self.url + "/program/program", headers=headers, data=in_data
         )
@@ -53,13 +54,15 @@ class Pipeline:
         return api_utils.get_data(response)
 
     def update(self, token: t.Token, pipeline_id: t.PipelineId, params: dict, *args):
+        from ..pipeline import Node
+
         headers = api_utils.get_auth_headers(token)
         keys = args if args else params.keys()
         if len(keys) == 0:
             raise Exception("No params to update on pipeline!")
         data = {k: params[k] for k in keys}
         if "tags" in data:
-            data["tags"] = self.sanitize_tags(data["tags"])
+            data["tags"] = Node.sanitize_tags(data["tags"])
         response = request_utils.put(
             self.url + f"/program/program/{pipeline_id}", headers=headers, data=data
         )
@@ -109,20 +112,6 @@ class Pipeline:
             return False
         else:
             return True
-
-    @staticmethod
-    def sanitize_tags(val):
-        if val is None:
-            return val
-        elif isinstance(val, (bytes, str)):
-            return [val]
-        elif isinstance(val, (list, tuple, set)):
-            for v in val:
-                if not isinstance(v, (bytes, str)):
-                    raise TypeError(f"Expected list of strings, got: {repr(v)}")
-            return val
-        else:
-            raise TypeError(f"Cannot convert {repr(val)} to list of strings.")
 
 
 AsyncPipeline = api_utils.async_helper(Pipeline)

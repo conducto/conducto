@@ -81,7 +81,7 @@ def makedatenodes(baseNode, dates, makeLeafNode=False, reverse=True, nodeType=No
 
 def magic_doc(*, func=None, doc_only=False):
     if func is None:
-        st = traceback.extract_stack()
+        st = traceback.extract_stack(limit=2)
         func_name = st[-2].name
         module_name = os.path.basename(st[-2].filename).split(".py")[0]
         module = importlib.import_module(module_name)

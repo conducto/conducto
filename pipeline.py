@@ -1,14 +1,16 @@
 import base64
 import collections
+import functools
 import gzip
 import itertools
 import json
 import os
 import re
+import traceback
 import typing
 
-from .shared import constants, log
-from . import callback, image as image_mod
+from .shared import constants, log, types as t
+from . import api, callback, image as image_mod
 
 State = constants.State
 
@@ -53,6 +55,14 @@ class Node:
 
     _CONTEXT_STACK = []
 
+    _NUM_FILE_AND_LINE_CALLS = 0
+    _MAX_FILE_AND_LINE_CALLS = 50000
+
+    if api.Config().get("config", "force_debug_info") or t.Bool(
+        os.getenv("CONDUCTO_FORCE_DEBUG_INFO")
+    ):
+        _MAX_FILE_AND_LINE_CALLS = 10 ** 20
+
     __slots__ = (
         "_name",
         "id",
@@ -72,6 +82,8 @@ class Node:
         "doc",
         "title",
         "tags",
+        "file",
+        "line",
         "_repo",
         "_autorun",
         "_sleep_when_done",
@@ -94,6 +106,8 @@ class Node:
         doc=None,
         title=None,
         tags: typing.Iterable = None,
+        file=None,
+        line=None,
     ):
         self.id_generator, self.id_root = itertools.count(), self
         self.id = None
@@ -148,6 +162,12 @@ class Node:
         # These are only to be set on the root node, and only by co.main().
         self._autorun = None
         self._sleep_when_done = None
+
+        if file is not None:
+            self.file = file
+            self.line = line
+        else:
+            self.file, self.line = self._get_file_and_line()
 
     def __enter__(self):
         Node._CONTEXT_STACK.append(self)
@@ -317,6 +337,8 @@ class Node:
             "id": self,
             "callbacks": [(event, cb.to_literal()) for event, cb in self._callbacks],
             "type": self.__class__.__name__,
+            "file": self.file,
+            "line": self.line,
         }
         if self.doc:
             output["doc"] = self.doc
@@ -538,6 +560,28 @@ class Node:
         else:
             raise TypeError(f"Cannot convert {repr(val)} to list of strings.")
 
+    @staticmethod
+    def _get_file_and_line():
+        if Node._NUM_FILE_AND_LINE_CALLS > Node._MAX_FILE_AND_LINE_CALLS:
+            return None, None
+        Node._NUM_FILE_AND_LINE_CALLS += 1
+
+        for frame, lineno in traceback.walk_stack(None):
+            filename = frame.f_code.co_filename
+            if not filename.startswith(_conducto_dir):
+                if not _isabs(filename):
+                    filename = _abspath(filename)
+                return filename, lineno
+
+        return None, None
+
+    @staticmethod
+    def force_debug_info(val):
+        if val:
+            Node._MAX_FILE_AND_LINE_CALLS = 10 ** 30
+        else:
+            Node._MAX_FILE_AND_LINE_CALLS = 10 ** 4
+
 
 class Exec(Node):
     """
@@ -645,3 +689,8 @@ class Serial(Node):
             doc=doc,
         )
         self.stop_on_error = stop_on_error
+
+
+_abspath = functools.lru_cache(1000)(os.path.abspath)
+_isabs = functools.lru_cache(1000)(os.path.isabs)
+_conducto_dir = os.path.dirname(__file__) + "/"

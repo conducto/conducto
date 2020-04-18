@@ -1,5 +1,6 @@
 import os
 import io
+import json
 import re
 import sys
 import tarfile
@@ -230,7 +231,7 @@ class _Data:
             "delete": cls.delete,
             "exists": cls.exists,
             "get": cls.get,
-            "gets": cls.gets,
+            "gets": cls._gets_from_command_line,
             "list": cls.list,
             "put": cls.put,
             "puts": cls._puts_from_command_line,
@@ -240,7 +241,16 @@ class _Data:
             "save-cache": cls.save_cache,
             "restore-cache": cls.restore_cache,
         }
-        co.main(variables=variables)
+        co.main(variables=variables, printer=cls._print)
+
+    @classmethod
+    def _gets_from_command_line(cls, name, *, byte_range: typing.List[int] = None):
+        """
+        Read object stored at `name` and write it to stdout. Use `byte_range=start,end`
+        to optionally specify a [start, end) range within the object to read.
+        """
+        obj = cls.gets(name, byte_range=byte_range)
+        sys.stdout.buffer.write(obj)
 
     @classmethod
     def _puts_from_command_line(cls, name):
@@ -249,6 +259,14 @@ class _Data:
         """
         obj = sys.stdin.read().encode()
         return cls.puts(name, obj)
+
+    @classmethod
+    def _print(cls, val):
+        if val is None:
+            return
+        if isinstance(val, bytes):
+            val = val.decode()
+        print(json.dumps(val))
 
 
 class temp_data(_Data):

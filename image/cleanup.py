@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import dateutil.parser
 import re
 import typing
 
@@ -94,8 +95,15 @@ async def _get_last_use_times(image_ids) -> typing.Dict[str, datetime]:
     )
     output = {}
     for image_id, tm_str in zip(image_ids, out.decode().splitlines()):
-        without_nanos = re.sub("\.\d+", "", tm_str)
-        dt = datetime.strptime(without_nanos, "%Y-%m-%d %H:%M:%S %z %Z")
+        try:
+            dt = dateutil.parser.parse(tm_str)
+        except ValueError:
+            # Sometimes Docker gives a string like this, that dateutil can't parse:
+            #     2020-04-17 14:51:02.123456789 +0000 UTC
+            # Handle this case specially.
+            without_nanos = re.sub("\.\d+", "", tm_str)
+            dt = datetime.strptime(without_nanos, "%Y-%m-%d %H:%M:%S %z %Z")
+
         output[image_id] = dt.astimezone(timezone.utc)
     return output
 

@@ -417,6 +417,7 @@ def main(
     mem=None,
     requires_docker=False,
     image: typing.Union[None, str, image_mod.Image] = None,
+    printer=pprint.pprint,
 ):
     try:
         import colorama
@@ -503,7 +504,9 @@ def main(
         if accepts_cloud:
             commands = "[--cloud] " + commands
 
-        node_usage = " " * (len(prog) + 8) + commands
+        node_l1 = commands
+        node_l2 = "[--app / --no-app] [--shell / --no-shell]"
+        node_usage = "\n".join([" " * (len(prog) + 8) + l for l in [node_l1, node_l2]])
     else:
         node_usage = ""
 
@@ -619,7 +622,9 @@ def main(
     call_state = {
         name: arg.Base(name, defaultType=types[name]).parseCL(value)
         for name, value in call_state.items()
-        if name not in conducto_args and value != inspect.Parameter.empty
+        if name not in conducto_args
+        and value != inspect.Parameter.empty
+        and value is not None
     }
 
     output = callFunc(**wrapper.getCallArgs(**call_state))
@@ -698,6 +703,6 @@ def main(
                 print(f"<__conducto_serialization>{s}</__conducto_serialization>\n")
             print(output.pretty(strict=False))
     elif output is not None:
-        pprint.pprint(output)
+        printer(output)
 
     return output

@@ -219,13 +219,15 @@ class Image:
 
         # Translate relative paths as starting from the file where they were defined.
         if not op.isabs(p):
-            stack = traceback.extract_stack()
-            from_file = stack[-3].filename
-            pipeline = op.join(op.dirname(op.dirname(__file__)), "pipeline.py")
-            if op.realpath(from_file) == op.realpath(pipeline):
-                from_file = stack[-4].filename
-            from_dir = op.dirname(from_file)
-            p = op.realpath(op.join(from_dir, p))
+            # Walk the stack. The first file that's not in the Conducto dir is the one
+            # the user called this from. Evaluate `p` relative to that file.
+
+            for frame, _lineno in traceback.walk_stack(None):
+                filename = frame.f_code.co_filename
+                if not filename.startswith(_conducto_dir):
+                    from_dir = op.dirname(filename)
+                    p = op.realpath(op.join(from_dir, p))
+                    break
 
         # Apply context specified from outside this container. Needed for recursive
         # co.lazy_py calls inside an Image with ".path_map".
@@ -560,3 +562,6 @@ def _to_str(s):
     if isinstance(s, str):
         return s
     raise TypeError(f"Cannot convert {repr(s)} to str.")
+
+
+_conducto_dir = os.path.dirname(os.path.dirname(__file__)) + "/"

@@ -1,8 +1,6 @@
 import typing, datetime, collections, inspect
 from dateutil import parser
 
-from ..shared import client_utils
-
 Token = typing.NewType("Token", str)
 Tag = typing.NewType("Tag", str)
 UserId = typing.NewType("UserId", str)
@@ -26,24 +24,36 @@ def runtime_type(typ):
 
 def is_instance(obj, typ):
     """Instance check against a given typ, which can be a proper "Python" type or a "typing" type"""
-    if typ == inspect._empty or isinstance(typ, typing.TypeVar):
-        # TODO: (kzhang) for now, pass all checks against `typing.TypeVar`. To be complete
-        # we should check `obj` against `TypeVar.__constraints__`
-        return True
-    elif isinstance(typ, type):  # ex: `str`
-        return isinstance(obj, typ)
-    elif isinstance(typ, typing._GenericAlias):  # ex: `typing.List[int]`
-        # TODO: (kzhang) add support for typing.Set|Dict|etc. ?
-        if typ.__origin__ != list:
-            raise TypeError(f"Only typing.List[T] is allowed, got {typ}")
-        if not isinstance(obj, list):
-            return False
-        item_type = typ.__args__[0]
-        return all(is_instance(o, item_type) for o in obj)
-    elif is_NewType(typ):  # ex: `typing.NewType('MyId', str)`
-        return is_instance(obj, typ.__supertype__)
-    else:
-        raise TypeError(f"Invalid type annotation {typ}/{type(type)}")
+    try:
+        if typ == inspect._empty or isinstance(typ, typing.TypeVar):
+            # TODO: (kzhang) for now, pass all checks against `typing.TypeVar`. To be complete
+            # we should check `obj` against `TypeVar.__constraints__`
+            return True
+        elif isinstance(typ, type):  # ex: `str`
+            return isinstance(obj, typ)
+        elif isinstance(typ, typing._GenericAlias):  # ex: `typing.List[int]`
+            # TODO: (kzhang) add support for typing.Set|Dict|etc. ?
+            if typ.__origin__ != list:
+                raise TypeError(f"Only typing.List[T] is allowed, got {typ}")
+            if not isinstance(obj, list):
+                return False
+            item_type = typ.__args__[0]
+            return all(is_instance(o, item_type) for o in obj)
+        elif is_NewType(typ):  # ex: `typing.NewType('MyId', str)`
+            return is_instance(obj, typ.__supertype__)
+        else:
+            raise TypeError(f"Invalid type annotation {typ}/{type(type)}")
+    except TypeError as e:
+        # Hack to make python 3.6 work.
+        if str(e).startswith("Parameterized generics cannot be used with class"):
+            if typ.__origin__ != typing.List:
+                raise TypeError(f"Only typing.List[T] is allowed, got {typ}")
+            if not isinstance(obj, list):
+                return False
+            item_type = typ.__args__[0]
+            return all(is_instance(o, item_type) for o in obj)
+        else:
+            raise e
 
 
 def is_NewType(typ):
@@ -129,6 +139,40 @@ class Datetime_Date(datetime.date):
     @staticmethod
     def from_str(s):
         return Datetime_Date(s)
+
+
+class Datetime_Time(datetime.time):
+    def __new__(cls, time_str):
+        assert isinstance(time_str, str), "input is not a string: {} - {}".format(
+            time_str, type(time_str)
+        )
+        # Will work with various types of inputs such as:
+        #   - '2019-03-11'
+        #   - '20190311'
+        #   - 'march 11, 2019'
+        tm = parser.parse(time_str)
+        if tm.date() != datetime.datetime.min.date():
+            raise ValueError(
+                "Interpreting input as a time, but got non-zero "
+                "date component: {} -> {}".format(time_str, tm)
+            )
+        return tm.date()
+
+    @staticmethod
+    def from_str(s):
+        return Datetime_Time(s)
+
+
+class Datetime_Datetime(datetime.datetime):
+    def __new__(cls, datetime_str):
+        assert isinstance(datetime_str, str), "input is not a string: {} - {}".format(
+            datetime_str, type(datetime_str)
+        )
+        return parser.parse(datetime_str)
+
+    @staticmethod
+    def from_str(s):
+        return Datetime_Datetime(s)
 
 
 # NOTE (kzhang):

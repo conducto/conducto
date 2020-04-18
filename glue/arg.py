@@ -343,7 +343,13 @@ class _FuncArgs(_Args):
 
 # Certain python types do not have nice string-to-instance conversion,
 # so we use our own
-TYPE_WRAPPERS = {bool: t.Bool, datetime.date: t.Datetime_Date, list: t.List}
+TYPE_WRAPPERS = {
+    bool: t.Bool,
+    datetime.date: t.Datetime_Date,
+    datetime.time: t.Datetime_Time,
+    datetime.datetime: t.Datetime_Datetime,
+    list: t.List,
+}
 
 
 def _wrap_type(typ):

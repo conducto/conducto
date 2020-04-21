@@ -205,9 +205,10 @@ class Wrapper(object):
             if v is False:
                 parts.append(f"--no-{k}")
                 continue
-            if not client_utils.isiterable(v):
-                v = [v]
-            parts += ["--{}={}".format(k, t.LIST_DELIM.join(map(t.serialize, v)))]
+            if client_utils.isiterable(v):
+                parts += ["--{}={}".format(k, t.List.join(map(t.serialize, v)))]
+            else:
+                parts += ["--{}={}".format(k, t.serialize(v))]
         return " ".join(pipes.quote(part) for part in parts)
 
     def pretty(self):
@@ -567,15 +568,16 @@ def main(
         else:
             types[param_name] = str
 
+        # Add arguments to the argparser for each of callFunc's parameters. Don't
+        # include the defaults here because that would cause them to be parsed later
+        # unnecessarily. Leave the defaults unset, and they will get
         if types[param_name] in (bool, t.Bool):
             group = parser.add_mutually_exclusive_group(required=_required)
             group.add_argument(*args, dest=param_name, action="store_true")
             negated = ["--no-" + a[2:] for a in args]
             group.add_argument(*negated, dest=param_name, action="store_false")
-            if default != None:
-                parser.set_defaults(**{param_name: default})
         else:
-            parser.add_argument(*args, required=_required, default=default)
+            parser.add_argument(*args, required=_required)
 
     wrapper = Wrapper.get_or_create(callFunc)
 
@@ -677,10 +679,6 @@ def main(
         will_build = is_cloud or is_local
 
         if will_build:
-            if t.Bool(os.getenv("BUILD_ONLY")):
-                log.log("BUILD_ONLY requested, and just finished building. Exiting.")
-                return
-
             if output.title is None:
                 output.title = _get_default_title(
                     is_local, specifiedFuncName, default_method_name

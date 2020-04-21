@@ -138,11 +138,6 @@ def build(
         title=node.title,
     )
 
-    url = shell_ui.connect_url(pipeline_id)
-    u_url = log.format(url, underline=True)
-    suffix = "ing" if use_app else ""
-    print(f"Starting!  View{suffix} at {u_url}")
-
     def cloud_deploy():
         # Get a token, serialize, and then deploy to AWS. Once that
         # returns, connect to it using the shell_ui.
@@ -170,16 +165,50 @@ def build(
 
     if build_mode == constants.BuildMode.DEPLOY_TO_CLOUD:
         func = cloud_deploy
+        starting = False
     else:
         func = local_deploy
+        starting = True
+
+    run(token, pipeline_id, func, use_app, use_shell, "Starting", starting)
+
+
+def run(token, pipeline_id, func, use_app, use_shell, msg, starting):
+    from .. import api, shell_ui
+
+    url = shell_ui.connect_url(pipeline_id)
+    u_url = log.format(url, underline=True)
+
+    if starting:
+        tag = api.Config().get_image_tag()
+        manager_image = constants.ImageUtil.get_manager_image(tag)
+        try:
+            client_utils.subprocess_run(["docker", "image", "inspect", manager_image])
+        except client_utils.CalledProcessError:
+            docker_parts = ["docker", "pull", manager_image]
+            print("Downloading the Conducto docker image that runs your pipeline.")
+            log.debug(" ".join(pipes.quote(s) for s in docker_parts))
+            client_utils.subprocess_run(
+                docker_parts, msg="Error pulling manager container",
+            )
+
+    print(f"{msg} pipeline {pipeline_id}.")
+
+    func()
+
+    if _manager_debug():
+        return
 
     if use_app:
+        print(
+            f"Viewing at {u_url}. To disable, specify '--no-app' on the command line."
+        )
         hostdet.system_open(url)
-
-    if use_shell and not _manager_debug():
-        shell_ui.connect(token, pipeline_id, func, "Deploying")
     else:
-        func()
+        print(f"View at {u_url}")
+
+    if use_shell:
+        shell_ui.connect(token, pipeline_id, "Deploying")
 
 
 def run_in_local_container(token, pipeline_id, update_token=False):

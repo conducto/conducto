@@ -73,12 +73,10 @@ def connect_url(pipeline_id):
     return url
 
 
-def connect(
-    token: t.Token, pipeline_id: t.PipelineId, startfunc: callable, starthelp: str
-):
+def connect(token: t.Token, pipeline_id: t.PipelineId, starthelp: str):
     pipeline = api.Pipeline().get(token, pipeline_id)
 
-    ui = ShellUI(token, pipeline, startfunc, starthelp)
+    ui = ShellUI(token, pipeline, starthelp)
     if sys.platform == "win32":
         win32api.SetConsoleCtrlHandler(ui.ctrl_c, True)
     try:
@@ -89,13 +87,12 @@ def connect(
 
 
 class ShellUI(object):
-    def __init__(self, token, pipeline: dict, startfunc: callable, starthelp: str):
+    def __init__(self, token, pipeline: dict, starthelp: str):
         self.token = token
         self.pipeline = pipeline
         self.quitting = False
         self.loop = asyncio.get_event_loop()
         self.pgw_socket = None
-        self.startfunc = startfunc
         self.start_func_complete = None
         self.starthelp = starthelp
 
@@ -367,17 +364,6 @@ class ShellUI(object):
             xx.background_task(self.starthelp, immediate=True) for xx in self.listeners
         ]
         tasks = [asyncio.create_task(task) for task in pretasks]
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(self.startfunc)
-
-            while True:
-                try:
-                    future.result(0.1)
-                    break
-                except concurrent.futures.TimeoutError:
-                    pass
-                await asyncio.sleep(0.3)
 
         self.start_func_complete = time.time()
         return tasks

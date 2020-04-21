@@ -6,11 +6,12 @@ from conducto.shared import constants, log
 from conducto.debug import debug, livedebug
 
 
-def show(id):
+def show(id, app=True, shell=False):
     """
     Attach to a an active pipeline.  If it is sleeping it will be awakened.
     """
     from . import api, shell_ui
+    from .internal import build
 
     pl = constants.PipelineLifecycle
 
@@ -44,33 +45,33 @@ def show(id):
             print(m, file=sys.stderr)
             sys.exit(1)
 
-    url = shell_ui.connect_url(pipeline_id)
-    u_url = log.format(url, underline=True)
-    print(f"View at {u_url}")
-
     def cloud_wakeup():
         api.Manager().launch(token, pipeline_id)
 
     def local_wakeup():
-        from conducto.internal import build
-
         build.run_in_local_container(token, pipeline_id, update_token=True)
 
     if status in pl.active | pl.standby:
+        if not app and not shell:
+            print(f"Pipeline {pipeline_id} is already running.")
+            return
+        msg = "Connecting to"
         func = lambda: 0
-        starthelp = "Connecting"
+        starting = True
     elif status in pl.local:
         func = local_wakeup
-        starthelp = "Waking"
+        msg = "Waking"
+        starting = True
     elif status in pl.cloud:
         func = cloud_wakeup
-        starthelp = "Waking"
+        msg = "Waking"
+        starting = False
     else:
         raise RuntimeError(
             f"Pipeline status {pipeline['status']} for {pipeline_id} is not recognized."
         )
 
-    shell_ui.connect(token, pipeline_id, func, starthelp)
+    build.run(token, pipeline_id, func, app, shell, msg, starting)
 
 
 def _load_file_module(filename):

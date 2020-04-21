@@ -492,6 +492,8 @@ class Node:
         if self.image is None:
             self.image = image_mod.Image()
 
+        self.check_images()
+
         if build_mode != constants.BuildMode.LOCAL or prebuild_images:
             image_mod.make_all(
                 self, push_to_cloud=build_mode != constants.BuildMode.LOCAL
@@ -505,6 +507,11 @@ class Node:
         return build.build(
             self, build_mode, use_shell=use_shell, use_app=use_app, retention=retention,
         )
+
+    def check_images(self):
+        for node in self.stream():
+            if isinstance(node, Exec):
+                node.expanded_command()
 
     def pretty(self, strict=True):
         buf = []
@@ -617,7 +624,7 @@ class Exec(Node):
         raise NotImplementedError("Exec nodes have no children")
 
     def expanded_command(self, strict=True):
-        if "__conducto" in self.command:
+        if "__conducto_path:" in self.command:
             img = self.image
 
             if not strict and img is None:
@@ -635,7 +642,9 @@ class Exec(Node):
             def repl(match):
                 if copy_dir is None:
                     raise ValueError(
-                        f"Node must be in Image with .copy_dir or .copy_url set. Node={self}. Image={img.to_dict()}"
+                        f"Node references local code but is not in an Image with '.copy_dir' or '.copy_url.'.\n"
+                        f"  Node: {self}\n"
+                        f"  Image: {img.to_dict()}"
                     )
                 return os.path.relpath(match.group(1), copy_dir)
 
@@ -693,4 +702,4 @@ class Serial(Node):
 
 _abspath = functools.lru_cache(1000)(os.path.abspath)
 _isabs = functools.lru_cache(1000)(os.path.isabs)
-_conducto_dir = os.path.dirname(__file__) + "/"
+_conducto_dir = os.path.dirname(__file__) + os.path.sep

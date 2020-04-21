@@ -10,7 +10,12 @@ import urllib.parse
 
 class _Context:
     def __init__(self, base):
-        self.uri = os.environ[f"CONDUCTO_{base}_DATA_PATH"]
+        try:
+            self.uri = os.environ[f"CONDUCTO_{base}_DATA_PATH"]
+        except KeyError:
+            raise RuntimeError(
+                f"co.{base.lower()}_data is enabled for use in pipeline nodes.  Perhaps you intended to use co.Exec with a Python function that calls co.{base.lower()}_data."
+            )
         if self.uri.startswith("s3://"):
             import boto3
             from conducto.api import Auth
@@ -92,22 +97,46 @@ class _Data:
         if ctx.is_s3:
             ctx.get_s3_obj(name).upload_file(file)
         else:
-            import shutil
+            # Make sure to write the obj atomically. Write to a temp file then move it
+            # into the final location. If anything goes wrong delete the temp file.
+            import tempfile, shutil
 
             path = ctx.get_path(name)
+            dirpath = os.path.dirname(path)
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            shutil.copy(file, path)
+            fd, tmppath = tempfile.mkstemp(dir=dirpath)
+            try:
+                shutil.copy(file, tmppath)
+            except Exception:
+                os.remove(tmppath)
+                raise
+            else:
+                shutil.move(tmppath, path)
 
     @classmethod
     def puts(cls, name, obj: bytes):
+        if not isinstance(obj, bytes):
+            raise ValueError(f"Expected 'obj' of type 'bytes', but got {type(bytes)}")
         ctx = cls._ctx()
         if ctx.is_s3:
             ctx.get_s3_obj(name).put(Body=obj)
         else:
+            # Make sure to write the obj atomically. Write to a temp file then move it
+            # into the final location. If anything goes wrong delete the temp file.
+            import tempfile, shutil
+
             path = ctx.get_path(name)
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "wb") as f:
-                f.write(obj)
+            dirpath = os.path.dirname(path)
+            os.makedirs(dirpath, exist_ok=True)
+            fd, tmppath = tempfile.mkstemp(dir=dirpath)
+            try:
+                with open(fd, "wb") as f:
+                    f.write(obj)
+            except Exception:
+                os.remove(tmppath)
+                raise
+            else:
+                shutil.move(tmppath, path)
 
     @classmethod
     def delete(cls, name):

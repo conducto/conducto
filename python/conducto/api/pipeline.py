@@ -54,14 +54,14 @@ class Pipeline:
         return api_utils.get_data(response)
 
     def update(self, token: t.Token, pipeline_id: t.PipelineId, params: dict, *args):
-        from ..pipeline import Node
-
         headers = api_utils.get_auth_headers(token)
         keys = args if args else params.keys()
         if len(keys) == 0:
             raise Exception("No params to update on pipeline!")
         data = {k: params[k] for k in keys}
         if "tags" in data:
+            from ..pipeline import Node
+
             data["tags"] = Node.sanitize_tags(data["tags"])
         response = request_utils.put(
             self.url + f"/program/program/{pipeline_id}", headers=headers, data=data

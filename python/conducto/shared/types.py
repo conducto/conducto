@@ -1,4 +1,4 @@
-import typing, datetime, collections, inspect
+import typing, datetime, collections, inspect, re
 from dateutil import parser
 
 Token = typing.NewType("Token", str)
@@ -72,7 +72,7 @@ def _serializer(obj):
     if isinstance(obj, bytes):
         return obj.decode
     if isinstance(obj, list):
-        return lambda: LIST_DELIM.join(map(serialize, obj))
+        return lambda: List.join(map(serialize, obj))
     return obj.__str__
 
 
@@ -234,7 +234,7 @@ class List(list, metaclass=_Meta_List):
         )
         # cls can be `List` or some `List[T]` if we are using a class created by `_Meta_List`
         res = []
-        for token in list_str.split(LIST_DELIM):
+        for token in List.split(list_str):
             try:
                 res.append(cls._de_serializer(token))
             except Exception as e:
@@ -244,6 +244,21 @@ class List(list, metaclass=_Meta_List):
                     e,
                 )
         return res
+
+    @staticmethod
+    def join(tokens: typing.Iterable) -> str:
+        output = []
+        for token in tokens:
+            output.append(token.replace(LIST_DELIM, "\\" + LIST_DELIM))
+        return LIST_DELIM.join(output)
+
+    @staticmethod
+    def split(token: str) -> list:
+        tokens = re.split(r"(?<!\\),", token)
+        output = []
+        for token in tokens:
+            output.append(token.replace("\\" + LIST_DELIM, LIST_DELIM))
+        return output
 
 
 LIST_DELIM = ","

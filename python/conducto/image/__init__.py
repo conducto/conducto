@@ -564,4 +564,4 @@ def _to_str(s):
     raise TypeError(f"Cannot convert {repr(s)} to str.")
 
 
-_conducto_dir = os.path.dirname(os.path.dirname(__file__)) + "/"
+_conducto_dir = os.path.dirname(os.path.dirname(__file__)) + os.path.sep

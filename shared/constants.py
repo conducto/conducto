@@ -87,31 +87,7 @@ class RdParams:
 
 class ConductoPaths:
     MOUNT_LOCATION = "/mnt/external"
-
-    @staticmethod
-    def s3_bucket():
-        # Environment takes precedence
-        if "CONDUCTO_S3_BUCKET" in os.environ:
-            return os.environ["CONDUCTO_S3_BUCKET"]
-
-        # Next try reading from the config file
-        from .. import api
-        import urllib.parse
-
-        res = urllib.parse.urlparse(api.Config().get_url())
-        if res.netloc.endswith(".conducto.io"):
-            prefix = res.netloc.rsplit(".", 2)[0].lower()
-            if "." not in prefix:
-                return f"conducto-programs-{prefix}"
-
-        # Otherwise just return a reasonable default
-        return "conducto-programs-dev1"
-
     SERIALIZATION = "serialization"
-
-    @staticmethod
-    def get_pipeline_dir(user_id, pipeline_id):
-        return f"{user_id}/{pipeline_id}"
 
     @staticmethod
     def get_local_base_dir(expand=True):

@@ -53,7 +53,9 @@ class Pipeline:
         )
         return api_utils.get_data(response)
 
-    def update(self, token: t.Token, pipeline_id: t.PipelineId, params: dict, *args):
+    def update(
+        self, token: t.Token, pipeline_id: t.PipelineId, params: dict, *args, **kwargs
+    ):
         headers = api_utils.get_auth_headers(token)
         keys = args if args else params.keys()
         if len(keys) == 0:
@@ -63,6 +65,8 @@ class Pipeline:
             from ..pipeline import Node
 
             data["tags"] = Node.sanitize_tags(data["tags"])
+        if "extra_secret" in kwargs:
+            headers["Service-Secret"] = kwargs["extra_secret"]
         response = request_utils.put(
             self.url + f"/program/program/{pipeline_id}", headers=headers, data=data
         )

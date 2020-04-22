@@ -92,13 +92,19 @@ def magic_doc(*, func=None, doc_only=False):
     docstring = func.__doc__
     if docstring is not None:
         # Strip out the docstring from the function.
-        code = inspect.getsource(func)
+        escaped_code = inspect.getsource(func)
+        unescaped_code = escaped_code.replace("\\\\", "\\")
+        success = False
         for quote in '"""', "'''", '"', "'":
-            if f"{quote}{docstring}{quote}" in code:
-                # This first step leaves a blank line with whitespace, so the second
-                # step removes it.
-                code = code.replace(f"{quote}{docstring}{quote}", "", 1)
-                code = re.sub("\n\s+\n", "\n", code, 1)
+            for code in escaped_code, unescaped_code:
+                if f"{quote}{docstring}{quote}" in code:
+                    # This first step leaves a blank line with whitespace, so the second
+                    # step removes it.
+                    code = code.replace(f"{quote}{docstring}{quote}", "", 1)
+                    code = re.sub("\n\s+\n", "\n", code, 1)
+                    success = True
+                    break
+            if success:
                 break
     else:
         docstring = module.__doc__

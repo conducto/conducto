@@ -152,14 +152,17 @@ def build(
         # the logs of the running superpipe, which breaks it completely
         # clean_log_dirs(token)
 
-        # Save to ~/.conducto/ -- write serialization.
+        # Write serialization to ~/.conducto/
         local_progdir = constants.ConductoPaths.get_local_path(pipeline_id)
         os.makedirs(local_progdir, exist_ok=True)
         serialization_path = os.path.join(
             local_progdir, constants.ConductoPaths.SERIALIZATION
         )
+
         with open(serialization_path, "w") as f:
             f.write(serialization)
+
+        api.Pipeline().update(token, pipeline_id, {"program_path": serialization_path})
 
         run_in_local_container(token, pipeline_id)
 

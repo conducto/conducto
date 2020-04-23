@@ -1,11 +1,12 @@
 import asyncio
 import functools
+import json
 import packaging.version
-import re
 import pipes
+import re
 import subprocess
 
-from conducto.shared import async_utils, client_utils
+from conducto.shared import async_utils
 from .. import api
 from .._version import __version__
 
@@ -26,6 +27,9 @@ async def text_for_build_dockerfile(image, reqs_py, copy_url, copy_branch):
                 linux_name,
             ) = await _get_linux_flavor_and_version(image)
 
+            uid = await _get_uid(image)
+
+            lines.append("USER 0")
             if _is_debian(linux_flavor):
                 lines.append("RUN apt-get update")
                 # this will install python too
@@ -38,6 +42,17 @@ async def text_for_build_dockerfile(image, reqs_py, copy_url, copy_branch):
                 lines.append(f"RUN apk add --update python3")
                 pip_binary = "pip3"
                 py_binary = "python3"
+            elif _is_centos(linux_flavor):
+                lines.append("RUN yum update -y")
+                lines.append("RUN yum install -y python36")
+                pip_binary = "pip3"
+                py_binary = "python3"
+            elif _is_fedora(linux_flavor):
+                lines.append("RUN dnf update -y")
+                lines.append("RUN dnf install -y python38")
+                pip_binary = "pip3"
+                py_binary = "python3"
+            lines.append(f"USER {uid}")
 
         if py_binary is None:
             raise Exception(
@@ -84,10 +99,27 @@ async def text_for_extend_dockerfile(user_image):
 
     default_python = None
     if pyvers is not None:
-        which_python, _ = await async_utils.run_and_check(
-            "docker", "run", "--rm", user_image, "which", acceptable_binary
-        )
-        default_python = which_python.decode("utf8").strip()
+        if _is_fedora(linux_flavor) or _is_centos(linux_flavor):
+            # The base Fedora and CentOS images don't have 'which' for some reason. A
+            # workaround is to use python to print sys.executable.
+            which_python, _ = await async_utils.run_and_check(
+                "docker",
+                "run",
+                "--rm",
+                user_image,
+                acceptable_binary,
+                "-c",
+                "import sys; print(sys.executable)",
+            )
+            default_python = which_python.decode("utf8").strip()
+        else:
+            which_python, _ = await async_utils.run_and_check(
+                "docker", "run", "--rm", user_image, "which", acceptable_binary
+            )
+            default_python = which_python.decode("utf8").strip()
+
+    uid = await _get_uid(user_image)
+    lines.append("USER 0")
 
     if _is_debian(linux_flavor):
         if linux_version == "10" or "buster" in linux_name:  # buster
@@ -113,6 +145,18 @@ async def text_for_extend_dockerfile(user_image):
             lines.append(f"RUN apk add --update python3-dev")
             pyvers = (3, 8)
             default_python = "/usr/bin/python3"
+    elif _is_centos(linux_flavor):
+        suffix = "centos"
+        if pyvers is None:
+            lines.append("RUN yum install -y python36")
+            pyvers = (3, 6)
+            default_python = "/usr/bin/python3"
+    elif _is_fedora(linux_flavor):
+        suffix = "fedora"
+        if pyvers is None:
+            lines.append("RUN dnf install -y python3.7")
+            pyvers = (3, 7)
+            default_python = "/usr/bin/python3"
     else:
         raise UnsupportedLinuxException(f"Unsupported Linux version {linux_flavor}.")
 
@@ -125,8 +169,12 @@ async def text_for_extend_dockerfile(user_image):
         image = f"worker-dev"
         tag += f"-{dev_tag}"
     worker_image = f"{image}:{tag}"
-    lines.append(f"COPY --from={worker_image} /opt/conducto_venv /opt/conducto_venv")
-    lines.append(f"RUN ln -sf {default_python} /opt/conducto_venv/bin/python3")
+
+    # Write to /tmp instead of /opt because if you don't have root access inside the
+    # container, /tmp is usually still writable whereas /opt may not be.
+    lines.append(f"COPY --from={worker_image} /opt/conducto_venv /tmp/conducto_venv")
+    lines.append(f"RUN ln -sf {default_python} /tmp/conducto_venv/bin/python3")
+    lines.append(f"USER {uid}")
     return "\n".join(lines), worker_image
 
 
@@ -261,7 +309,6 @@ async def _get_pip_version(user_image, pip_binary) -> packaging.version.Version:
 
 
 async def _get_linux_flavor_and_version(user_image):
-
     subp = await asyncio.create_subprocess_shell(
         f'docker run --rm {user_image} sh -c "cat /etc/*-release"',
         shell=True,
@@ -289,9 +336,30 @@ async def _get_linux_flavor_and_version(user_image):
     return flavor, version, pretty_name
 
 
+async def _get_uid(image_name):
+    out, _err = await async_utils.run_and_check(
+        "docker", "inspect", "--format", "{{json .}}", image_name
+    )
+    d = json.loads(out)
+    uid_str = d["Config"]["User"]
+    if uid_str == "":
+        uid = 0
+    else:
+        uid = int(uid_str)
+    return uid
+
+
 def _is_debian(linux_flavor):
     return re.search(r".*(ubuntu|debian)", linux_flavor)
 
 
 def _is_alpine(linux_flavor):
     return re.search(r".*alpine", linux_flavor)
+
+
+def _is_centos(linux_flavor):
+    return re.search(r".*(rhel|centos)", linux_flavor)
+
+
+def _is_fedora(linux_flavor):
+    return re.search(r".*fedora", linux_flavor)

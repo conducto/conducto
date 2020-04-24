@@ -1,22 +1,24 @@
 import os
+import inspect
 import io
 import json
 import re
 import sys
 import tarfile
+import time
 import typing
 import urllib.parse
 
+from . import api
+from .shared import constants, types as t
+
 
 class _Context:
-    def __init__(self, base):
-        try:
-            self.uri = os.environ[f"CONDUCTO_{base}_DATA_PATH"]
-        except KeyError:
-            raise RuntimeError(
-                f"co.{base.lower()}_data is enabled for use in pipeline nodes.  Perhaps you intended to use co.Exec with a Python function that calls co.{base.lower()}_data."
-            )
-        if self.uri.startswith("s3://"):
+    def __init__(self, local, uri):
+        self.uri = uri
+        self.local = local
+
+        if not self.local:
             import boto3
             from conducto.api import Auth
 
@@ -37,7 +39,6 @@ class _Context:
             self.bucket, self.key_root = m.group(1, 2)
         else:
             self.uri = os.path.expanduser(self.uri)
-            self.is_s3 = False
 
     def get_s3_key(self, name):
         return _safe_join(self.key_root, name)
@@ -50,9 +51,56 @@ class _Context:
 
 
 class _Data:
+    _pipeline_id: t.PipelineId = None
+    _local: bool = None
+    _token: t.Token = None
+    _s3_bucket: str = None
+
     @staticmethod
-    def _ctx():
+    def _get_uri():
         raise NotImplementedError()
+
+    @classmethod
+    def _ctx(cls):
+        # Call to _init() is idempotent if things are already set. If they haven't been
+        # set yet then read environment variables
+        cls._init()
+        return _Context(local=cls._local, uri=cls._get_uri())
+
+    @staticmethod
+    def _init(
+        *,
+        pipeline_id: t.PipelineId = None,
+        local: bool = None,
+        token: t.Token = None,
+        s3_bucket: str = None,
+    ):
+        # Order of precedence for each param:
+        #  - If it is specified, use it.
+        #  - elif it is set on the class, use that
+        #  - else use the environment variable
+        #  - else default to None
+        _Data._pipeline_id = (
+            pipeline_id or _Data._pipeline_id or os.getenv("CONDUCTO_PIPELINE_ID")
+        )
+        _Data._local = (
+            local
+            or _Data._local
+            or api.Config().get_location() == api.Config.Location.LOCAL
+        )
+        _Data._s3_bucket = (
+            s3_bucket or _Data._s3_bucket or os.getenv("CONDUCTO_S3_BUCKET")
+        )
+        _Data._token = token or _Data._token or os.getenv("CONDUCTO_DATA_TOKEN")
+        if _Data._token is None:
+            try:
+                _Data._token = api.Auth().get_token_from_shell()
+            except Exception:
+                # If we're running in the cloud, by this point we better have a token.
+                # Otherwise it's okay to wait until later - if we need a token, we'll
+                # fail then, and if not then it'll have been fine to ignore this error.
+                if not _Data._local:
+                    raise
 
     @classmethod
     def get(cls, name, file):
@@ -60,7 +108,7 @@ class _Data:
         Get object at `name`, store it to `file`.
         """
         ctx = cls._ctx()
-        if ctx.is_s3:
+        if not ctx.local:
             return ctx.get_s3_obj(name).download_file(file)
         else:
             import shutil
@@ -73,7 +121,7 @@ class _Data:
         Return object at `name`. Optionally restrict to the given `byte_range`.
         """
         ctx = cls._ctx()
-        if ctx.is_s3:
+        if not ctx.local:
             kwargs = {}
             if byte_range:
                 begin, end = byte_range
@@ -94,7 +142,7 @@ class _Data:
         Store object in `file` to `name`.
         """
         ctx = cls._ctx()
-        if ctx.is_s3:
+        if not ctx.local:
             ctx.get_s3_obj(name).upload_file(file)
         else:
             # Make sure to write the obj atomically. Write to a temp file then move it
@@ -118,7 +166,7 @@ class _Data:
         if not isinstance(obj, bytes):
             raise ValueError(f"Expected 'obj' of type 'bytes', but got {type(bytes)}")
         ctx = cls._ctx()
-        if ctx.is_s3:
+        if not ctx.local:
             ctx.get_s3_obj(name).put(Body=obj)
         else:
             # Make sure to write the obj atomically. Write to a temp file then move it
@@ -144,7 +192,7 @@ class _Data:
         Delete object at `name`.
         """
         ctx = cls._ctx()
-        if ctx.is_s3:
+        if not ctx.local:
             return ctx.get_s3_obj(name).delete()
         else:
             os.remove(ctx.get_path(name))
@@ -156,7 +204,7 @@ class _Data:
         """
         # TODO: make this more like listdir or more like glob. Right now pattern matching is inconsistent between local and cloud.
         ctx = cls._ctx()
-        if ctx.is_s3:
+        if not ctx.local:
             bkt = ctx.s3.Bucket(ctx.bucket)
             return [obj.key for obj in bkt.objects.filter(Prefix=prefix)]
         else:
@@ -173,7 +221,7 @@ class _Data:
         Test if there is an object at `name`.
         """
         ctx = cls._ctx()
-        if ctx.is_s3:
+        if not ctx.local:
             import botocore.exceptions
 
             try:
@@ -187,8 +235,11 @@ class _Data:
 
     @classmethod
     def size(cls, name):
+        """
+        Return the size of the object at `name`, in bytes.
+        """
         ctx = cls._ctx()
-        if ctx.is_s3:
+        if not ctx.local:
             result = ctx.s3.head_object(Bucket=ctx.bucket, Key=ctx.get_s3_obj(name))
             return result["ContentLength"]
         else:
@@ -252,42 +303,152 @@ class _Data:
         qname = urllib.parse.quote(name)
         return f"{conducto_url}/pgw/data/{pipeline_id}/{data_type}/{qname}"
 
+
+class temp_data(_Data):
+    @staticmethod
+    def _get_uri():
+        if _Data._local:
+            return (
+                constants.ConductoPaths.get_local_path(_Data._pipeline_id, expand=False)
+                + "/data/"
+            )
+        else:
+            credentials = _get_credentials(_Data._token)
+            return f"s3://{_Data._s3_bucket}/{credentials['IdentityId']}/{_Data._pipeline_id}/data/"
+
+    #####
+    # Command line interface
+    #####
+
     @classmethod
     def _main(cls):
         import conducto as co
 
         variables = {
-            "delete": cls.delete,
-            "exists": cls.exists,
-            "get": cls.get,
-            "gets": cls._gets_from_command_line,
-            "list": cls.list,
-            "put": cls.put,
-            "puts": cls._puts_from_command_line,
-            "url": cls.url,
-            "cache-exists": cls.cache_exists,
-            "clear-cache": cls.clear_cache,
-            "save-cache": cls.save_cache,
-            "restore-cache": cls.restore_cache,
+            "delete": cls._delete_cli,
+            "exists": cls._exists_cli,
+            "get": cls._get_cli,
+            "gets": cls._gets_cli,
+            "list": cls._list_cli,
+            "put": cls._put_cli,
+            "puts": cls._puts_cli,
+            "size": cls._size_cli,
+            "url": cls._url_cli,
+            "cache-exists": cls._cache_exists_cli,
+            "clear-cache": cls._clear_cache_cli,
+            "save-cache": cls._save_cache_cli,
+            "restore-cache": cls._restore_cache_cli,
         }
         co.main(variables=variables, printer=cls._print)
 
     @classmethod
-    def _gets_from_command_line(cls, name, *, byte_range: typing.List[int] = None):
+    def _delete_cli(cls, name, *, id=None, local: bool = None):
+        """
+        Delete object at `name`.
+        """
+        cls._init(pipeline_id=id, local=local)
+        return cls.delete(name)
+
+    @classmethod
+    def _exists_cli(cls, name, *, id=None, local: bool = None):
+        """
+        Test if there is an object at `name`.
+        """
+        cls._init(pipeline_id=id, local=local)
+        return cls.exists(name)
+
+    @classmethod
+    def _get_cli(cls, name, file, *, id=None, local: bool = None):
+        """
+        Get object at `name`, store it to `file`.
+        """
+        cls._init(pipeline_id=id, local=local)
+        return cls.get(name, file)
+
+    @classmethod
+    def _gets_cli(cls, name, *, byte_range: int = None, id=None, local: bool = None):
         """
         Read object stored at `name` and write it to stdout. Use `byte_range=start,end`
         to optionally specify a [start, end) range within the object to read.
         """
+        cls._init(pipeline_id=id, local=local)
         obj = cls.gets(name, byte_range=byte_range)
         sys.stdout.buffer.write(obj)
 
     @classmethod
-    def _puts_from_command_line(cls, name):
+    def _list_cli(cls, prefix, *, id=None, local: bool = None):
+        """
+        Return names of objects that start with `prefix`.
+        """
+        cls._init(pipeline_id=id, local=local)
+        return cls.list(prefix)
+
+    @classmethod
+    def _put_cli(cls, name, file, *, id=None, local: bool = None):
+        """
+        Store object in `file` to `name`.
+        """
+        cls._init(pipeline_id=id, local=local)
+        return cls.put(name, file)
+
+    @classmethod
+    def _puts_cli(cls, name, *, id=None, local: bool = None):
         """
         Read object from stdin and store it to `name`.
         """
+        cls._init(pipeline_id=id, local=local)
         obj = sys.stdin.read().encode()
         return cls.puts(name, obj)
+
+    @classmethod
+    def _size_cli(cls, name, *, id=None, local: bool = None):
+        """
+        Return the size of the object at `name`, in bytes.
+        """
+        cls._init(pipeline_id=id, local=local)
+        return cls.size(name)
+
+    @classmethod
+    def _url_cli(cls, name, *, id=None, local: bool = None):
+        """
+        Get url for object at `name`.
+        """
+        cls._init(pipeline_id=id, local=local)
+        return cls.url(name)
+
+    @classmethod
+    def _cache_exists_cli(cls, name, checksum, *, id=None, local: bool = None):
+        """
+        Test if there is a cache at `name` with `checksum`.
+        """
+        cls._init(pipeline_id=id, local=local)
+        return cls.cache_exists(name, checksum)
+
+    @classmethod
+    def _clear_cache_cli(cls, name, checksum, *, id=None, local: bool = None):
+        """
+        Clear cache at `name` with `checksum`, clears all `name` cache if no `checksum`.
+        """
+        cls._init(pipeline_id=id, local=local)
+        return cls.clear_cache(name, checksum)
+
+    @classmethod
+    def _save_cache_cli(cls, name, checksum, save_dir, *, id=None, local: bool = None):
+        """
+        Save `save_dir` to cache at `name` with `checksum`.
+        """
+        cls._init(pipeline_id=id, local=local)
+        return cls.save_cache(name, checksum, save_dir)
+
+    @classmethod
+    def _restore_cache_cli(
+        cls, name, checksum, restore_dir, *, id=None, local: bool = None
+    ):
+        """
+        Restore cache at `name` with `checksum` to `restore_dir`.
+        """
+        cls._init(pipeline_id=id, local=local)
+        return cls.restore_cache(name, checksum, restore_dir)
 
     @classmethod
     def _print(cls, val):
@@ -298,19 +459,171 @@ class _Data:
         print(json.dumps(val))
 
 
-class temp_data(_Data):
-    @staticmethod
-    def _ctx():
-        return _Context(base="TEMP")
-
-
 class perm_data(_Data):
     @staticmethod
-    def _ctx():
-        return _Context(base="PERM")
+    def _get_uri():
+        if _Data._local:
+            return constants.ConductoPaths.get_local_base_dir(expand=False) + "/data/"
+        else:
+            credentials = _get_credentials(_Data._token)
+            return f"s3://{_Data._s3_bucket}/{credentials['IdentityId']}/data/"
+
+    #####
+    # Command line interface
+    #####
+
+    @classmethod
+    def _main(cls):
+        import conducto as co
+
+        variables = {
+            "delete": cls._delete_cli,
+            "exists": cls._exists_cli,
+            "get": cls._get_cli,
+            "gets": cls._gets_cli,
+            "list": cls._list_cli,
+            "put": cls._put_cli,
+            "puts": cls._puts_cli,
+            "size": cls._size_cli,
+            "url": cls._url_cli,
+            "cache-exists": cls._cache_exists_cli,
+            "clear-cache": cls._clear_cache_cli,
+            "save-cache": cls._save_cache_cli,
+            "restore-cache": cls._restore_cache_cli,
+        }
+        co.main(variables=variables, printer=cls._print)
+
+    @classmethod
+    def _delete_cli(cls, name, *, local: bool = None):
+        """
+        Delete object at `name`.
+        """
+        cls._init(local=local)
+        return cls.delete(name)
+
+    @classmethod
+    def _exists_cli(cls, name, *, local: bool = None):
+        """
+        Test if there is an object at `name`.
+        """
+        cls._init(local=local)
+        return cls.exists(name)
+
+    @classmethod
+    def _get_cli(cls, name, file, *, local: bool = None):
+        """
+        Get object at `name`, store it to `file`.
+        """
+        cls._init(local=local)
+        return cls.get(name, file)
+
+    @classmethod
+    def _gets_cli(cls, name, *, byte_range: int = None, local: bool = None):
+        """
+        Read object stored at `name` and write it to stdout. Use `byte_range=start,end`
+        to optionally specify a [start, end) range within the object to read.
+        """
+        cls._init(local=local)
+        obj = cls.gets(name, byte_range=byte_range)
+        sys.stdout.buffer.write(obj)
+
+    @classmethod
+    def _list_cli(cls, prefix, *, local: bool = None):
+        """
+        Return names of objects that start with `prefix`.
+        """
+        cls._init(local=local)
+        return cls.list(prefix)
+
+    @classmethod
+    def _put_cli(cls, name, file, *, local: bool = None):
+        """
+        Store object in `file` to `name`.
+        """
+        cls._init(local=local)
+        return cls.put(name, file)
+
+    @classmethod
+    def _puts_cli(cls, name, *, local: bool = None):
+        """
+        Read object from stdin and store it to `name`.
+        """
+        cls._init(local=local)
+        obj = sys.stdin.read().encode()
+        return cls.puts(name, obj)
+
+    @classmethod
+    def _size_cli(cls, name, *, local: bool = None):
+        """
+        Return the size of the object at `name`, in bytes.
+        """
+        cls._init(local=local)
+        return cls.size(name)
+
+    @classmethod
+    def _url_cli(cls, name, *, local: bool = None):
+        """
+        Get url for object at `name`.
+        """
+        cls._init(local=local)
+        return cls.url(name)
+
+    @classmethod
+    def _cache_exists_cli(cls, name, checksum, *, local: bool = None):
+        """
+        Test if there is a cache at `name` with `checksum`.
+        """
+        cls._init(local=local)
+        return cls.cache_exists(name, checksum)
+
+    @classmethod
+    def _clear_cache_cli(cls, name, checksum, *, local: bool = None):
+        """
+        Clear cache at `name` with `checksum`, clears all `name` cache if no `checksum`.
+        """
+        cls._init(local=local)
+        return cls.clear_cache(name, checksum)
+
+    @classmethod
+    def _save_cache_cli(cls, name, checksum, save_dir, *, local: bool = None):
+        """
+        Save `save_dir` to cache at `name` with `checksum`.
+        """
+        cls._init(local=local)
+        return cls.save_cache(name, checksum, save_dir)
+
+    @classmethod
+    def _restore_cache_cli(cls, name, checksum, restore_dir, *, local: bool = None):
+        """
+        Restore cache at `name` with `checksum` to `restore_dir`.
+        """
+        cls._init(local=local)
+        return cls.restore_cache(name, checksum, restore_dir)
+
+    @classmethod
+    def _print(cls, val):
+        if val is None:
+            return
+        if isinstance(val, bytes):
+            val = val.decode()
+        print(json.dumps(val))
 
 
 def _safe_join(*parts):
     parts = list(parts)
     parts[1:] = [p.lstrip(os.path.sep) for p in parts[1:]]
     return os.path.join(*parts)
+
+
+def _get_credentials(token: t.Token):
+    retries = 0
+    while True:
+        if retries > 20:
+            break
+        try:
+            auth = api.Auth()
+            token = auth.get_refreshed_token(token)
+            return auth.get_credentials(token)
+        except:
+            retries += 1
+            time.sleep(0.1)

@@ -6,6 +6,7 @@ import os
 import pipes
 import pprint
 import sys
+import types
 import typing
 
 import conducto.internal.host_detection as hostdet
@@ -49,8 +50,6 @@ def validate_args(wrapper, *args, **kwargs):
 
 
 def lazy_shell(command, node_type, env=None, **exec_args) -> pipeline.Node:
-    if env is None:
-        env = {}
     output = pipeline.Serial(env=env)
     output["Generate"] = pipeline.Exec(command, **exec_args)
     output["Execute"] = node_type()
@@ -74,10 +73,7 @@ def lazy_py(func, *args, **kwargs) -> pipeline.Node:
             f"node, but got: {return_type}"
         )
 
-    env = exec_params.pop("env", {})
-    return lazy_shell(
-        wrapper.to_command(*args, **kwargs), return_type, env, **exec_params
-    )
+    return lazy_shell(wrapper.to_command(*args, **kwargs), return_type, **exec_params)
 
 
 def meta(
@@ -328,23 +324,34 @@ def beautify(function, name, space):
 
     sig = inspect.signature(function)
 
+    def format_annotation(an):
+        if an == inspect.Parameter.empty:
+            return ""
+        if isinstance(an, types.FunctionType) and (
+            an.__code__.co_filename.endswith("typing.py")
+            and an.__code__.co_name == "new_type"
+        ):
+            return an.__name__
+        out = inspect.formatannotation(an)
+        out = out.replace("conducto.pipeline.", "")
+        return out
+
     def parse_parameter(s):
         res = []
         res.append(format(s.name))
-        if s.annotation != inspect.Parameter.empty:
-            use = inspect.formatannotation(s.annotation)
+        use = format_annotation(s.annotation)
+        if use:
             res.append(format(":" + use, dim=True))
         if s.default != inspect.Parameter.empty:
             res.append(format("=" + repr(s.default), dim=True))
         return "".join(res)
 
     def parse_return_annotation():
-        if sig.return_annotation == inspect.Parameter.empty:
-            return ""
-        else:
-            res = inspect.formatannotation(sig.return_annotation)
-            res = res.replace("conducto.pipeline.", "")
+        res = format_annotation(sig.return_annotation)
+        if res:
             return " -> " + format(res, color="purple")
+        else:
+            return ""
 
     def parse_docstring():
         if function.__doc__ is None:

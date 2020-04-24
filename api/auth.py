@@ -134,9 +134,9 @@ class Auth:
                 # prompt for re-login.
                 if e.status_code == hs.UNAUTHORIZED and "Invalid auth token" in str(e):
                     pass
-                # convienence case for when we're testing and user is deleted from cognito
-                # token will still be valid but not associated with a user
-                # re-login will straighten things out
+                # Convenience case for when we're testing and user is deleted from
+                # cognito. Token will still be valid but not associated with a user.
+                # Re-login will straighten things out
                 elif e.status_code == hs.NOT_FOUND and "User not found" in str(e):
                     pass
                 else:

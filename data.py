@@ -187,15 +187,24 @@ class _Data:
                 shutil.move(tmppath, path)
 
     @classmethod
-    def delete(cls, name):
+    def delete(cls, name, recursive=False):
         """
         Delete object at `name`.
         """
         ctx = cls._ctx()
         if not ctx.local:
+            if recursive:
+                # TODO: S3 delete recursive
+                raise NotImplementedError("Haven't done this yet.")
             return ctx.get_s3_obj(name).delete()
         else:
-            os.remove(ctx.get_path(name))
+            import shutil
+
+            path = ctx.get_path(name)
+            if recursive and os.path.isdir(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
 
     @classmethod
     def list(cls, prefix):
@@ -342,12 +351,12 @@ class temp_data(_Data):
         co.main(variables=variables, printer=cls._print)
 
     @classmethod
-    def _delete_cli(cls, name, *, id=None, local: bool = None):
+    def _delete_cli(cls, name, recursive=False, *, id=None, local: bool = None):
         """
         Delete object at `name`.
         """
         cls._init(pipeline_id=id, local=local)
-        return cls.delete(name)
+        return cls.delete(name, recursive)
 
     @classmethod
     def _exists_cli(cls, name, *, id=None, local: bool = None):
@@ -425,7 +434,7 @@ class temp_data(_Data):
         return cls.cache_exists(name, checksum)
 
     @classmethod
-    def _clear_cache_cli(cls, name, checksum, *, id=None, local: bool = None):
+    def _clear_cache_cli(cls, name, checksum=None, *, id=None, local: bool = None):
         """
         Clear cache at `name` with `checksum`, clears all `name` cache if no `checksum`.
         """
@@ -494,12 +503,12 @@ class perm_data(_Data):
         co.main(variables=variables, printer=cls._print)
 
     @classmethod
-    def _delete_cli(cls, name, *, local: bool = None):
+    def _delete_cli(cls, name, recursive=False, *, local: bool = None):
         """
         Delete object at `name`.
         """
         cls._init(local=local)
-        return cls.delete(name)
+        return cls.delete(name, recursive)
 
     @classmethod
     def _exists_cli(cls, name, *, local: bool = None):
@@ -577,7 +586,7 @@ class perm_data(_Data):
         return cls.cache_exists(name, checksum)
 
     @classmethod
-    def _clear_cache_cli(cls, name, checksum, *, local: bool = None):
+    def _clear_cache_cli(cls, name, checksum=None, *, local: bool = None):
         """
         Clear cache at `name` with `checksum`, clears all `name` cache if no `checksum`.
         """

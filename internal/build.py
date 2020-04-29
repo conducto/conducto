@@ -19,7 +19,7 @@ def docker_available_drives():
     proc = subprocess.run(lsdrives, shell=True, check=True, stdout=subprocess.PIPE)
 
     results = proc.stdout.decode("utf-8").split("\n")
-    return [s.strip().upper() for s in results if s.strip() != ""]
+    return [s.strip().lower() for s in results if s.strip() != ""]
 
 
 @functools.lru_cache(None)
@@ -117,7 +117,7 @@ def build(
             msg = f"The drive {unavailable.pop()} is used in an image context, but is not available in Docker.   Review your Docker Desktop file sharing settings."
             raise hostdet.WindowsMapError(msg)
 
-    from .. import api, shell_ui
+    from .. import api
 
     # refresh the token for every pipeline launch
     # Force in case of cognito change
@@ -138,19 +138,35 @@ def build(
         title=node.title,
     )
 
+    launch_from_serialization(
+        serialization, pipeline_id, build_mode, use_shell, use_app, token
+    )
+
+
+def launch_from_serialization(
+    serialization,
+    pipeline_id,
+    build_mode=constants.BuildMode.DEPLOY_TO_CLOUD,
+    use_shell=False,
+    use_app=True,
+    token=None,
+    inject_env=None,
+    is_migration=False,
+):
+    if not token:
+        token = api.Auth().get_token_from_shell(force=True)
+
     def cloud_deploy():
         # Get a token, serialize, and then deploy to AWS. Once that
         # returns, connect to it using the shell_ui.
         api.Pipeline().save_serialization(token, pipeline_id, serialization)
-        api.Manager().launch(token, pipeline_id)
+        api.Manager().launch(
+            token, pipeline_id, env=inject_env, is_migration=is_migration
+        )
         log.debug(f"Connecting to pipeline_id={pipeline_id}")
 
     def local_deploy():
-        # TODO (apeng) Leaving this out for now
-        # when we run conducto in a container for our tests
-        # this has a tendency to blow up all the logs, including
-        # the logs of the running superpipe, which breaks it completely
-        # clean_log_dirs(token)
+        clean_log_dirs(token)
 
         # Write serialization to ~/.conducto/
         local_progdir = constants.ConductoPaths.get_local_path(pipeline_id)
@@ -164,7 +180,9 @@ def build(
 
         api.Pipeline().update(token, pipeline_id, {"program_path": serialization_path})
 
-        run_in_local_container(token, pipeline_id)
+        run_in_local_container(
+            token, pipeline_id, inject_env=inject_env, is_migration=is_migration
+        )
 
     if build_mode == constants.BuildMode.DEPLOY_TO_CLOUD:
         func = cloud_deploy
@@ -174,6 +192,8 @@ def build(
         starting = True
 
     run(token, pipeline_id, func, use_app, use_shell, "Starting", starting)
+
+    return pipeline_id
 
 
 def run(token, pipeline_id, func, use_app, use_shell, msg, starting):
@@ -214,9 +234,14 @@ def run(token, pipeline_id, func, use_app, use_shell, msg, starting):
         shell_ui.connect(token, pipeline_id, "Deploying")
 
 
-def run_in_local_container(token, pipeline_id, update_token=False):
+def run_in_local_container(
+    token, pipeline_id, update_token=False, inject_env=None, is_migration=False
+):
     # Remote base dir will be verified by container.
     local_basedir = constants.ConductoPaths.get_local_base_dir()
+
+    if inject_env is None:
+        inject_env = {}
 
     if hostdet.is_wsl():
         local_basedir = os.path.realpath(local_basedir)
@@ -257,11 +282,25 @@ def run_in_local_container(token, pipeline_id, update_token=False):
 
     tag = api.Config().get_image_tag()
     manager_image = constants.ImageUtil.get_manager_image(tag)
-    serialization = (
-        f"{remote_basedir}/logs/{pipeline_id}/{constants.ConductoPaths.SERIALIZATION}"
-    )
+    ccp = constants.ConductoPaths
+    pipelinebase = ccp.get_local_path(pipeline_id, expand=False, base=remote_basedir)
+    # Note: This path is in the docker which is always unix
+    pipelinebase = pipelinebase.replace(os.path.sep, "/")
+    serialization = f"{pipelinebase}/{ccp.SERIALIZATION}"
 
     container_name = f"conducto_manager_{pipeline_id}"
+
+    network_name = os.getenv("CONDUCTO_NETWORK", f"conducto_network_{pipeline_id}")
+    if not is_migration:
+        try:
+            client_utils.subprocess_run(
+                ["docker", "network", "create", network_name, "--label=conducto"]
+            )
+        except client_utils.CalledProcessError as e:
+            if f"network with name {network_name} already exists" in e.stderr:
+                pass
+            else:
+                raise
 
     flags = [
         # Detached mode.
@@ -274,6 +313,8 @@ def run_in_local_container(token, pipeline_id, update_token=False):
         # spin up workers that connect to its network.
         "--name",
         container_name,
+        "--network",
+        network_name,
         "--hostname",
         container_name,
         "--label",
@@ -292,18 +333,22 @@ def run_in_local_container(token, pipeline_id, update_token=False):
         f"CONDUCTO_LOCAL_BASE_DIR={local_basedir}",
         "-e",
         f"CONDUCTO_LOCAL_HOSTNAME={socket.gethostname()}",
+        "-e",
+        f"CONDUCTO_NETWORK={network_name}",
     ]
 
     for env_var in "CONDUCTO_URL", "CONDUCTO_CONFIG", "IMAGE_TAG":
         if os.environ.get(env_var):
             flags.extend(["-e", f"{env_var}={os.environ[env_var]}"])
+    for k, v in inject_env.items():
+        flags.extend(["-e", f"{k}={v}"])
 
     if hostdet.is_wsl() or hostdet.is_windows():
         drives = docker_available_drives()
 
         for d in drives:
             # Mount whole system read-only to enable rebuilding images as needed
-            mount = f"type=bind,source={d}:/,target={constants.ConductoPaths.MOUNT_LOCATION}/{d},readonly"
+            mount = f"type=bind,source={d}:/,target={constants.ConductoPaths.MOUNT_LOCATION}/{d.lower()},readonly"
             flags += ["--mount", mount]
     else:
         # Mount whole system read-only to enable rebuilding images as needed
@@ -335,6 +380,8 @@ def run_in_local_container(token, pipeline_id, update_token=False):
         pipeline_id,
         "-i",
         serialization,
+        "--profile",
+        api.Config().default_profile,
         "--local",
     ]
 
@@ -404,7 +451,8 @@ def clean_log_dirs(token):
     pipeline_ids = set(p["pipeline_id"] for p in pipelines)
 
     # Remove all outdated logs directories.
-    local_basedir = os.path.join(constants.ConductoPaths.get_local_base_dir(), "logs")
+    profile = api.Config().default_profile
+    local_basedir = os.path.join(constants.ConductoPaths.get_local_base_dir(), profile)
     if os.path.isdir(local_basedir):
         for subdir in os.listdir(local_basedir):
             if subdir not in pipeline_ids:

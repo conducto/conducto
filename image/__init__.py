@@ -105,10 +105,12 @@ class Image:
         image=None,
         *,
         dockerfile=None,
+        docker_build_args=None,
         context=None,
         copy_dir=None,
         copy_url=None,
         copy_branch=None,
+        cd_to_code=True,
         reqs_py=None,
         path_map=None,
         name=None,
@@ -142,10 +144,12 @@ class Image:
 
         self.image = image
         self.dockerfile = dockerfile
+        self.docker_build_args = docker_build_args
         self.context = context
         self.copy_dir = copy_dir
         self.copy_url = copy_url
         self.copy_branch = copy_branch
+        self.cd_to_code = cd_to_code
         self.reqs_py = reqs_py
         self.path_map = path_map
 
@@ -192,6 +196,7 @@ class Image:
             "name": self.name,
             "image": self.image,
             "dockerfile": self.dockerfile,
+            "docker_build_args": self.docker_build_args,
             "context": self.context,
             "copy_dir": self.copy_dir,
             "copy_url": self.copy_url,
@@ -199,18 +204,21 @@ class Image:
             "reqs_py": self.reqs_py,
             "path_map": self.path_map,
             "pre_built": self.pre_built,
+            "cd_to_code": self.cd_to_code,
         }
 
     def to_raw_image(self):
         return {
             "image": self.image,
             "dockerfile": self.dockerfile,
+            "docker_build_args": self.docker_build_args,
             "context": self.context,
             "copy_dir": self.copy_dir,
             "copy_url": self.copy_url,
             "copy_branch": self.copy_branch,
             "reqs_py": self.reqs_py,
             "path_map": self.path_map,
+            "cd_to_code": self.cd_to_code,
         }
 
     @staticmethod
@@ -403,11 +411,16 @@ class Image:
         """
         assert self.dockerfile is not None
         # Build the specified dockerfile
-        build_args = [
+        build_args = []
+        if self.docker_build_args is not None:
+            for k, v in self.docker_build_args.items():
+                build_args += ["--build-arg", "{}={}".format(k, v)]
+        build_args += [
             "-f",
             Image.PATH_PREFIX + self.dockerfile,
             Image.PATH_PREFIX + self.context,
         ]
+
         out, err = await async_utils.run_and_check(
             "docker",
             "build",
@@ -428,7 +441,12 @@ class Image:
             build_args = ["-"]
         build_args += ["--build-arg", f"CONDUCTO_CACHE_BUSTER={uuid.uuid4()}"]
         text = await dockerfile_mod.text_for_build_dockerfile(
-            self.name_built, self.reqs_py, self.copy_url, self.copy_branch
+            self.name_built,
+            self.reqs_py,
+            self.copy_dir,
+            self.copy_url,
+            self.copy_branch,
+            self.cd_to_code,
         )
 
         out, err = await async_utils.run_and_check(

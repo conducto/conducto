@@ -79,7 +79,7 @@ def wsl_host_docker_path(path):
     wants in the -v switch.
     """
     winpath = windows_drive_path(path)
-    return f"/{winpath[0]}{winpath[2:]}"
+    return f"/{winpath[0].lower()}{winpath[2:]}"
 
 
 def windows_docker_path(path):
@@ -88,4 +88,4 @@ def windows_docker_path(path):
     wants in the -v switch.
     """
     winpath = path.replace("\\", "/")
-    return f"/{winpath[0]}{winpath[2:]}"
+    return f"/{winpath[0].lower()}{winpath[2:]}"

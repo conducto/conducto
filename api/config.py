@@ -1,4 +1,5 @@
 import os
+import random
 import subprocess
 import configparser
 from conducto.shared import constants
@@ -19,6 +20,55 @@ class Config:
         configFile = self.__get_config_file()
         self.config = configparser.ConfigParser()
         self.config.read(configFile)
+
+        # TODO: delete this convert chunk in May 2020
+        if self.config.has_option("login", "token"):
+            # convert old pre-profile format
+            self._convert()
+            # re-read
+            self.config = configparser.ConfigParser()
+            self.config.read(configFile)
+
+        if "CONDUCTO_PROFILE" in os.environ:
+            self.default_profile = os.environ["CONDUCTO_PROFILE"]
+        else:
+            self.default_profile = self.get("general", "default")
+
+    def _convert(self):
+        # TODO: remove in may 2020
+        url = self.config.get("cloud", "url", fallback="https://www.conducto.com")
+        token = self.config.get("login", "token", fallback="__none__")
+        if token != "__none__":
+            try:
+                self.config.remove_option("cloud", "url")
+            except:
+                pass
+            try:
+                self.config.remove_option("login", "token")
+            except:
+                pass
+            self.write()
+
+            self.write_profile(url, token)
+
+        if self.config.has_option("launch", "show_shell"):
+            self.config.set(
+                "general", "show_shell", self.config.get("launch", "show_shell")
+            )
+            self.config.remove_option("launch", "show_shell")
+        if self.config.has_option("launch", "show_app"):
+            self.config.set(
+                "general", "show_app", self.config.get("launch", "show_app")
+            )
+            self.config.remove_option("launch", "show_app")
+
+        if self.config.has_section("launch") and self.config.options("launch") == []:
+            self.config.remove_section("launch")
+        if self.config.has_section("cloud") and self.config.options("cloud") == []:
+            self.config.remove_section("cloud")
+        if self.config.has_section("login") and self.config.options("login") == []:
+            self.config.remove_section("login")
+        self.write()
 
     def get(self, section, key, default=None):
         return self.config.get(section, key, fallback=default)
@@ -93,10 +143,10 @@ commands:
         if "CONDUCTO_URL" in os.environ and os.environ["CONDUCTO_URL"]:
             return os.environ["CONDUCTO_URL"]
         else:
-            return self.get("cloud", "url", "https://www.conducto.com")
+            return self.get(self.default_profile, "url", "https://www.conducto.com")
 
     def get_token(self):
-        return self.get("login", "token")
+        return self.get(self.default_profile, "token")
 
     def get_location(self):
         if "AWS_EXECUTION_ENV" in os.environ:
@@ -111,6 +161,55 @@ commands:
         if tag != default:
             return tag
         return self.get("docker", "image_tag", default)
+
+    def write_profile(self, url, token, default=True):
+        # ensure that [general] section is first for readability
+        if not self.config.has_section("general"):
+            self.config.add_section("general")
+
+        from . import dir
+
+        dir_api = dir.Dir()
+        dir_api.url = url
+
+        try:
+            userdata = {}
+            userdata = dir_api.user(token)
+        except Exception as e:
+            # This may be a pre-registered user in which case we leave email &
+            # org_id blank
+            if not str(e).startswith("No user information found."):
+                raise
+
+        # search for url & org matching
+        is_new = True
+        for section in self.config.sections():
+            ss_url = self.config.get(section, "url", fallback=None)
+            ss_org_id = self.config.get(section, "org_id", fallback=None)
+            if (
+                "org_id" in userdata
+                and url == ss_url
+                and str(userdata["org_id"]) == ss_org_id
+            ):
+                # re-use this one
+                profile = section
+                break
+        else:
+            is_new = True
+            profile = "".join(random.choice("0123456789abcdef") for _ in range(8))
+
+        self.set(profile, "url", url, write=False)
+        if "org_id" in userdata:
+            self.set(profile, "org_id", str(userdata["org_id"]), write=False)
+        if "email" in userdata:
+            self.set(profile, "email", userdata["email"], write=False)
+        self.set(profile, "token", token, write=False)
+
+        if default and is_new:
+            self.set("general", "default", profile, write=False)
+            self.default_profile = profile
+        self.write()
+        return profile
 
     ############################################################
     # helper methods

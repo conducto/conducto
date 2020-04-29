@@ -1,3 +1,6 @@
+import subprocess
+
+
 def isiterable(o):
     """
     Return True if the given object supports having iter() called on it BUT is not an
@@ -87,13 +90,25 @@ def getOnly(values, msg=None):
         return next(iter(values))
 
 
-class CalledProcessError(Exception):
-    pass
+class CalledProcessError(subprocess.CalledProcessError):
+    def __init__(self, returncode, cmd, stdout, stderr, msg, stdin=None):
+        super().__init__(returncode, cmd, stdout, stderr)
+        self.msg = msg
+        self.stdin = stdin
+
+    def __str__(self):
+        parts = [self.msg, f"command: {self.cmd}", f"returncode: {self.returncode}"]
+        if self.stdin is not None:
+            parts.append(f"stdin: {self.stdin.decode()}")
+        if self.stdout is not None:
+            parts.append(f"stdout: {self.stdout.decode()}")
+        if self.stderr is not None:
+            parts.append(f"stderr: {self.stderr.decode()}")
+        sep = "\n" + "-" * 80 + "\n"
+        return sep.join(parts)
 
 
 def subprocess_run(cmd, *args, shell=False, msg="", capture_output=True, **kwargs):
-    import subprocess
-
     if capture_output:
         # NOTE:  Python 3.6 does not support the capture_output parameter of
         # `subprocess.run`.  This translation supports 3.6 and later.
@@ -106,13 +121,6 @@ def subprocess_run(cmd, *args, shell=False, msg="", capture_output=True, **kwarg
             import pipes
 
             cmd = " ".join(pipes.quote(a) for a in cmd)
-        sep = "-" * 80 + "\n"
-        msg = f"""{msg}
-{sep}command: {cmd}
-{sep}returncode: {e.returncode}
-{sep}stdout: {e.stdout.decode() if e.stdout != None else '(uncaptured)'}
-{sep}stderr: {e.stderr.decode() if e.stderr != None else '(uncaptured)'}
-"""
-        raise CalledProcessError(msg) from None
+        raise CalledProcessError(e.returncode, cmd, e.stdout, e.stderr, msg) from None
     else:
         return result

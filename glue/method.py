@@ -427,17 +427,18 @@ def main(
     image: typing.Union[None, str, image_mod.Image] = None,
     printer=pprint.pprint,
 ):
-    try:
-        import colorama
+    if sys.platform.startswith("win"):
+        try:
+            import colorama
 
-        # This is designed to be run once at the start of a program.  Python import
-        # semantics is that __init__ is not re-run so this colorizes ansi colors on
-        # Windows for any program that imports conducto.
-        colorama.init()
-    except ImportError:
-        # we pass if the colorama module is not installed, we only install it
-        # on windows.
-        pass
+            # This is designed to be run once at the start of a program.  Python import
+            # semantics is that __init__ is not re-run so this colorizes ansi colors on
+            # Windows for any program that imports conducto.
+            colorama.init()
+        except ImportError:
+            # we pass if the colorama module is not installed, we only install it
+            # on windows.
+            pass
 
     # in case we ever add functionality where argv is an empty list
     if argv is None:
@@ -598,8 +599,8 @@ def main(
             parser.set_defaults(**{base: default})
 
     if issubclass(return_type, pipeline.Node):
-        default_shell = t.Bool(config.get("launch", "show_shell", default=False))
-        default_app = t.Bool(config.get("launch", "show_app", default=True))
+        default_shell = t.Bool(config.get("general", "show_shell", default=False))
+        default_app = t.Bool(config.get("general", "show_app", default=True))
 
         if accepts_cloud:
             parser.add_argument("--cloud", action="store_true")

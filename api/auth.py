@@ -38,11 +38,15 @@ class Auth:
         data = self._get_data(response)
         return data["AccessToken"] if data is not None else None
 
-    def get_identity_claims(self, token: t.Token) -> dict:
+    def get_id_token(self, token: t.Token) -> dict:
         headers = api_utils.get_auth_headers(token)
         response = request_utils.get(self.url + "/auth/idtoken", headers=headers)
         data = self._get_data(response)
-        claims = self.get_unverified_claims(data["IdToken"])
+        return data["IdToken"]
+
+    def get_identity_claims(self, token: t.Token) -> dict:
+        id_token = self.get_id_token(token)
+        claims = self.get_unverified_claims(id_token)
         return claims
 
     def get_credentials(self, token: t.Token) -> dict:
@@ -53,9 +57,11 @@ class Auth:
         return data
 
     def get_token_from_shell(
-        self, login: dict = None, force=False
+        self, login: dict = None, force=False, skip_profile=False
     ) -> typing.Optional[t.Token]:
-        return self._get_token_from_shell(login=login, forceRefresh=force)
+        return self._get_token_from_shell(
+            login=login, force_refresh=force, skip_profile=skip_profile
+        )
 
     def get_unverified_claims(self, token: t.Token) -> dict:
         # Returns a dict of *unverified* claims decoded from token.
@@ -123,12 +129,12 @@ class Auth:
         raise Exception(f"Failed to login after {NUM_TRIES} attempts")
 
     def _get_token_from_shell(
-        self, login: dict, forceRefresh: bool
+        self, login: dict, force_refresh: bool, skip_profile=False
     ) -> typing.Optional[t.Token]:
         token = self.config.get_token()
         if token:
             try:
-                newToken = self.get_refreshed_token(token, forceRefresh)
+                newToken = self.get_refreshed_token(token, force_refresh)
             except api_utils.InvalidResponse as e:
                 # If cognito changed, our token is invalid, so we should
                 # prompt for re-login.
@@ -144,13 +150,14 @@ class Auth:
             else:
                 if newToken:
                     if newToken != token:
-                        self.config.set("login", "token", newToken)
+                        self.config.set(self.config.default_profile, "token", newToken)
                     return newToken
         if not login:
             token = self._get_token_from_login()
         else:
             token = self.get_token(login)
-        self.config.set("login", "token", token)
+        if not skip_profile:
+            self.config.write_profile(self.config.get_url(), token)
         return t.Token(token)
 
 

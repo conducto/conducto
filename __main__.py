@@ -2,8 +2,9 @@ import sys
 import os.path
 import importlib.util
 import conducto as co
-from conducto.shared import constants, log
+from conducto.shared import constants
 from conducto.debug import debug, livedebug
+import asyncio
 
 
 def show(id, app=True, shell=False):
@@ -25,14 +26,32 @@ def show(id, app=True, shell=False):
             sys.exit(1)
         else:
             raise
+    perms = api.Pipeline().perms(token, pipeline_id)
 
     status = pipeline["status"]
     if status not in pl.active | pl.standby and status in pl.local:
         local_basedir = constants.ConductoPaths.get_local_base_dir()
         cpser = constants.ConductoPaths.SERIALIZATION
-        serialization = f"{local_basedir}/logs/{pipeline_id}/{cpser}"
+        profile = api.Config().default_profile
+        serialization_path = f"{local_basedir}/{profile}/{pipeline_id}/{cpser}"
 
-        if not os.path.exists(serialization):
+        if not os.path.exists(serialization_path) and status not in pl.active:
+            # TODO:  remove in May 2020 -- perhaps this is a pre-profile
+            # pipeline and it needs to be moved to the correct profile
+            # directory.  Check and convert if so.
+            oldser = f"{local_basedir}/logs/{pipeline_id}/{cpser}"
+            if os.path.exists(oldser):
+                import shutil
+
+                olddir = f"{local_basedir}/logs/{pipeline_id}"
+                newdir = f"{local_basedir}/{profile}/{pipeline_id}"
+                shutil.move(olddir, newdir)
+
+                api.Pipeline().update(
+                    token, pipeline_id, {"program_path": serialization_path}
+                )
+
+        if not os.path.exists(serialization_path):
             m = (
                 f"The serialization for {pipeline_id} could not be found.  "
                 "This is likely because it is local to another computer."
@@ -59,10 +78,18 @@ def show(id, app=True, shell=False):
         func = lambda: 0
         starting = True
     elif status in pl.local:
+        if constants.Perms.LAUNCH not in perms:
+            raise PermissionError(
+                f"Pipeline {pipeline_id} is sleeping and you do not have permissions to wake it."
+            )
         func = local_wakeup
         msg = "Waking"
         starting = True
     elif status in pl.cloud:
+        if constants.Perms.LAUNCH not in perms:
+            raise PermissionError(
+                f"Pipeline {pipeline_id} is sleeping and you do not have permissions to wake it."
+            )
         func = cloud_wakeup
         msg = "Waking"
         starting = False
@@ -72,6 +99,20 @@ def show(id, app=True, shell=False):
         )
 
     build.run(token, pipeline_id, func, app, shell, msg, starting)
+
+
+async def migrate(pipeline_id):
+    from . import api
+    import json
+
+    token = api.Auth().get_token_from_shell(force=True)
+    conn = await api.connect_to_pipeline(token, pipeline_id)
+    try:
+        await conn.send(json.dumps({"type": "MIGRATE"}))
+        # sleep, if I don't do this sometimes the command doesn't go through ¯\_(ツ)_/¯
+        await asyncio.sleep(0.1)
+    finally:
+        await conn.close()
 
 
 def _load_file_module(filename):
@@ -100,8 +141,14 @@ def main():
         "show",
         "debug",
         "livedebug",
+        "migrate",
     ):
-        variables = {"show": show, "debug": debug, "livedebug": livedebug}
+        variables = {
+            "show": show,
+            "debug": debug,
+            "livedebug": livedebug,
+            "migrate": migrate,
+        }
         co.main(variables=variables)
     else:
         file_to_execute, *arguments = args

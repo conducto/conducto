@@ -10,10 +10,12 @@ from conducto.shared import async_utils
 from .. import api
 from .._version import __version__
 
-COPY_DIR = "/mnt/context"
+COPY_DIR = "/mnt/conducto"
 
 
-async def text_for_build_dockerfile(image, reqs_py, copy_url, copy_branch):
+async def text_for_build_dockerfile(
+    image, reqs_py, copy_dir, copy_url, copy_branch, cd_to_code
+):
     lines = [f"FROM {image}"]
 
     if reqs_py:
@@ -34,23 +36,19 @@ async def text_for_build_dockerfile(image, reqs_py, copy_url, copy_branch):
                 lines.append("RUN apt-get update")
                 # this will install python too
                 lines.append(f"RUN apt-get install -y python3-pip")
-                pip_binary = "pip3"
                 py_binary = "python3"
             elif _is_alpine(linux_flavor):
                 lines.append("RUN apk update")
                 # this will install pip3 as well
                 lines.append(f"RUN apk add --update python3")
-                pip_binary = "pip3"
                 py_binary = "python3"
             elif _is_centos(linux_flavor):
                 lines.append("RUN yum update -y")
                 lines.append("RUN yum install -y python36")
-                pip_binary = "pip3"
                 py_binary = "python3"
             elif _is_fedora(linux_flavor):
                 lines.append("RUN dnf update -y")
                 lines.append("RUN dnf install -y python38")
-                pip_binary = "pip3"
                 py_binary = "python3"
             lines.append(f"USER {uid}")
 
@@ -61,7 +59,9 @@ async def text_for_build_dockerfile(image, reqs_py, copy_url, copy_branch):
 
         non_conducto_reqs_py = [r for r in reqs_py if r != "conducto"]
         if non_conducto_reqs_py:
-            lines.append(f"RUN {pip_binary} install " + " ".join(non_conducto_reqs_py))
+            lines.append(
+                f"RUN {py_binary} -m pip install " + " ".join(non_conducto_reqs_py)
+            )
 
         if "conducto" in reqs_py:
             if api.Config().get("dev", "who"):
@@ -74,16 +74,19 @@ async def text_for_build_dockerfile(image, reqs_py, copy_url, copy_branch):
             else:
                 lines.append(f"RUN {py_binary} -m pip install conducto=={__version__}")
 
-    lines.append(f"WORKDIR {COPY_DIR}")
+    if copy_dir or copy_url:
+        if cd_to_code:
+            lines.append(f"WORKDIR {COPY_DIR}")
 
-    if copy_url:
-        lines.append("ARG CONDUCTO_CACHE_BUSTER")
-        lines.append(f"RUN echo $CONDUCTO_CACHE_BUSTER")
-        lines.append(
-            f"RUN git clone --single-branch --branch {copy_branch} {copy_url} {COPY_DIR}"
-        )
-    else:
-        lines.append(f"COPY . {COPY_DIR}")
+        if copy_url:
+            lines.append("ARG CONDUCTO_CACHE_BUSTER")
+            lines.append(f"RUN echo $CONDUCTO_CACHE_BUSTER")
+            lines.append(
+                f"RUN git clone --single-branch --branch {copy_branch} {copy_url} {COPY_DIR}"
+            )
+        else:
+            lines.append(f"COPY . {COPY_DIR}")
+
     return "\n".join(lines)
 
 
@@ -95,7 +98,7 @@ async def text_for_extend_dockerfile(user_image):
     )
 
     # Determine python version and binary.
-    acceptable_binary, pyvers, pip_binary = await get_python_version(user_image)
+    acceptable_binary, pyvers, _pip_binary = await get_python_version(user_image)
 
     default_python = None
     if pyvers is not None:
@@ -135,14 +138,14 @@ async def text_for_extend_dockerfile(user_image):
             )
         if pyvers is None:
             lines.append("RUN apt-get update")
-            lines.append(f"RUN apt-get install -y python3.7-dev")
+            lines.append(f"RUN apt-get install -y python3.7")
             pyvers = (3, 7)
             default_python = "/usr/bin/python3.7"
     elif _is_alpine(linux_flavor):
         suffix = "alpine"
         if pyvers is None:
             lines.append("RUN apk update")
-            lines.append(f"RUN apk add --update python3-dev")
+            lines.append(f"RUN apk add --update python3")
             pyvers = (3, 8)
             default_python = "/usr/bin/python3"
     elif _is_centos(linux_flavor):

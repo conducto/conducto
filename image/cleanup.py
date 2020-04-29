@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import dateutil.parser
+import json
 import re
 import typing
 
@@ -33,7 +34,7 @@ units = {
 }
 
 
-async def cleanup(label, age):
+async def cleanup(label, age, clean_networks=True):
     image_ids = await _get_image_ids(label)
     last_use_times = await _get_last_use_times(image_ids)
     age_seconds = _parse_age(age)
@@ -49,6 +50,17 @@ async def cleanup(label, age):
     if to_delete:
         await async_utils.run_and_check(
             "docker", "image", "rm", *to_delete, stop_on_error=False
+        )
+    if clean_networks:
+        await async_utils.run_and_check(
+            "docker",
+            "network",
+            "prune",
+            "--filter",
+            "label=conducto",
+            "--filter",
+            "until=10m",
+            "-f",
         )
 
 
@@ -106,6 +118,54 @@ async def _get_last_use_times(image_ids) -> typing.Dict[str, datetime]:
 
         output[image_id] = dt.astimezone(timezone.utc)
     return output
+
+
+def _size_mb(s):
+    if s.endswith("GB"):
+        return float(s[:-2]) * 1000
+    if s.endswith("MB"):
+        return float(s[:-2])
+    if s.endswith("kB"):
+        return float(s[:-2]) * 0.001
+    if s.endswith("B"):
+        return float(s[:-1]) * 0.001 * 0.001
+
+
+async def _image_list_sizes(images):
+    overlaps = []
+    singles = {}
+    for img_id in images:
+        args = ["docker", "history", img_id, "--format", "{{json .}}"]
+        out, _err = await async_utils.run_and_check(*args)
+
+        sizes = []
+        for line in out.decode().splitlines():
+            if line.strip() == "":
+                continue
+            obj = json.loads(line)
+            layer = [obj["ID"], _size_mb(obj["Size"])]
+            if layer[0] == "\u003cmissing\u003e":
+                sizes[-1][1] += layer[1]
+            else:
+                sizes.append(layer)
+
+        overlaps.extend(sizes)
+        singles.update(dict(sizes))
+
+    image_virtual_total = sum([v for k, v in overlaps])
+    image_size_net = sum([v for k, v in singles.items()])
+
+    return image_virtual_total, image_size_net
+
+
+async def show_usage(label):
+    image_ids = await _get_image_ids(label)
+
+    virtual, size_net = await _image_list_sizes(image_ids)
+
+    print(f"Images labeled {label}:  {len(image_ids)}")
+    print(f"Virtual Total:  {virtual:.2f} MB")
+    print(f"Net Size:  {size_net:.2f} MB")
 
 
 if __name__ == "__main__":

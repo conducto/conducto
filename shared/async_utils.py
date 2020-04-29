@@ -3,7 +3,7 @@ import pipes
 import subprocess
 import traceback
 
-from . import log
+from . import client_utils, log
 
 
 def async_cache(fxn):
@@ -31,8 +31,8 @@ async def run_and_check(*args, input=None, stop_on_error=True):
     if stop_on_error and proc.returncode != 0:
         cmd_str = " ".join(pipes.quote(a) for a in args)
         try:
-            raise subprocess.CalledProcessError(
-                proc.returncode, cmd_str, stdout, stderr
+            raise client_utils.CalledProcessError(
+                proc.returncode, cmd_str, stdout, stderr, "", stdin=input
             )
         except:
             traceback.print_exc()

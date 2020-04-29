@@ -9,6 +9,7 @@ import re
 import traceback
 import typing
 
+import conducto.internal.host_detection as hostdet
 from .shared import constants, log, types as t
 from . import api, callback, image as image_mod
 
@@ -627,26 +628,63 @@ class Exec(Node):
         if "__conducto_path:" in self.command:
             img = self.image
 
-            if not strict and img is None:
-                return self.command
+            if img is None:
+                if strict:
+                    raise ValueError(
+                        "Node references code inside a container but no image is specified\n"
+                        f"  Node: {self}"
+                    )
+                else:
+                    return self.command
 
-            copy_dir = img.copy_dir
-
-            if "//" in self.command and copy_dir is None and img.copy_url:
-                copy_dir = (
-                    re.search("__conducto_path:(.*?):endpath__", self.command)
-                    .group(1)
-                    .split("//")[0]
-                )
+            COPY_DIR = image_mod.dockerfile_mod.COPY_DIR
 
             def repl(match):
-                if copy_dir is None:
-                    raise ValueError(
-                        f"Node references local code but is not in an Image with '.copy_dir' or '.copy_url.'.\n"
-                        f"  Node: {self}\n"
-                        f"  Image: {img.to_dict()}"
-                    )
-                return os.path.relpath(match.group(1), copy_dir)
+                path = match.group(1)
+                path_map = dict(img.path_map)
+
+                # If a gitroot was detected, it was marked in the command with a "//".
+                # If copy_url was set then we can determine what the external portion
+                # of the path was. Together with COPY_DIR we can update path_map
+                if "//" in path and img.copy_url:
+                    external = path.split("//", 1)[0]
+                    path_map[external] = COPY_DIR
+
+                # Normalize path to get rid of the //.
+                path = os.path.normpath(path)
+
+                # temporary windows translations -- these are translated for
+                # real just-in-time during the final serialization, but we
+                # convert them here to faciliate this validation.
+                if hostdet.is_windows():
+                    wdp = hostdet.windows_docker_path
+                    path_map = {wdp(k): v for k, v in path_map.items()}
+
+                for external, internal in path_map.items():
+                    # For each element of path_map, see if the external path matches
+                    external = os.path.normpath(external.rstrip("/"))
+                    if not path.startswith(external):
+                        continue
+
+                    # If so, calculate the corresponding internal path
+                    internal = os.path.normpath(internal.rstrip("/"))
+                    relative = os.path.relpath(path, external)
+                    new_path = os.path.join(internal, relative)
+
+                    # As a convenience, if we `cd_to_code` then we know the workdir and
+                    # we can shorten the path
+                    if img.cd_to_code and new_path.startswith(COPY_DIR):
+                        return os.path.relpath(new_path, COPY_DIR)
+                    else:
+                        # Otherwise just return an absolute path.
+                        return new_path
+
+                raise ValueError(
+                    f"Node references local code but the Image doesn't have enough information to infer the corresponding path inside the container.\n"
+                    f"Expected '.copy_dir', '.copy_url' inside a Git directory, or 'path_map'."
+                    f"  Node: {self}\n"
+                    f"  Image: {img.to_dict()}"
+                )
 
             return re.sub("__conducto_path:(.*?):endpath__", repl, self.command)
         else:

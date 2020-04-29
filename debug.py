@@ -138,7 +138,7 @@ def dump_command(container_name, command, live):
         content = command
         if not content.endswith("\n"):
             content += "\n"
-        tfile = tarfile.TarInfo("conducto.cmd")
+        tfile = tarfile.TarInfo("cmd.conducto")
         tfile.size = len(content)
         cmdtar.addfile(tfile, io.BytesIO(content.encode("utf-8")))
 
@@ -146,10 +146,10 @@ def dump_command(container_name, command, live):
     proc = subprocess.run(args, input=tario.getvalue(), stdout=PIPE, stderr=PIPE)
     if proc.returncode != 0:
         stderr = proc.stderr.decode("utf-8").strip()
-        raise RuntimeError(f"error placing conducto.cmd: ({stderr})")
+        raise RuntimeError(f"error placing cmd.conducto: ({stderr})")
 
-    execute_in(container_name, f"chmod u+x /conducto.cmd")
-    print(f"Execute command by running {format('sh /conducto.cmd', color='cyan')}")
+    execute_in(container_name, f"chmod u+x /cmd.conducto")
+    print(f"Execute command by running {format('sh /cmd.conducto', color='cyan')}")
 
 
 @functools.lru_cache()

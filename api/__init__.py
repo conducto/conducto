@@ -1,5 +1,6 @@
 from .config import Config
 from .auth import Auth, AsyncAuth
+from .dir import Dir, AsyncDir
 from .pipeline import Pipeline, AsyncPipeline
 from .manager import Manager, AsyncManager
 from .secrets import Secrets, AsyncSecrets

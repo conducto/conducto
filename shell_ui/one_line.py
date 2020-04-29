@@ -53,8 +53,8 @@ class OneLineDisplay(Listener):
 
     def install_confirm_quit(self):
         output = KeyMode("Do you want to disconnect monitor?")
-        output.add_handler("&yes", self.disconnect)
-        output.add_handler("&no", self.install_normal_key_mode)
+        output.add_handler("&disconnect", self.disconnect)
+        output.add_handler("&cancel", self.install_normal_key_mode)
         self.key_mode = output
         self.key_mode_install_func = self.install_confirm_quit
 

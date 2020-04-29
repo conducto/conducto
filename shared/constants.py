@@ -40,6 +40,25 @@ class State:
     unskip = unskip
 
 
+class Perms:
+    LAUNCH = "launch"
+    CHANGE_STATE = "change_state"
+    MODIFY = "modify"
+    MODIFY_CMD = "modify_cmd"
+    READ = "read"
+    READ_ORG_SECRETS = "read_org_secrets"
+    READ_USER_SECRETS = "read_user_secrets"
+    all = [
+        LAUNCH,
+        CHANGE_STATE,
+        MODIFY,
+        MODIFY_CMD,
+        READ,
+        READ_ORG_SECRETS,
+        READ_USER_SECRETS,
+    ]
+
+
 QSUB_KWARGS = ["cpu", "mem", "gpu", "image", "requires_docker"]
 
 
@@ -92,27 +111,35 @@ class ConductoPaths:
     @staticmethod
     def get_local_base_dir(expand=True):
         defaultBaseDir = os.path.join("~", ".conducto")
-        baseDir = os.environ.get("CONDUCTO_BASE_DIR", defaultBaseDir)
+        base_dir = os.environ.get("CONDUCTO_BASE_DIR", defaultBaseDir)
         if expand:
-            baseDir = os.path.expanduser(baseDir)
-        return baseDir
+            base_dir = os.path.expanduser(base_dir)
+        return base_dir
 
     @staticmethod
     def get_local_docker_config_dir(expand=True):
-        baseDir = os.environ.get("DOCKER_CONFIG_BASE_DIR", None)
-        if expand and baseDir:
-            baseDir = os.path.expanduser(baseDir)
-        return baseDir
+        base_dir = os.environ.get("DOCKER_CONFIG_BASE_DIR", None)
+        if expand and base_dir:
+            base_dir = os.path.expanduser(base_dir)
+        return base_dir
 
     @staticmethod
-    def get_local_path(pipeline_id, expand=True):
-        baseDir = ConductoPaths.get_local_base_dir(expand=False)
-        defaultLogDir = os.path.join(baseDir, "logs")
-        logDir = os.environ.get("CONDUCTO_LOG_DIR", defaultLogDir)
-        if expand:
-            return os.path.expanduser(os.path.join(logDir, pipeline_id))
+    def get_local_path(pipeline_id, expand=True, base=None):
+        import conducto.api as api
+
+        if base:
+            base_dir = base
         else:
-            return os.path.join(logDir, pipeline_id)
+            base_dir = ConductoPaths.get_local_base_dir(expand=False)
+        profile = api.Config().default_profile
+        if profile is None:
+            profile = "logs"
+        def_log_dir = os.path.join(base_dir, profile)
+        log_dir = os.environ.get("CONDUCTO_LOG_DIR", def_log_dir)
+        if expand:
+            return os.path.expanduser(os.path.join(log_dir, pipeline_id))
+        else:
+            return os.path.join(log_dir, pipeline_id)
 
 
 class PipelineLifecycle:

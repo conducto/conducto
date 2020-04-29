@@ -40,9 +40,8 @@ class Pipeline:
 
     def get(self, token: t.Token, pipeline_id: t.PipelineId) -> dict:
         headers = api_utils.get_auth_headers(token)
-        data = {"pipeline_id": pipeline_id}
         response = request_utils.get(
-            self.url + f"/program/program/{pipeline_id}", headers=headers, params=data
+            self.url + f"/program/program/{pipeline_id}", headers=headers
         )
         return api_utils.get_data(response)
 
@@ -52,6 +51,14 @@ class Pipeline:
             self.url + "/program/program/list", headers=headers
         )
         return api_utils.get_data(response)
+
+    def perms(self, token: t.Token, pipeline_id: t.PipelineId) -> set:
+        headers = api_utils.get_auth_headers(token)
+        response = request_utils.get(
+            self.url + f"/program/program/{pipeline_id}/perms", headers=headers
+        )
+        data = api_utils.get_data(response)
+        return data["perms"]
 
     def update(
         self, token: t.Token, pipeline_id: t.PipelineId, params: dict, *args, **kwargs
@@ -107,15 +114,6 @@ class Pipeline:
             self.url + "/program/program/history", headers=headers, params=params
         )
         return api_utils.get_data(response)
-
-    def check_access(self, token: t.Token, pipeline_id: t.PipelineId):
-        try:
-            self.get(token, pipeline_id)
-        except api_utils.InvalidResponse:
-            # TODO: precisely check for the correct status_code
-            return False
-        else:
-            return True
 
 
 AsyncPipeline = api_utils.async_helper(Pipeline)

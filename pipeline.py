@@ -40,6 +40,49 @@ def load_node(**kwargs):
 
 
 class Node:
+    """
+    The node classes :py:class:`Exec`, :py:class:`Serial` and
+    :py:class:`Parallel` all derive from this class.  The parameters here apply
+    directly to `Exec` nodes and as defaults on `Serial` and `Parallel` for the
+    sub-nodes.
+
+    :param cpu: `float`, default 1, Number of CPUs to allocate to the Node.
+        Must be >0 if assigned.
+    :param mem: `float`, default 2, GB of memory to allocate to the Node. Must
+        be >0 if assigned. 
+    :param requires_docker: `bool`, default `False`, If True, enable the Node
+        to use 
+    :param env: `dict` with keys environment variables and the values
+
+    :param image: :py:class:`conducto.Image` or `str` Run Node in container
+        using the given Docker :py:class:`conducto.Image` or image identified
+        by name in docker.
+    :param image_name: Reference a Docker :ref:`Image Definition` by
+        name instead of passing it explicitly. The other Image must have been
+        passed by :py:func:`conducto.Node.register_image`.
+    :param same_container: See [Running Exec nodes](#running-exec-nodes) for
+        details. Note this has special inheritance rules when propagating to child
+        nodes.
+
+    :param skip: bool, default `False`, If False the Node will be run normally.
+        If True execution will pass over it and it will not be run.
+    :param suppress_errors: bool, default `False`, If True the Node will go to
+        the Done state when finished, even if some children have failed. If False,
+        any failed children will cause it to go to the Error state.
+    :param name: If creating Node inside a context manager, you may pass
+        `name=...` instead of using normal dict assignment. 
+
+    All of these arguments, except for `name`, may be set in the Node
+    constructor or later. For example, `n = co.Parallel(cpu=2)` and
+
+    .. code-block::
+
+        n = co.Parallel()
+        n.cpu = 2
+
+    are equivalent. `name` is immutable and must be
+    assigned during initialization.
+    """
 
     # Enum regarding skip statuses. The naming is awkward but intentional:
     # 'skip' is the namespace, but we should phrase the terms in the positive,
@@ -72,7 +115,6 @@ class Node:
         "_root",
         "pipeline_id",
         "id_generator",
-        "result",
         "token",
         "parent",
         "children",
@@ -142,7 +184,6 @@ class Node:
         self.title = title
         self.tags = self.sanitize_tags(tags)
 
-        self.result = {}
         if name is not None:
             if not Node._CONTEXT_STACK:
                 raise ValueError(
@@ -265,6 +306,13 @@ class Node:
         self.user_set["skip"] = val
 
     def register_image(self, image: image_mod.Image):
+        """
+        Register a named Image for use by descendant Nodes that specify
+        image_name. This is especially useful with lazy pipeline creation to
+        ensure that the correct base image is used.
+
+        :param image: :py:class:`conducto.Image`
+        """
         self.repo.add(image)
 
     def on_done(self, cback):
@@ -278,6 +326,10 @@ class Node:
     def on_queued(self, cback):
         assert isinstance(cback, callback.base)
         self._callbacks.append((State.QUEUED, cback))
+
+    def on_running(self, cback):
+        assert isinstance(cback, callback.base)
+        self._callbacks.append((State.RUNNING, cback))
 
     def _pull(self):
         if self.id is None or self.root != self.id_root:
@@ -432,6 +484,10 @@ class Node:
 
     # returns a stream in topological order
     def stream(self, reverse=False):
+        """
+        Iterate through the nodes
+        """
+
         def _fwd():
             stack = [self]
             while stack:
@@ -471,6 +527,27 @@ class Node:
         sleep_when_done=False,
         prebuild_images=False,
     ):
+        """
+        Launch directly from python.
+
+        :param use_shell: If True (default) it will connect to the running
+            pipeline using the shell UI. Otherwise just launch the pipeline and
+            then exit.
+        :param retention: Once the pipeline is put to sleep, its logs and
+            :ref:`temp_data and perm_data` will be deleted after `retention` days
+            of inactivity. Until then it can be woken up and interacted with.
+        :param run: If True the pipeline will run immediately upon launching.
+            Otherwise (default) it will stay Pending until the user starts it.
+        :param sleep_when_done: If True the pipeline will sleep -- manager
+            exits with recoverable state -- when the root node successfully
+            gets to the Done state.
+        :param prebuild_images: If True build the images before launching the pipeline.
+        """
+
+        # TODO:  Do we want these params? They seem sensible and they were documented at one point.
+        # :param tags: If specified, should be a list of strings. The app lets you filter programs based on these tags.
+        # :param title: Title to show in the program list in the app. If unspecified, the title will be based on the command line.
+
         self._build(
             build_mode=constants.BuildMode.LOCAL,
             use_shell=use_shell,
@@ -594,6 +671,12 @@ class Node:
 class Exec(Node):
     """
     A node that contains an executable command
+
+    :param command: A shell command to execute or a python callable
+
+    If a Python callable is specified for the command the `args` and `kwargs`
+    are serialized and a `conducto` command line is constructed to launch the
+    function for that node in the pipeline.
     """
 
     __slots__ = ("command",)
@@ -671,9 +754,9 @@ class Exec(Node):
                     relative = os.path.relpath(path, external)
                     new_path = os.path.join(internal, relative)
 
-                    # As a convenience, if we `cd_to_code` then we know the workdir and
+                    # As a convenience, if we `docker_auto_workdir` then we know the workdir and
                     # we can shorten the path
-                    if img.cd_to_code and new_path.startswith(COPY_DIR):
+                    if img.docker_auto_workdir and new_path.startswith(COPY_DIR):
                         return os.path.relpath(new_path, COPY_DIR)
                     else:
                         # Otherwise just return an absolute path.
@@ -692,14 +775,21 @@ class Exec(Node):
 
 
 class Parallel(Node):
-    "A list of commands executed in Parallel - a branch node."
+    """
+    Node that has child Nodes and runs them at the same time.
+    Same interface as :py:func:`conducto.Node`. 
+    """
+
     pass
 
 
 class Serial(Node):
     """
-    A list of commands executed in Serial, kind of like "begin" in Scheme.
-    Its children get executed one after another.
+    Node that has child Nodes and runs them one after
+    another. Same interface as :py:func:`conducto.Node`, plus
+    the following:
+
+    :param stop_on_error: bool, default `True`, If True the Serial will Error when one of its children Errors, leaving subsequent children Pending. If False and a child Errors the Serial will still run the rest of its children and then Error, defaults to True
     """
 
     __slots__ = ["stop_on_error"]

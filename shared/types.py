@@ -151,12 +151,12 @@ class Datetime_Time(datetime.time):
         #   - '20190311'
         #   - 'march 11, 2019'
         tm = parser.parse(time_str)
-        if tm.date() != datetime.datetime.min.date():
+        if tm.date() != datetime.datetime.now().date():
             raise ValueError(
                 "Interpreting input as a time, but got non-zero "
                 "date component: {} -> {}".format(time_str, tm)
             )
-        return tm.date()
+        return tm.time()
 
     @staticmethod
     def from_str(s):

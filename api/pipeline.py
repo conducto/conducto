@@ -58,7 +58,7 @@ class Pipeline:
             self.url + f"/program/program/{pipeline_id}/perms", headers=headers
         )
         data = api_utils.get_data(response)
-        return data["perms"]
+        return data["perms"] if "perms" in data else []
 
     def update(
         self, token: t.Token, pipeline_id: t.PipelineId, params: dict, *args, **kwargs

@@ -148,6 +148,16 @@ commands:
     def get_token(self):
         return self.get(self.default_profile, "token")
 
+    def get_connect_url(self, pipeline_id):
+        if self.get_url().find("conducto.com") > 0:
+            url = f"https://conduc.to/{pipeline_id}"
+        elif self.get_url().find("test.conducto.io") > 0:
+            url = f"https://test.conduc.to/{pipeline_id}"
+        else:
+            base = self.get_url().rstrip("/")
+            url = f"{base}/app/p/{pipeline_id}"
+        return url
+
     def get_location(self):
         if "AWS_EXECUTION_ENV" in os.environ:
             return Config.Location.AWS

@@ -26,6 +26,7 @@ class State:
     stopped = {PENDING, DONE, WARNING, ERROR, WORKER_ERROR}
     in_progress = {QUEUED, RUNNING}
     finished = {DONE, WARNING, ERROR, WORKER_ERROR}
+    failed = {ERROR, WORKER_ERROR}
 
     stopped |= {s + "_skipped" for s in stopped}
     in_progress |= {s + "_skipped" for s in in_progress}

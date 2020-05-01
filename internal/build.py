@@ -199,7 +199,7 @@ def launch_from_serialization(
 def run(token, pipeline_id, func, use_app, use_shell, msg, starting):
     from .. import api, shell_ui
 
-    url = shell_ui.connect_url(pipeline_id)
+    url = api.Config().get_connect_url(pipeline_id)
     u_url = log.format(url, underline=True)
 
     if starting:
@@ -297,7 +297,7 @@ def run_in_local_container(
                 ["docker", "network", "create", network_name, "--label=conducto"]
             )
         except client_utils.CalledProcessError as e:
-            if f"network with name {network_name} already exists" in e.stderr:
+            if f"network with name {network_name} already exists" in e.stderr.decode():
                 pass
             else:
                 raise

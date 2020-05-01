@@ -469,6 +469,10 @@ class temp_data(_Data):
 
 
 class perm_data(_Data):
+    """
+    See also :py:class:`temp_data` which has an identical interface.
+    """
+
     @staticmethod
     def _get_uri():
         if _Data._local:

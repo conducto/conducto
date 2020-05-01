@@ -1,6 +1,5 @@
 import asyncio
 import pipes
-import subprocess
 import traceback
 
 from . import client_utils, log

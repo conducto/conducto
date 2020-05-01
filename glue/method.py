@@ -427,6 +427,16 @@ def main(
     image: typing.Union[None, str, image_mod.Image] = None,
     printer=pprint.pprint,
 ):
+    """
+    Command-line helper that allows you from the shell to easily execute methods that return Conducto nodes.
+
+    :param default:  Specify a method that is the default to run if the user doesn't specify one on the command line.
+    :param image: Specify a default docker image for the pipeline. (See also :py:class:`conducto.Image`).
+    :param env, cpu, mem, requires_docker: Computational attributes to set on any Node called through `co.main`. 
+      
+    See :ref:`Node Methods and Attributes` for more details.
+    """
+
     if sys.platform.startswith("win"):
         try:
             import colorama

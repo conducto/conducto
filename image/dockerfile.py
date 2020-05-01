@@ -14,7 +14,7 @@ COPY_DIR = "/mnt/conducto"
 
 
 async def text_for_build_dockerfile(
-    image, reqs_py, copy_dir, copy_url, copy_branch, cd_to_code
+    image, reqs_py, copy_dir, copy_url, copy_branch, docker_auto_workdir
 ):
     lines = [f"FROM {image}"]
 
@@ -75,7 +75,7 @@ async def text_for_build_dockerfile(
                 lines.append(f"RUN {py_binary} -m pip install conducto=={__version__}")
 
     if copy_dir or copy_url:
-        if cd_to_code:
+        if docker_auto_workdir:
             lines.append(f"WORKDIR {COPY_DIR}")
 
         if copy_url:

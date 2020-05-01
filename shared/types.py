@@ -33,6 +33,13 @@ def is_instance(obj, typ):
             return isinstance(obj, typ)
         elif isinstance(typ, typing._GenericAlias):  # ex: `typing.List[int]`
             # TODO: (kzhang) add support for typing.Set|Dict|etc. ?
+            if typ.__origin__ is typing.Union:
+                if len(typ.__args__) == 2 and typ.__args__[1] is type(None):
+                    return obj is None or isinstance(obj, typ.__args__[0])
+                else:
+                    raise TypeError(
+                        f"Only Union[T, None] is allowed, i.e., Optional[T], got {typ}"
+                    )
             if typ.__origin__ != list:
                 raise TypeError(f"Only typing.List[T] is allowed, got {typ}")
             if not isinstance(obj, list):

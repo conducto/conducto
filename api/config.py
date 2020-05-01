@@ -2,7 +2,71 @@ import os
 import random
 import subprocess
 import configparser
-from conducto.shared import constants
+from conducto.shared import constants, log
+
+
+def is_home_dir(dirname):
+    homedir = os.path.expanduser("~")
+    return homedir.rstrip(os.path.sep) == dirname.rstrip(os.path.sep)
+
+
+def dirconfig_select(filename):
+    if "CONDUCTO_PROFILE" in os.environ:
+        return
+
+    log.debug(f"auto-detecting profile from directory of {filename}")
+    dirname = os.path.dirname(os.path.abspath(filename))
+
+    def has_dcprofile(_dn):
+        dcprofile = os.path.join(_dn, ".conducto", "profile")
+        return os.path.exists(dcprofile)
+
+    parent = dirname
+    while True:
+        if has_dcprofile(parent):
+            break
+
+        dn2 = os.path.dirname(parent)
+        # comparing at length as a string prevents a wide swath of possible
+        # ways this loop could go endless.
+        if len(dn2) >= len(parent):
+            parent = None
+            break
+        parent = dn2
+
+    if parent is None:
+        # no .conducto/profile found
+        return
+
+    dcprofile = os.path.join(parent, ".conducto", "profile")
+
+    dirconfig = configparser.ConfigParser()
+    dirconfig.read(dcprofile)
+
+    section = dict(dirconfig.items("default"))
+
+    config = Config()
+    for profile in config.profile_sections():
+        url = config.get(profile, "url")
+        org_id = config.get(profile, "org_id")
+        if url == section["url"] and org_id == section["org_id"]:
+            break
+    else:
+        profile = None
+
+    if profile is not None:
+        os.environ["CONDUCTO_PROFILE"] = profile
+
+
+def dirconfig_write(dirname, url, org_id):
+    dirconfig = configparser.ConfigParser()
+    dirconfig["default"] = {"url": url, "org_id": org_id}
+    dotconducto = os.path.join(dirname, ".conducto")
+    if not os.path.isdir(dotconducto):
+        os.mkdir(dotconducto)
+    dcprofile = os.path.join(dirname, ".conducto", "profile")
+    with open(dcprofile, "w") as dirfile:
+        dirconfig.write(dirfile)
 
 
 class Config:
@@ -79,6 +143,12 @@ class Config:
         self.config[section][key] = value
         if write:
             self.write()
+
+    def profile_sections(self):
+        for section in self.config.sections():
+            required = ["url", "org_id", "email", "token"]
+            if all(self.config.has_option(section, rq) for rq in required):
+                yield section
 
     def delete(self, section, key, write=True):
         del self.config[section][key]
@@ -192,7 +262,7 @@ commands:
                 raise
 
         # search for url & org matching
-        is_new = True
+        is_new = False
         for section in self.config.sections():
             ss_url = self.config.get(section, "url", fallback=None)
             ss_org_id = self.config.get(section, "org_id", fallback=None)

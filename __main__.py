@@ -101,6 +101,60 @@ def show(id, app=True, shell=False):
     build.run(token, pipeline_id, func, app, shell, msg, starting)
 
 
+def init(dir: str = ".", url: str = None):
+    from . import api
+
+    if url is None:
+        url = "https://conducto.com"
+    else:
+        if not api.is_conducto_url(url):
+            print(f"The url {url} is not recognized.", file=sys.stderr)
+            sys.exit(1)
+
+    dir = os.path.abspath(dir)
+
+    if not os.path.isdir(dir):
+        print(f"'{dir}' is not a directory or does not exist", file=sys.stderr)
+        sys.exit(1)
+
+    config = api.Config()
+    for profile in config.profile_sections():
+        if config.get(profile, "url") == url:
+            break
+    else:
+        profile = None
+
+    create_new = False
+    if profile is not None:
+        # we already have a profile for this url, let's see what the intent is.
+
+        email = config.get(profile, "email")
+        print(f"There is already a profile for {url} and e-mail {email}.")
+
+        question = "Do you wish to connect this directory to this profile? [yn] "
+        choice = input(question)
+
+        if choice.lower()[0] == "y":
+            pass
+            # connect dir to this profile
+        else:
+            create_new = True
+    else:
+        create_new = True
+
+    if create_new:
+        os.environ["CONDUCTO_URL"] = url
+
+        token = api.Auth().get_token_from_shell(force=True)
+
+        config = api.Config()
+        for profile in config.profile_sections():
+            if config.get(profile, "token") == token:
+                break
+
+    api.dirconfig_write(dir, config.get(profile, "url"), config.get(profile, "org_id"))
+
+
 async def migrate(pipeline_id):
     from . import api
     import json
@@ -141,12 +195,14 @@ def main():
         "show",
         "debug",
         "livedebug",
+        "init",
         "migrate",
     ):
         variables = {
             "show": show,
             "debug": debug,
             "livedebug": livedebug,
+            "init": init,
             "migrate": migrate,
         }
         co.main(variables=variables)
@@ -159,7 +215,7 @@ def main():
 
         module = _load_file_module(file_to_execute)
         variables = {k: getattr(module, k) for k in dir(module)}
-        co.main(variables=variables, argv=arguments)
+        co.main(variables=variables, argv=arguments, filename=file_to_execute)
 
 
 if __name__ == "__main__":

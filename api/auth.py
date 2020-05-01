@@ -70,7 +70,7 @@ class Auth:
         return claims
 
     def prompt_for_login(self) -> dict:
-        print("Log in to Conducto. To register, visit https://conducto.com/app/")
+        print(f"Log in to Conducto. To register, visit {self.url}/app/")
         login = {}
         while True:
             login["email"] = input("Email: ")

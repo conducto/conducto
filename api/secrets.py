@@ -40,7 +40,9 @@ class Secrets:
         )
         return self._get_data(response)["secrets"]
 
-    def put_user_secrets(self, token: types.Token, secrets: dict, replace: bool = True):
+    def put_user_secrets(
+        self, token: types.Token, secrets: dict, replace: bool = False
+    ):
         data = {"secrets": secrets}
         (request_utils.put if replace else request_utils.patch)(
             f"{self.url}/secrets/user",
@@ -48,7 +50,7 @@ class Secrets:
             headers=self._headers(token),
         )
 
-    def put_org_secrets(self, token: types.Token, secrets: dict, replace: bool = True):
+    def put_org_secrets(self, token: types.Token, secrets: dict, replace: bool = False):
         data = {"secrets": secrets}
         (request_utils.put if replace else request_utils.patch)(
             f"{self.url}/secrets/org",

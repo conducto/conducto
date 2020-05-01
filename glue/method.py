@@ -16,64 +16,43 @@ from .._version import __version__, __sha1__
 from .. import api, callback, image as image_mod, pipeline
 from . import arg
 
-
-# Validate arguments for the given function without calling it. This is useful for
-# raising early errors on `co.lazy_py()` or `co.Exec(func, *args, **kwargs).
-def validate_args(wrapper, *args, **kwargs):
-    params = wrapper.getSignature().parameters
-
-    # TODO (kzhang): can target function have a `*args` or `**kwargs` in the
-    # signature? If so, handle it.
-    invalid_params = [
-        (name, str(param.kind))
-        for name, param in params.items()
-        if param.kind != inspect.Parameter.POSITIONAL_OR_KEYWORD
-    ]
-    if invalid_params:
-        raise TypeError(
-            f"Unsupported parameter types of "
-            f"{wrapper.function.__name__}: {invalid_params} - "
-            f"Only {str(inspect.Parameter.POSITIONAL_OR_KEYWORD)} is allowed."
-        )
-
-    # this will also validate against too-many or too-few arguments
-    call_args = inspect.getcallargs(wrapper.function, *args, **kwargs)
-    for name in call_args.keys():
-        arg_value = call_args[name]
-        param_type = params[name].annotation
-        if not t.is_instance(arg_value, param_type):
-            raise TypeError(
-                f"Argument {name}={arg_value} {type(arg_value)} for "
-                f"function {wrapper.function.__name__} is not compatible "
-                f"with expected type: {param_type}"
-            )
+_UNSET = object()
 
 
 def lazy_shell(command, node_type, env=None, **exec_args) -> pipeline.Node:
-    output = pipeline.Serial(env=env)
-    output["Generate"] = pipeline.Exec(command, **exec_args)
+    output = lazy(command, node_type=node_type, **exec_args)
+    output.env = env
+    return output
+
+
+def lazy_py(func, *args, **kwargs) -> pipeline.Node:
+    return lazy(func, *args, **kwargs)
+
+
+def lazy(command_or_func, *args, node_type=_UNSET, **kwargs) -> pipeline.Node:
+    if callable(command_or_func):
+        # If a function is passed, then `node_type` might be a valid argument. If it is
+        # passed to `lazy` then pass it along to `command_or_func`.
+        if node_type is not _UNSET:
+            kwargs["node_type"] = node_type
+
+        # Infer the node_type from the return type of `command_or_func`.
+        hints = typing.get_type_hints(command_or_func)
+        node_type = hints.get("return")
+
+    if not issubclass(node_type, (pipeline.Parallel, pipeline.Serial)):
+        raise ValueError(
+            "Can only call co.lazy() on a function that returns a Parallel or Serial "
+            f"node, but got: {node_type}"
+        )
+
+    output = pipeline.Serial()
+    output["Generate"] = pipeline.Exec(command_or_func, *args, **kwargs)
     output["Execute"] = node_type()
     output["Generate"].on_done(
         callback.base("deserialize_into_node", target=output["Execute"])
     )
     return output
-
-
-def lazy_py(func, *args, **kwargs) -> pipeline.Node:
-    wrapper = Wrapper.get_or_create(func)
-    return_type = wrapper.getSignature().return_annotation
-
-    exec_params = wrapper.get_exec_params(*args, **kwargs)
-
-    validate_args(wrapper, *args, **kwargs)
-
-    if not issubclass(return_type, (pipeline.Parallel, pipeline.Serial)):
-        raise ValueError(
-            "Can only call co.lazy_py() on a function that returns a Parallel or Serial "
-            f"node, but got: {return_type}"
-        )
-
-    return lazy_shell(wrapper.to_command(*args, **kwargs), return_type, **exec_params)
 
 
 def meta(
@@ -174,9 +153,6 @@ class Wrapper(object):
         )
         return args
 
-    def getSignature(self):
-        return inspect.signature(self.callFunc)
-
     def to_command(self, *args, **kwargs):
         abspath = os.path.abspath(inspect.getfile(self.callFunc))
         ctxpath = image_mod.Image.get_contextual_path(abspath)
@@ -192,7 +168,7 @@ class Wrapper(object):
             self.callFunc.__name__,
         ]
 
-        sig = self.getSignature()
+        sig = inspect.signature(self.callFunc)
         bound = sig.bind(*args, **kwargs)
         for k, v in bound.arguments.items():
             if v is True:
@@ -425,6 +401,7 @@ def main(
     mem=None,
     requires_docker=False,
     image: typing.Union[None, str, image_mod.Image] = None,
+    filename=None,
     printer=pprint.pprint,
 ):
     """
@@ -458,11 +435,17 @@ def main(
         frame, path, _, source, _, _ = stack[1]
         log.debug("Reading locals from", source, "in", path)
         variables = dict(frame.f_locals)
+        if not filename:
+            filename = path
+
     methods = {
         name: obj
         for name, obj in variables.items()
         if not name.startswith("_") and not inspect.isclass(obj) and callable(obj)
     }
+
+    if filename:
+        api.dirconfig_select(filename)
 
     if "__all__" in variables:
         methods = {
@@ -474,11 +457,10 @@ def main(
 
     for name, fxn in methods.items():
         try:
-            # ignore builtin functions, i.e. heapq.heappush
-            sig = inspect.signature(fxn)
+            hints = typing.get_type_hints(fxn)
         except ValueError:
             continue
-        if issubclass(sig.return_annotation, pipeline.Node):
+        if "return" in hints and issubclass(hints["return"], pipeline.Node):
             returns_node.append((fxn, name))
         else:
             doesnt_return_node.append((fxn, name))
@@ -599,7 +581,9 @@ def main(
 
     wrapper = Wrapper.get_or_create(callFunc)
 
-    return_type = wrapper.getSignature().return_annotation
+    return_type = typing.get_type_hints(callFunc).get("return")
+    if return_type is None:
+        return_type = type(None)
 
     def bool_mutex_group(parser, base, default=None):
         group = parser.add_mutually_exclusive_group(required=False)
@@ -657,7 +641,7 @@ def main(
     # There are two possibilities with buildable methods (ones returning a Node):
     # - If user requested --build, then call build()
     # - Otherwise dumping the serialized Node to stdout, for user to view or for
-    #   co.lazy_py to deserialize and import.
+    #   co.lazy to deserialize and import.
     if issubclass(return_type, pipeline.Node):
         if not isinstance(output, pipeline.Node):
             raise NodeMethodError(

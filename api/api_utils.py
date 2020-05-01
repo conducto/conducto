@@ -5,7 +5,7 @@ from http import HTTPStatus as hs
 import json
 import typing
 
-from conducto.shared import types as t
+from conducto.shared import types as t, request_utils
 
 
 async def eval_in_thread(pool, cb, *args, **kwargs):
@@ -37,6 +37,19 @@ def async_helper(wrapped_class):
                 return fxn
 
     return inner
+
+
+def is_conducto_url(url):
+    import urllib.error
+
+    test_endpoint = f"{url}/auth/idtoken"
+    # no actual auth needed, just checking for not getting a 404 and
+    # name resolution.
+    try:
+        r = request_utils.get(test_endpoint)
+        return r.status_code == 401
+    except urllib.error.URLError:
+        return False
 
 
 class InvalidResponse(Exception):

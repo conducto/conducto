@@ -1,5 +1,5 @@
 from .pipeline import Exec, Serial, Parallel, Node
-from .glue import lazy_py, main, lazy_shell
+from .glue import lazy_py, main, lazy_shell, lazy
 from .shared.constants import SameContainer
 from .image import Image, relpath
 from .data import temp_data, perm_data
@@ -15,6 +15,7 @@ __all__ = [
     "main",
     "lazy_py",
     "lazy_shell",
+    "lazy",
     "temp_data",
     "perm_data",
     "Image",

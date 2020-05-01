@@ -273,7 +273,7 @@ class Image:
                     break
 
         # Apply context specified from outside this container. Needed for recursive
-        # co.lazy_py calls inside an Image with ".path_map".
+        # co.lazy calls inside an Image with ".path_map".
         path_map_text = os.getenv("CONDUCTO_PATH_MAP")
         if path_map_text:
             path_map = json.loads(path_map_text)

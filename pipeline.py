@@ -2,6 +2,7 @@ import base64
 import collections
 import functools
 import gzip
+import inspect
 import itertools
 import json
 import os
@@ -683,10 +684,10 @@ class Exec(Node):
 
     def __init__(self, command, *args, **kwargs):
         if callable(command):
+            self._validate_args(command, *args, **kwargs)
             from .glue import method
 
             wrapper = method.Wrapper(command)
-            method.validate_args(wrapper, *args, **kwargs)
             command = wrapper.to_command(*args, **kwargs)
             kwargs = wrapper.get_exec_params(*args, **kwargs)
             args = []
@@ -700,6 +701,49 @@ class Exec(Node):
 
         # Instance variables
         self.command = command
+
+    # Validate arguments for the given function without calling it. This is useful for
+    # raising early errors on `co.lazy()` or `co.Exec(func, *args, **kwargs).
+    @staticmethod
+    def _validate_args(func, *args, **kwargs):
+        params = inspect.signature(func).parameters
+        hints = typing.get_type_hints(func)
+        if isinstance(func, staticmethod):
+            function = func.__func__
+        else:
+            function = func
+
+        # TODO: can target function have a `*args` or `**kwargs` in the signature? If
+        # so, handle it.
+        invalid_params = [
+            (name, str(param.kind))
+            for name, param in params.items()
+            if param.kind != inspect.Parameter.POSITIONAL_OR_KEYWORD
+        ]
+        if invalid_params:
+            raise TypeError(
+                f"Unsupported parameter types of "
+                f"{function.__name__}: {invalid_params} - "
+                f"Only {str(inspect.Parameter.POSITIONAL_OR_KEYWORD)} is allowed."
+            )
+
+        # this will also validate against too-many or too-few arguments
+        call_args = inspect.getcallargs(function, *args, **kwargs)
+        for name, arg_value in call_args.items():
+            if name in hints:
+                # If there is a type hint, use the output of `typing.get_type_hints`. It
+                # infers typing.Optional when default is None, and it handles forward
+                # references.
+                param_type = hints[name]
+            else:
+                # If
+                param_type = params[name].annotation
+            if not t.is_instance(arg_value, param_type):
+                raise TypeError(
+                    f"Argument {name}={arg_value} {type(arg_value)} for "
+                    f"function {function.__name__} is not compatible "
+                    f"with expected type: {param_type}"
+                )
 
     def delete_child(self, node):
         raise NotImplementedError("Exec nodes have no children")

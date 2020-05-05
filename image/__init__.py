@@ -110,17 +110,34 @@ class Repository:
 
 class Image:
     """
-    :param image:  Specify the base image to start from. Code can be added with various context* variables, and packages with reqs_* variables.
-    :param dockerfile:  Use instead of image and pass a path to a Dockerfile. Relative paths are evaluated starting from the file where this code is written. Unless otherwise specified, it uses the directory of the Dockerfile as the build context
-    :param docker_build_args: Dict mapping names of arguments to `docker --build-args` to values
-    :param docker_auto_workdir: `bool`, default `True`, set the work-dir to the destination of `copy_dir`
-    :param context:  Use this to specify a custom docker build context when using dockerfile.
-    :param copy_dir:  Path to a directory. All files in that directory (and its subdirectories) will be copied into the generated Docker image.
-    :param copy_url:  URL to a Git repo. Conducto will clone it and copy its contents into the generated Docker image. Authenticate to private GitHub repos with a URL like `https://{user}:{token}@github.com/...`. See secrets for more info on how to store this securely. Must also specify copy_branch.
+    :param image:  Specify the base image to start from. Code can be added with
+        various context* variables, and packages with reqs_* variables.
+    :param dockerfile:  Use instead of image and pass a path to a Dockerfile.
+        Relative paths are evaluated starting from the file where this code is
+        written. Unless otherwise specified, it uses the directory of the
+        Dockerfile as the build context
+    :param docker_build_args: Dict mapping names of arguments to `docker
+        --build-args` to values
+    :param docker_auto_workdir: `bool`, default `True`, set the work-dir to the
+        destination of `copy_dir`
+    :param context:  Use this to specify a custom docker build context when
+        using `dockerfile`.
+    :param copy_dir:  Path to a directory. All files in that directory (and its
+        subdirectories) will be copied into the generated Docker image.
+    :param copy_url:  URL to a Git repo. Conducto will clone it and copy its
+        contents into the generated Docker image. Authenticate to private
+        GitHub repos with a URL like `https://{user}:{token}@github.com/...`.
+        See secrets for more info on how to store this securely. Must also
+        specify copy_branch.
     :param copy_branch:  A specific branch name to clone. Required if using copy_url.
-    :param path_map:  Dict that maps external_path to internal_path. Needed for live debug and lazy_py. It can be inferred from copy_dir; if not using that, you must specify path_map.
-    :param reqs_py:  List of Python packages for Conducto to pip install into the generated Docker image.
-    :param name: Name this co.Image so other Nodes can reference it by name. If no name is given, one will automatically be generated from a list of our favorite Pokemon. I choose you, angry-bulbasaur!
+    :param path_map:  Dict that maps external_path to internal_path. Needed for
+        live debug and :py:func:`conducto.Lazy`. It can be inferred from
+        `copy_dir`; if not using that, you must specify `path_map`.
+    :param reqs_py:  List of Python packages for Conducto to pip install into
+        the generated Docker image.
+    :param name: Name this `Image` so other Nodes can reference it by name. If
+        no name is given, one will automatically be generated from a list of
+        our favorite Pokemon. I choose you, angry-bulbasaur!
     """
 
     PATH_PREFIX = ""
@@ -273,7 +290,7 @@ class Image:
                     break
 
         # Apply context specified from outside this container. Needed for recursive
-        # co.lazy calls inside an Image with ".path_map".
+        # co.Lazy calls inside an Image with ".path_map".
         path_map_text = os.getenv("CONDUCTO_PATH_MAP")
         if path_map_text:
             path_map = json.loads(path_map_text)

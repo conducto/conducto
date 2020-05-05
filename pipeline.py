@@ -55,15 +55,14 @@ class Node:
         to use 
     :param env: `dict` with keys environment variables and the values
 
-    :param image: :py:class:`conducto.Image` or `str` Run Node in container
-        using the given Docker :py:class:`conducto.Image` or image identified
-        by name in docker.
-    :param image_name: Reference a Docker :ref:`Image Definition` by
-        name instead of passing it explicitly. The other Image must have been
-        passed by :py:func:`conducto.Node.register_image`.
-    :param same_container: See [Running Exec nodes](#running-exec-nodes) for
-        details. Note this has special inheritance rules when propagating to child
-        nodes.
+    :param image: :py:class:`conducto.Image` or `str`, Run Node in container
+        using the given :py:class:`conducto.Image` or image identified
+        by name in Docker.
+    :param image_name: `str`, Reference an :py:class:`conducto.Image` by
+        name instead of passing it explicitly. The Image must have been
+        registered with :py:func:`conducto.Node.register_image`.
+    :param same_container: See :ref:`Running Exec nodes` for details. Note this
+        has special inheritance rules when propagating to child nodes.
 
     :param skip: bool, default `False`, If False the Node will be run normally.
         If True execution will pass over it and it will not be run.
@@ -81,8 +80,14 @@ class Node:
         n = co.Parallel()
         n.cpu = 2
 
-    are equivalent. `name` is immutable and must be
-    assigned during initialization.
+    are equivalent.
+
+    :ivar name: Immutable. The name of this Node must be unique among sibling
+        Nodes. It is most commonly set through dict assignment with
+        `parent['nodename'] = co.Parallel()`. It may also be set in the
+        constructor with `co.Parallel(name='nodename')` if you're using another
+        Node as a context manager. It may not contain a `/`, as `/` is reserved
+        as the path separator.
     """
 
     # Enum regarding skip statuses. The naming is awkward but intentional:
@@ -224,6 +229,28 @@ class Node:
         Node._CONTEXT_STACK.pop()
 
     def __str__(self):
+        """
+        The full path of Node, computed by joining the names of this Node's ancestry with `/`.
+
+        .. code-block:: python
+
+           import conducto as co
+           x = co.Parallel()
+           x["foo"] = y = co.Parallel()
+           x["foo/bar"] = z = co.Exec("echo foobar")
+
+           print(f"x.name={x.name}  str(x)={x}")
+           # x.name=/  str(x) = /
+           print(f"y.name={y.name}  str(y)={y}")
+           # y.name=foo  str(y) = /foo
+           print(f"z.name={z.name}  str(z)={z}")
+           # z.name=bar  str(z) = /foo/bar
+           for node in x.stream():
+               print(str(node))
+           # /
+           # /foo
+           # /foo/bar
+        """
         name = []
         cur = self
         while cur:
@@ -535,8 +562,8 @@ class Node:
             pipeline using the shell UI. Otherwise just launch the pipeline and
             then exit.
         :param retention: Once the pipeline is put to sleep, its logs and
-            :ref:`temp_data and perm_data` will be deleted after `retention` days
-            of inactivity. Until then it can be woken up and interacted with.
+            :ref:`data` will be deleted after `retention` days of inactivity.
+            Until then it can be woken up and interacted with.
         :param run: If True the pipeline will run immediately upon launching.
             Otherwise (default) it will stay Pending until the user starts it.
         :param sleep_when_done: If True the pipeline will sleep -- manager
@@ -703,7 +730,7 @@ class Exec(Node):
         self.command = command
 
     # Validate arguments for the given function without calling it. This is useful for
-    # raising early errors on `co.lazy()` or `co.Exec(func, *args, **kwargs).
+    # raising early errors on `co.Lazy()` or `co.Exec(func, *args, **kwargs).
     @staticmethod
     def _validate_args(func, *args, **kwargs):
         params = inspect.signature(func).parameters

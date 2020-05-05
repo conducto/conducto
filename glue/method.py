@@ -20,19 +20,32 @@ _UNSET = object()
 
 
 def lazy_shell(command, node_type, env=None, **exec_args) -> pipeline.Node:
-    output = lazy(command, node_type=node_type, **exec_args)
+    output = Lazy(command, node_type=node_type, **exec_args)
     output.env = env
     return output
 
 
 def lazy_py(func, *args, **kwargs) -> pipeline.Node:
-    return lazy(func, *args, **kwargs)
+    return Lazy(func, *args, **kwargs)
 
 
-def lazy(command_or_func, *args, node_type=_UNSET, **kwargs) -> pipeline.Node:
+def Lazy(command_or_func, *args, node_type=_UNSET, **kwargs) -> pipeline.Node:
+    """
+    This node constructor returns a co.Serial containing a pair of nodes. The
+    first, **`Generate`**, runs `func(*args, **kwargs)` and prints out the
+    resulting pipeline. The second, **`Execute`**, imports that pipeline into the
+    current one and runs it.
+
+    :param command_or_func: A shell command to execute or a python callable
+
+    If a Python callable is specified for the command the `args` and `kwargs`
+    are serialized and a `conducto` command line is constructed to launch the
+    function for that node in the pipeline.
+    """
+
     if callable(command_or_func):
         # If a function is passed, then `node_type` might be a valid argument. If it is
-        # passed to `lazy` then pass it along to `command_or_func`.
+        # passed to `Lazy` then pass it along to `command_or_func`.
         if node_type is not _UNSET:
             kwargs["node_type"] = node_type
 
@@ -42,7 +55,7 @@ def lazy(command_or_func, *args, node_type=_UNSET, **kwargs) -> pipeline.Node:
 
     if not issubclass(node_type, (pipeline.Parallel, pipeline.Serial)):
         raise ValueError(
-            "Can only call co.lazy() on a function that returns a Parallel or Serial "
+            "Can only call co.Lazy() on a function that returns a Parallel or Serial "
             f"node, but got: {node_type}"
         )
 
@@ -458,9 +471,13 @@ def main(
     for name, fxn in methods.items():
         try:
             hints = typing.get_type_hints(fxn)
-        except ValueError:
+        except (TypeError, ValueError):
             continue
-        if "return" in hints and issubclass(hints["return"], pipeline.Node):
+        if (
+            "return" in hints
+            and isinstance(hints["return"], type)
+            and issubclass(hints["return"], pipeline.Node)
+        ):
             returns_node.append((fxn, name))
         else:
             doesnt_return_node.append((fxn, name))
@@ -582,8 +599,10 @@ def main(
     wrapper = Wrapper.get_or_create(callFunc)
 
     return_type = typing.get_type_hints(callFunc).get("return")
-    if return_type is None:
-        return_type = type(None)
+    if isinstance(return_type, type) and issubclass(return_type, pipeline.Node):
+        called_func_returns_node = True
+    else:
+        called_func_returns_node = False
 
     def bool_mutex_group(parser, base, default=None):
         group = parser.add_mutually_exclusive_group(required=False)
@@ -592,7 +611,7 @@ def main(
         if default != None:
             parser.set_defaults(**{base: default})
 
-    if issubclass(return_type, pipeline.Node):
+    if called_func_returns_node:
         default_shell = t.Bool(config.get("general", "show_shell", default=False))
         default_app = t.Bool(config.get("general", "show_app", default=True))
 
@@ -641,8 +660,8 @@ def main(
     # There are two possibilities with buildable methods (ones returning a Node):
     # - If user requested --build, then call build()
     # - Otherwise dumping the serialized Node to stdout, for user to view or for
-    #   co.lazy to deserialize and import.
-    if issubclass(return_type, pipeline.Node):
+    #   co.Lazy to deserialize and import.
+    if called_func_returns_node:
         if not isinstance(output, pipeline.Node):
             raise NodeMethodError(
                 f"Expected {callFunc.__name__} to return a Node, "

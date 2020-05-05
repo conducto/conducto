@@ -35,6 +35,7 @@ class _Context:
                 aws_session_token=creds["SessionToken"],
             )
             self.s3 = session.resource("s3")
+            self.s3_client = session.client("s3")
             m = re.search("^s3://(.*?)/(.*)", self.uri)
             self.bucket, self.key_root = m.group(1, 2)
         else:
@@ -101,6 +102,8 @@ class _Data:
                 # fail then, and if not then it'll have been fine to ignore this error.
                 if not _Data._local:
                     raise
+        if os.getenv("CONDUCTO_DATA_TOKEN") is None and _Data._token is not None:
+            os.environ["CONDUCTO_DATA_TOKEN"] = _Data._token
 
     @classmethod
     def get(cls, name, file):
@@ -234,7 +237,7 @@ class _Data:
             import botocore.exceptions
 
             try:
-                ctx.s3.head_object(Bucket=ctx.bucket, Key=ctx.get_s3_obj(name))
+                ctx.s3_client.head_object(Bucket=ctx.bucket, Key=ctx.get_s3_key(name))
             except botocore.exceptions.ClientError:
                 return False
             else:
@@ -249,7 +252,9 @@ class _Data:
         """
         ctx = cls._ctx()
         if not ctx.local:
-            result = ctx.s3.head_object(Bucket=ctx.bucket, Key=ctx.get_s3_obj(name))
+            result = ctx.s3_client.head_object(
+                Bucket=ctx.bucket, Key=ctx.get_s3_key(name)
+            )
             return result["ContentLength"]
         else:
             return os.stat(ctx.get_path(name)).st_size
@@ -313,7 +318,7 @@ class _Data:
         return f"{conducto_url}/pgw/data/{pipeline_id}/{data_type}/{qname}"
 
 
-class temp_data(_Data):
+class pipeline(_Data):
     @staticmethod
     def _get_uri():
         if _Data._local:
@@ -468,9 +473,9 @@ class temp_data(_Data):
         print(json.dumps(val))
 
 
-class perm_data(_Data):
+class user(_Data):
     """
-    See also :py:class:`temp_data` which has an identical interface.
+    See also :py:class:`data.pipeline` which has an identical interface.
     """
 
     @staticmethod

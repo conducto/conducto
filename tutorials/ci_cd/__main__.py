@@ -9,7 +9,7 @@ def ci_cd(projects=utils.get_projects()) -> co.Serial:
 
     # User the standard python 3.8 image as a base and add all files from
     # the current dir. We also need to install conducto in the image in
-    # order to dynamically generate the tree with lazy_py in test().
+    # order to dynamically generate the tree with Lazy in test().
     img = co.Image(image="python:3.8", copy_dir=".", reqs_py=["conducto"])
 
     output = co.Serial(image=img)

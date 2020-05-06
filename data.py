@@ -218,7 +218,11 @@ class _Data:
         ctx = cls._ctx()
         if not ctx.local:
             bkt = ctx.s3.Bucket(ctx.bucket)
-            return [obj.key for obj in bkt.objects.filter(Prefix=prefix)]
+            prefix_size = len(ctx.get_s3_key(""))
+            return [
+                obj.key[prefix_size:]
+                for obj in bkt.objects.filter(Prefix=ctx.get_s3_key(prefix))
+            ]
         else:
             path = ctx.get_path(prefix)
             try:

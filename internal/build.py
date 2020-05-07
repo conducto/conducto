@@ -101,6 +101,7 @@ def build(
     use_shell=False,
     use_app=True,
     retention=7,
+    is_public=False,
 ):
     assert node.parent is None
     assert node.name == "/"
@@ -136,6 +137,7 @@ def build(
         retention=retention,
         tags=node.tags or [],
         title=node.title,
+        is_public=is_public,
     )
 
     launch_from_serialization(
@@ -229,6 +231,14 @@ def run(token, pipeline_id, func, use_app, use_shell, msg, starting):
         hostdet.system_open(url)
     else:
         print(f"View at {u_url}")
+
+    data = api.Pipeline().get(token, pipeline_id)
+    if data.get("is_public"):
+        unauth_password = data["unauth_password"]
+        url = api.Config().get_url()
+        public_url = f"{url}/app/s/{pipeline_id}/{unauth_password}"
+        u_public_url = log.format(public_url, underline=True)
+        print(f"\nPublic view at:\n{u_public_url}")
 
     if use_shell:
         shell_ui.connect(token, pipeline_id, "Deploying")
@@ -337,7 +347,12 @@ def run_in_local_container(
         f"CONDUCTO_NETWORK={network_name}",
     ]
 
-    for env_var in "CONDUCTO_URL", "CONDUCTO_CONFIG", "IMAGE_TAG":
+    for env_var in (
+        "CONDUCTO_URL",
+        "CONDUCTO_CONFIG",
+        "IMAGE_TAG",
+        "CONDUCTO_DEV_REGISTRY",
+    ):
         if os.environ.get(env_var):
             flags.extend(["-e", f"{env_var}={os.environ[env_var]}"])
     for k, v in inject_env.items():

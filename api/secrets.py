@@ -1,6 +1,5 @@
 import json
 import typing
-import shutil
 
 from http import HTTPStatus as hs
 
@@ -60,7 +59,7 @@ class Secrets:
 
     def delete_user_secrets(self, token: types.Token, secret_names: list):
         data = {"secret_names": secret_names}
-        response = request_utils.post(
+        request_utils.post(
             f"{self.url}/secrets/user/delete",
             data=json.dumps(data),
             headers=self._headers(token),
@@ -68,7 +67,7 @@ class Secrets:
 
     def delete_org_secrets(self, token: types.Token, secret_names: list):
         data = {"secret_names": secret_names}
-        response = request_utils.post(
+        request_utils.post(
             f"{self.url}/secrets/org/delete",
             data=json.dumps(data),
             headers=self._headers(token),

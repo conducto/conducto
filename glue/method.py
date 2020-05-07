@@ -17,6 +17,7 @@ from .. import api, callback, image as image_mod, pipeline
 from . import arg
 
 _UNSET = object()
+CONDUCTO_ARGS = []
 
 
 def lazy_shell(command, node_type, env=None, **exec_args) -> pipeline.Node:
@@ -379,11 +380,7 @@ def _get_default_title(is_local, specifiedFuncName, default_method_name):
     # Construct a default title from the command line arguments.  Start
     # from a copy of sys.argv to not modify in-place!
     args = sys.argv[:]
-    try:
-        # the cloud/local is shown in the icon, strip it here
-        args.remove("--local" if is_local else "--cloud")
-    except ValueError:
-        pass
+    args = [a for a in args if a not in CONDUCTO_ARGS]
 
     executable = os.path.basename(args[0])
     if (
@@ -624,7 +621,9 @@ def main(
         parser.add_argument("--no-clean", action="store_true")
         parser.add_argument("--prebuild-images", action="store_true")
         parser.add_argument("--sleep-when-done", action="store_true")
-        conducto_args = [
+        parser.add_argument("--public", action="store_true")
+        global CONDUCTO_ARGS
+        CONDUCTO_ARGS = [
             "cloud",
             "local",
             "run",
@@ -633,19 +632,18 @@ def main(
             "no_clean",
             "prebuild_images",
             "sleep_when_done",
+            "public",
         ]
-    else:
-        conducto_args = []
 
     call_state = vars(parser.parse_args(argv))
     call_state.pop("method")
 
-    conducto_state = {k: call_state.pop(k, None) for k in conducto_args}
+    conducto_state = {k: call_state.pop(k, None) for k in CONDUCTO_ARGS}
 
     call_state = {
         name: arg.Base(name, defaultType=types[name]).parseCL(value)
         for name, value in call_state.items()
-        if name not in conducto_args
+        if name not in CONDUCTO_ARGS
         and value != inspect.Parameter.empty
         and value is not None
     }
@@ -697,6 +695,7 @@ def main(
         run = conducto_state["run"]
         sleep_when_done = conducto_state["sleep_when_done"]
         prebuild_images = conducto_state["prebuild_images"]
+        is_public = conducto_state["public"]
         will_build = is_cloud or is_local
 
         if will_build:
@@ -712,6 +711,7 @@ def main(
                 build_mode=BM.LOCAL if is_local else BM.DEPLOY_TO_CLOUD,
                 run=run,
                 sleep_when_done=sleep_when_done,
+                is_public=is_public,
             )
         else:
             if t.Bool(os.getenv("__RUN_BY_WORKER__")):

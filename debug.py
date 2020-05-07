@@ -83,7 +83,7 @@ def start_container(payload, live):
     import random
 
     image = get_param(payload, "image", default={})
-    image_name = image["name_complete"]
+    image_name = image["name_debug"]
 
     if live and not image.get("path_map"):
         raise ValueError(

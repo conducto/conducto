@@ -2,6 +2,7 @@ import json
 import time
 import typing
 import getpass
+import os
 from .. import api
 from jose import jwt
 from conducto.shared import types as t, request_utils
@@ -18,6 +19,8 @@ class Auth:
     # public methods
     ############################################################
     def get_token(self, login: dict) -> typing.Optional[t.Token]:
+        if not login.get("email") or not login.get("password"):
+            raise Exception("Login dict must specify email and password")
         data = json.dumps(login)
         headers = {"content-type": "application/json"}
         response = request_utils.post(
@@ -131,11 +134,30 @@ class Auth:
     def _get_token_from_shell(
         self, login: dict, force_refresh: bool, skip_profile=False
     ) -> typing.Optional[t.Token]:
+
         token = self.config.get_token()
-        if token:
+
+        # If login not specified, read from environment.
+        if not login and os.environ.get("CONDUCTO_EMAIL"):
+            login = {
+                "email": os.environ.get("CONDUCTO_EMAIL"),
+                "password": os.environ["CONDUCTO_PASSWORD"],
+            }
+            print(
+                f"Logging in with CONDUCTO_EMAIL={login['email']} and "
+                f"CONDUCTO_PASSWORD in environment."
+            )
+
+        # First try to login with specified login.
+        if login:
+            token = self.get_token(login)
+
+        # Otherwise try to refresh existing token.
+        elif token:
             try:
-                newToken = self.get_refreshed_token(token, force_refresh)
+                new_token = self.get_refreshed_token(token, force_refresh)
             except api_utils.InvalidResponse as e:
+                token = None
                 # If cognito changed, our token is invalid, so we should
                 # prompt for re-login.
                 if e.status_code == hs.UNAUTHORIZED and "Invalid auth token" in str(e):
@@ -148,16 +170,17 @@ class Auth:
                 else:
                     raise e
             else:
-                if newToken:
-                    if newToken != token:
-                        self.config.set(self.config.default_profile, "token", newToken)
-                    return newToken
-        if not login:
+                if new_token:
+                    if new_token != token:
+                        self.config.set(self.config.default_profile, "token", new_token)
+                    return new_token
+
+        # If no token by now, prompt for login.
+        if not token:
             token = self._get_token_from_login()
-        else:
-            token = self.get_token(login)
+
         if not skip_profile:
-            self.config.write_profile(self.config.get_url(), token)
+            self.config.write_profile(self.config.get_url(), token, default="first")
         return t.Token(token)
 
 

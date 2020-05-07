@@ -74,7 +74,12 @@ class ImageUtil:
         if tag is None:
             return f"conducto/manager:{ImageUtil.MANAGER_VERSION}"
         else:
-            return f"manager-dev:{ImageUtil.MANAGER_VERSION}-{tag}"
+            image = f"manager-dev:{ImageUtil.MANAGER_VERSION}-{tag}"
+            registry = os.environ.get("CONDUCTO_DEV_REGISTRY")
+            if registry:
+                return f"{registry}/{image}"
+            else:
+                return image
 
 
 class BuildMode:

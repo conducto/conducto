@@ -199,7 +199,7 @@ commands:
 
                     cmdline = ["ln", "-s", win_config_dir, config_dir]
                     subprocess.run(cmdline, stdout=subprocess.PIPE)
-                except subprocess.CalledProcessError as e:
+                except subprocess.CalledProcessError:
                     raise RuntimeError(fallback_error)
             else:
                 os.mkdir(config_dir)
@@ -262,8 +262,9 @@ commands:
                 raise
 
         # search for url & org matching
-        is_new = False
-        for section in self.config.sections():
+        is_first = True
+        for section in self.profile_sections():
+            is_first = False
             ss_url = self.config.get(section, "url", fallback=None)
             ss_org_id = self.config.get(section, "org_id", fallback=None)
             if (
@@ -275,7 +276,6 @@ commands:
                 profile = section
                 break
         else:
-            is_new = True
             profile = "".join(random.choice("0123456789abcdef") for _ in range(8))
 
         self.set(profile, "url", url, write=False)
@@ -285,7 +285,8 @@ commands:
             self.set(profile, "email", userdata["email"], write=False)
         self.set(profile, "token", token, write=False)
 
-        if default and is_new:
+        assert default in (True, False, "first")
+        if default is True or (default == "first" and is_first):
             self.set("general", "default", profile, write=False)
             self.default_profile = profile
         self.write()

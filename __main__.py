@@ -124,23 +124,21 @@ def init(dir: str = ".", url: str = None):
     else:
         profile = None
 
-    create_new = False
+    create_new = True
     if profile is not None:
         # we already have a profile for this url, let's see what the intent is.
 
-        email = config.get(profile, "email")
-        print(f"There is already a profile for {url} and e-mail {email}.")
+        profile_email = config.get(profile, "email")
+        email = os.environ.get("CONDUCTO_EMAIL")
 
-        question = "Do you wish to connect this directory to this profile? [yn] "
-        choice = input(question)
+        if email == profile_email:
+            print(f"There is already a profile for {url} and e-mail {email}.")
+            question = "Do you wish to connect this directory to this profile? [yn] "
+            choice = input(question)
 
-        if choice.lower()[0] == "y":
-            pass
-            # connect dir to this profile
-        else:
-            create_new = True
-    else:
-        create_new = True
+            if choice.lower()[0] == "y":
+                # connect dir to this profile
+                create_new = False
 
     if create_new:
         os.environ["CONDUCTO_URL"] = url

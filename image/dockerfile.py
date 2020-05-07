@@ -5,6 +5,7 @@ import packaging.version
 import pipes
 import re
 import subprocess
+import os
 
 from conducto.shared import async_utils
 from .. import api
@@ -66,6 +67,9 @@ async def text_for_build_dockerfile(
         if "conducto" in reqs_py:
             if api.Config().get("dev", "who"):
                 image = "conducto"
+                registry = os.environ.get("CONDUCTO_DEV_REGISTRY")
+                if registry:
+                    image = f"{registry}/{image}"
                 tag = api.Config().get_image_tag(default=None)
                 if tag is not None:
                     image = f"{image}:{tag}"
@@ -171,6 +175,9 @@ async def text_for_extend_dockerfile(user_image):
     if dev_tag is not None:
         image = f"worker-dev"
         tag += f"-{dev_tag}"
+        registry = os.environ.get("CONDUCTO_DEV_REGISTRY")
+        if registry:
+            image = f"{registry}/{image}"
     worker_image = f"{image}:{tag}"
 
     # Write to /tmp instead of /opt because if you don't have root access inside the

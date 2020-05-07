@@ -1,8 +1,7 @@
 import typing
-import os
 import json
 from .. import api
-from conducto.shared import constants, types as t, request_utils
+from conducto.shared import types as t, request_utils
 from http import HTTPStatus as hs
 from . import api_utils
 
@@ -73,15 +72,15 @@ class Dir:
         data = api_utils.get_data(response)
         teams = set()
         users = set()
-        for t in teams:
-            teams.add(t["team_id"])
-            for u in t["members"]:
+        for team in teams:
+            teams.add(team["team_id"])
+            for u in team["members"]:
                 users.add(u["user_id"])
 
         # delete teams, users, and org
-        for t in teams:
+        for team in teams:
             response = request_utils.delete(
-                self.url + f"/dir/team/{t}", headers=headers
+                self.url + f"/dir/team/{team}", headers=headers
             )
             api_utils.get_data(response)
         for u in users:

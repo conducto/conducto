@@ -594,9 +594,10 @@ class Node:
         retention=7,
         run=False,
         sleep_when_done=False,
+        is_public=False,
     ):
         if self.image is None:
-            self.image = image_mod.Image()
+            self.image = image_mod.Image(name="conducto-default")
 
         self.check_images()
 
@@ -611,7 +612,12 @@ class Node:
         from conducto.internal import build
 
         return build.build(
-            self, build_mode, use_shell=use_shell, use_app=use_app, retention=retention,
+            self,
+            build_mode,
+            use_shell=use_shell,
+            use_app=use_app,
+            retention=retention,
+            is_public=is_public,
         )
 
     def check_images(self):

@@ -14,7 +14,7 @@ import uuid
 import warnings
 
 import conducto.internal.host_detection as hostdet
-from conducto.shared import async_utils, log
+from conducto.shared import async_utils, client_utils, log
 from .. import pipeline
 from . import dockerfile as dockerfile_mod, names
 
@@ -180,7 +180,7 @@ class Image:
             )
         if image is None and dockerfile is None:
             # Default to user's current version of python, if none is specified
-            image = f"python:{sys.version_info[0]}.{sys.version_info[1]}"
+            image = f"python:{sys.version_info[0]}.{sys.version_info[1]}-slim"
             if not reqs_py:
                 reqs_py = ["conducto"]
         if copy_dir is not None and copy_url is not None:
@@ -519,7 +519,21 @@ class Image:
             self.name_complete
         )
         if "/" in worker_image:
-            await dockerfile_mod.pull_conducto_worker(worker_image)
+            pull_worker = True
+            if os.environ.get("CONDUCTO_DEV_REGISTRY"):
+                # If image is not present locally, then try ecr login.
+                try:
+                    client_utils.subprocess_run(
+                        f"docker inspect {worker_image}", shell=True
+                    )
+                    pull_worker = False
+                except:
+                    client_utils.subprocess_run(
+                        "$(aws ecr get-login --no-include-email --region us-east-2)",
+                        shell=True,
+                    )
+            if pull_worker:
+                await dockerfile_mod.pull_conducto_worker(worker_image)
         out, err = await async_utils.run_and_check(
             "docker",
             "build",

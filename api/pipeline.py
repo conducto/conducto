@@ -1,3 +1,4 @@
+import boto3
 from .. import api
 from ..shared import constants, types as t, request_utils
 from . import api_utils
@@ -82,14 +83,8 @@ class Pipeline:
     def save_serialization(
         self, token: t.Token, pipeline_id: t.PipelineId, serialization: str
     ):
-        headers = api_utils.get_auth_headers(token)
-        data = {"serialization": serialization}
-        response = request_utils.put(
-            self.url + f"/program/program/{pipeline_id}/serialization",
-            headers=headers,
-            data=data,
-        )
-        api_utils.get_data(response)
+        pipeline = self.get(token, pipeline_id)
+        put_serialization_s3(token, pipeline["program_path"], serialization)
 
     def touch(self, token: t.Token, pipeline_id: t.PipelineId):
         headers = api_utils.get_auth_headers(token)
@@ -114,6 +109,30 @@ class Pipeline:
             self.url + "/program/program/history", headers=headers, params=params
         )
         return api_utils.get_data(response)
+
+
+def _get_s3_split(path):
+    s3Prefix = "s3://"
+    bucketKey = path[len(s3Prefix) :]
+    bucket, key = bucketKey.split("/", 1)
+    return bucket, key
+
+
+def put_serialization_s3(token, s3path, serialization):
+    bucket, key = _get_s3_split(s3path)
+    # log.log("S3 bucket={}, key={}".format(bucket, key))
+
+    auth = api.Auth()
+    token = auth.get_refreshed_token(token)
+    creds = auth.get_credentials(token)
+
+    session = boto3.Session(
+        aws_access_key_id=creds["AccessKeyId"],
+        aws_secret_access_key=creds["SecretKey"],
+        aws_session_token=creds["SessionToken"],
+    )
+    s3 = session.client("s3")
+    s3.put_object(Body=serialization.encode("utf-8"), Bucket=bucket, Key=key)
 
 
 AsyncPipeline = api_utils.async_helper(Pipeline)

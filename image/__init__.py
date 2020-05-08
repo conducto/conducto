@@ -391,6 +391,10 @@ class Image:
                 callback()
 
     async def _make(self, push_to_cloud, callback):
+        async for _ in self._make_generator(push_to_cloud, callback):
+            pass
+
+    async def _make_generator(self, push_to_cloud, callback):
         """
         Generator that pulls/builds/extends/pushes this Image.
         """
@@ -403,6 +407,7 @@ class Image:
                 callback()
                 out, err = await async_utils.run_and_check("docker", "pull", self.image)
                 st.finish(out, err)
+        yield
 
         # Build the image if needed
         if self.needs_building():
@@ -410,6 +415,7 @@ class Image:
                 callback()
                 out, err = await self._build()
                 st.finish(out, err)
+        yield
 
         # If needed, copy files into the image and install packages
         if self.needs_completing():
@@ -417,11 +423,13 @@ class Image:
                 callback()
                 out, err = await self._complete()
                 st.finish(out, err)
+        yield
 
         with self._new_status(Status.EXTENDING) as st:
             callback()
             out, err = await self._extend()
             st.finish(out, err)
+        yield
 
         if push_to_cloud:
             with self._new_status(Status.PUSHING) as st:

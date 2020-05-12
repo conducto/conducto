@@ -308,16 +308,19 @@ class _Data:
         tar.extractall(path=restore_dir)
 
     @classmethod
-    def url(cls, name):
+    def url(cls, name, path_only=True):
         """
-        Get url for object at `name`.
+        Get url for object at `name`. `path_only` (default: True) will produce only the
+        'path' portion of the URL, which is most suitable for viewing in the Conducto
+        web app. If you need the result for viewing outside of the web app, set this to
+        False.
         """
         # Convert CamelCase to snake_case
         # https://stackoverflow.com/questions/1175208/elegant-python-function-to-convert-camelcase-to-snake-case
         data_type = re.sub(r"(?<!^)(?=[A-Z])", "_", cls.__name__).lower()
 
         pipeline_id = os.environ["CONDUCTO_PIPELINE_ID"]
-        conducto_url = os.environ["CONDUCTO_AUTO_URL"]
+        conducto_url = "" if path_only else os.environ["CONDUCTO_AUTO_URL"]
         qname = urllib.parse.quote(name)
         return f"{conducto_url}/pgw/data/{pipeline_id}/{data_type}/{qname}"
 
@@ -427,12 +430,15 @@ class pipeline(_Data):
         return cls.size(name)
 
     @classmethod
-    def _url_cli(cls, name, *, id=None, local: bool = None):
+    def _url_cli(cls, name, path_only=True, *, id=None, local: bool = None):
         """
-        Get url for object at `name`.
+        Get url for object at `name`. `path_only` (default: True) will produce only the
+        'path' portion of the URL, which is most suitable for viewing in the Conducto
+        web app. If you need the result for viewing outside of the web app, set this to
+        False.
         """
         cls._init(pipeline_id=id, local=local)
-        return cls.url(name)
+        return cls.url(name, path_only=path_only)
 
     @classmethod
     def _cache_exists_cli(cls, name, checksum, *, id=None, local: bool = None):
@@ -583,12 +589,15 @@ class user(_Data):
         return cls.size(name)
 
     @classmethod
-    def _url_cli(cls, name, *, local: bool = None):
+    def _url_cli(cls, name, path_only: bool = True, *, local: bool = None):
         """
-        Get url for object at `name`.
+        Get url for object at `name`. `path_only` (default: True) will produce only the
+        'path' portion of the URL, which is most suitable for viewing in the Conducto
+        web app. If you need the result for viewing outside of the web app, set this to
+        False.
         """
         cls._init(local=local)
-        return cls.url(name)
+        return cls.url(name, path_only=path_only)
 
     @classmethod
     def _cache_exists_cli(cls, name, checksum, *, local: bool = None):

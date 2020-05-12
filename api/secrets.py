@@ -42,7 +42,7 @@ class Secrets:
     def put_user_secrets(
         self, token: types.Token, secrets: dict, replace: bool = False
     ):
-        data = {"secrets": secrets}
+        data = {"secrets": {k: str(v) for k, v in secrets.items()}}
         (request_utils.put if replace else request_utils.patch)(
             f"{self.url}/secrets/user",
             data=json.dumps(data),
@@ -50,7 +50,7 @@ class Secrets:
         )
 
     def put_org_secrets(self, token: types.Token, secrets: dict, replace: bool = False):
-        data = {"secrets": secrets}
+        data = {"secrets": {k: str(v) for k, v in secrets.items()}}
         (request_utils.put if replace else request_utils.patch)(
             f"{self.url}/secrets/org",
             data=json.dumps(data),

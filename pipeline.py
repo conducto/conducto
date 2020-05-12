@@ -887,6 +887,7 @@ class Serial(Node):
         image: typing.Union[str, image_mod.Image] = None,
         image_name=None,
         doc=None,
+        tags: typing.Iterable = None,
     ):
         super().__init__(
             env=env,
@@ -901,6 +902,7 @@ class Serial(Node):
             image=image,
             image_name=image_name,
             doc=doc,
+            tags=tags,
         )
         self.stop_on_error = stop_on_error
 

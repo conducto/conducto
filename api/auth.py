@@ -41,7 +41,7 @@ class Auth:
         data = self._get_data(response)
         return data["AccessToken"] if data is not None else None
 
-    def get_id_token(self, token: t.Token) -> dict:
+    def get_id_token(self, token: t.Token) -> typing.Optional[t.Token]:
         headers = api_utils.get_auth_headers(token)
         response = request_utils.get(self.url + "/auth/idtoken", headers=headers)
         data = self._get_data(response)
@@ -172,12 +172,17 @@ class Auth:
             else:
                 if new_token:
                     if new_token != token:
+                        if os.environ.get("CONDUCTO_USE_ID_TOKEN"):
+                            new_token = self.get_id_token(new_token)
                         self.config.set(self.config.default_profile, "token", new_token)
                     return new_token
 
         # If no token by now, prompt for login.
         if not token:
             token = self._get_token_from_login()
+
+        if os.environ.get("CONDUCTO_USE_ID_TOKEN"):
+            token = self.get_id_token(token)
 
         if not skip_profile:
             self.config.write_profile(self.config.get_url(), token, default="first")

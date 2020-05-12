@@ -1,4 +1,5 @@
 import os
+import time
 import random
 import subprocess
 import configparser
@@ -150,6 +151,18 @@ class Config:
             if all(self.config.has_option(section, rq) for rq in required):
                 yield section
 
+    def delete_profile(self, profile):
+        if profile not in self.config.sections():
+            return
+
+        required = ["url", "org_id", "email", "token"]
+        if all(self.config.has_option(profile, rq) for rq in required):
+            self.config.remove_section(profile)
+            self.write()
+        else:
+            msg = "The section {profile} may not be a profile section.  Verify & correct manually."
+            raise RuntimeError(msg)
+
     def delete(self, section, key, write=True):
         del self.config[section][key]
         if not self.config[section]:
@@ -252,14 +265,23 @@ commands:
         dir_api = dir.Dir()
         dir_api.url = url
 
-        try:
-            userdata = {}
-            userdata = dir_api.user(token)
-        except Exception as e:
-            # This may be a pre-registered user in which case we leave email &
-            # org_id blank
-            if not str(e).startswith("No user information found."):
-                raise
+        userdata = None
+        for _ in range(3):
+            try:
+                userdata = dir_api.user(token)
+            except Exception as e:
+                # This may be a pre-registered user in which case we leave email &
+                # org_id blank
+                if not str(e).startswith("No user information found."):
+                    raise
+
+            if userdata is not None:
+                break
+            else:
+                time.sleep(1)
+        else:
+            if userdata is None:
+                userdata = {}
 
         # search for url & org matching
         is_first = True

@@ -92,18 +92,12 @@ class _Data:
         _Data._s3_bucket = (
             s3_bucket or _Data._s3_bucket or os.getenv("CONDUCTO_S3_BUCKET")
         )
-        _Data._token = token or _Data._token or os.getenv("CONDUCTO_DATA_TOKEN")
-        if _Data._token is None:
-            try:
+        if not _Data._local:
+            _Data._token = token or _Data._token or os.getenv("CONDUCTO_DATA_TOKEN")
+            if _Data._token is None:
                 _Data._token = api.Auth().get_token_from_shell()
-            except Exception:
-                # If we're running in the cloud, by this point we better have a token.
-                # Otherwise it's okay to wait until later - if we need a token, we'll
-                # fail then, and if not then it'll have been fine to ignore this error.
-                if not _Data._local:
-                    raise
-        if os.getenv("CONDUCTO_DATA_TOKEN") is None and _Data._token is not None:
-            os.environ["CONDUCTO_DATA_TOKEN"] = _Data._token
+            if os.getenv("CONDUCTO_DATA_TOKEN") is None and _Data._token is not None:
+                os.environ["CONDUCTO_DATA_TOKEN"] = _Data._token
 
     @classmethod
     def get(cls, name, file):
@@ -418,7 +412,7 @@ class pipeline(_Data):
         Read object from stdin and store it to `name`.
         """
         cls._init(pipeline_id=id, local=local)
-        obj = sys.stdin.read().encode()
+        obj = sys.stdin.buffer.read()
         return cls.puts(name, obj)
 
     @classmethod
@@ -577,7 +571,7 @@ class user(_Data):
         Read object from stdin and store it to `name`.
         """
         cls._init(local=local)
-        obj = sys.stdin.read().encode()
+        obj = sys.stdin.buffer.read()
         return cls.puts(name, obj)
 
     @classmethod

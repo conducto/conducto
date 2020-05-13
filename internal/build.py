@@ -14,12 +14,45 @@ import conducto.internal.host_detection as hostdet
 
 
 @functools.lru_cache(None)
-def docker_available_drives():
-    lsdrives = "docker run --rm -v /:/mnt/external alpine ls /mnt/external/host_mnt"
-    proc = subprocess.run(lsdrives, shell=True, check=True, stdout=subprocess.PIPE)
+def docker_desktop_23():
+    # Docker Desktop
+    try:
+        kwargs = dict(check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # Docker Desktop 2.2.x
+        lsdrives = "docker run --rm -v /:/mnt/external alpine ls /mnt/external/host_mnt"
+        proc = subprocess.run(lsdrives, shell=True, **kwargs)
+        return False
+    except subprocess.CalledProcessError:
+        return True
 
-    results = proc.stdout.decode("utf-8").split("\n")
-    return [s.strip().lower() for s in results if s.strip() != ""]
+
+@functools.lru_cache(None)
+def docker_available_drives():
+    import string
+
+    if hostdet.is_wsl():
+        kwargs = dict(check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        drives = []
+        for drive in string.ascii_lowercase:
+            drivedir = f"{drive}:\\"
+            try:
+                subprocess.run(f"wslpath -u {drivedir}", shell=True, **kwargs)
+                drives.append(drive)
+            except subprocess.CalledProcessError:
+                pass
+    else:
+        from ctypes import windll  # Windows only
+
+        # get all drives
+        drive_bitmask = windll.kernel32.GetLogicalDrives()
+        letters = string.ascii_lowercase
+        drives = [letters[i] for i, v in enumerate(bin(drive_bitmask)) if v == "1"]
+
+        # filter to fixed drives
+        is_fixed = lambda x: windll.kernel32.GetDriveTypeW(f"{x}:\\") == 3
+        drives = [d for d in drives if is_fixed(d.upper())]
+
+    return drives
 
 
 @functools.lru_cache(None)
@@ -360,6 +393,11 @@ def run_in_local_container(
 
     if hostdet.is_wsl() or hostdet.is_windows():
         drives = docker_available_drives()
+
+        if docker_desktop_23():
+            flags.extend(["-e", "WINDOWS_HOST=host_mnt"])
+        else:
+            flags.extend(["-e", "WINDOWS_HOST=plain"])
 
         for d in drives:
             # Mount whole system read-only to enable rebuilding images as needed

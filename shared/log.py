@@ -922,6 +922,8 @@ def unindent(string):
 
     """
     # Expand tabs to be 4 spaces long
+    if string is None:
+        return string
     string = string.replace("\t", "    ")
 
     # Find minimum indentation distance

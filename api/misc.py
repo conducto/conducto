@@ -8,10 +8,10 @@ from ..shared import log
 async def connect_to_pipeline(token, pipeline_id):
     import websockets
 
-    pgw_url = api.Config().get_url()
-    pgw_url = re.sub("^http", "ws", pgw_url) + "/pgw"
+    gw_url = api.Config().get_url()
+    gw_url = re.sub("^http", "ws", gw_url) + "/pgw"
 
-    uri = f"{pgw_url}/from_browser/{pipeline_id}"
+    uri = f"{gw_url}/from_browser/{pipeline_id}"
     log.debug("[run] Connecting to", uri)
     header = {"Authorization": f"bearer {token}"}
 
@@ -32,7 +32,7 @@ async def connect_to_pipeline(token, pipeline_id):
                 raise PermissionError(
                     "You are not permitted to connect to this pipeline."
                 )
-            log.debug(f"cannot connect to pgw ... waiting {i}")
+            log.debug(f"cannot connect to gw ... waiting {i}")
             await asyncio.sleep(min(3.0, (2 ** i) / 8))
             continue
 
@@ -41,7 +41,7 @@ async def connect_to_pipeline(token, pipeline_id):
             # This will be the "OK" packet that indicates that the server
             # is fully initialized.
             await asyncio.wait_for(poor_mans_anext(websocket), timeout=1.0)
-            # TODO?: check this once the new pgw is deployed everywhere?
+            # TODO?: check this once the new gw is deployed everywhere?
             break
         except (websockets.ConnectionClosedError, socket.gaierror):
             await asyncio.sleep(min(3.0, (2 ** i) / 8))

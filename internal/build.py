@@ -1,58 +1,14 @@
 import os
 import time
-import subprocess
 import functools
 import pipes
 import shutil
 import socket
 import sys
-from http import HTTPStatus as hs
 
 from conducto import api
-from conducto.shared import client_utils, constants, log, types as t
+from conducto.shared import client_utils, constants, container_utils, log, types as t
 import conducto.internal.host_detection as hostdet
-
-
-@functools.lru_cache(None)
-def docker_desktop_23():
-    # Docker Desktop
-    try:
-        kwargs = dict(check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        # Docker Desktop 2.2.x
-        lsdrives = "docker run --rm -v /:/mnt/external alpine ls /mnt/external/host_mnt"
-        proc = subprocess.run(lsdrives, shell=True, **kwargs)
-        return False
-    except subprocess.CalledProcessError:
-        return True
-
-
-@functools.lru_cache(None)
-def docker_available_drives():
-    import string
-
-    if hostdet.is_wsl():
-        kwargs = dict(check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        drives = []
-        for drive in string.ascii_lowercase:
-            drivedir = f"{drive}:\\"
-            try:
-                subprocess.run(f"wslpath -u {drivedir}", shell=True, **kwargs)
-                drives.append(drive)
-            except subprocess.CalledProcessError:
-                pass
-    else:
-        from ctypes import windll  # Windows only
-
-        # get all drives
-        drive_bitmask = windll.kernel32.GetLogicalDrives()
-        letters = string.ascii_lowercase
-        drives = [letters[i] for i, v in enumerate(bin(drive_bitmask)) if v == "1"]
-
-        # filter to fixed drives
-        is_fixed = lambda x: windll.kernel32.GetDriveTypeW(f"{x}:\\") == 3
-        drives = [d for d in drives if is_fixed(d.upper())]
-
-    return drives
 
 
 @functools.lru_cache(None)
@@ -145,7 +101,7 @@ def build(
         required_drives = _windows_translate_locations(node)
 
     if hostdet.is_wsl() or hostdet.is_windows():
-        available = docker_available_drives()
+        available = container_utils.docker_available_drives()
         unavailable = set(required_drives).difference(available)
         if len(unavailable) > 0:
             msg = f"The drive {unavailable.pop()} is used in an image context, but is not available in Docker.   Review your Docker Desktop file sharing settings."
@@ -280,51 +236,17 @@ def run(token, pipeline_id, func, use_app, use_shell, msg, starting):
 def run_in_local_container(
     token, pipeline_id, update_token=False, inject_env=None, is_migration=False
 ):
-    # Remote base dir will be verified by container.
-    local_basedir = constants.ConductoPaths.get_local_base_dir()
-
     if inject_env is None:
         inject_env = {}
 
-    if hostdet.is_wsl():
-        local_basedir = os.path.realpath(local_basedir)
-        local_basedir = hostdet.wsl_host_docker_path(local_basedir)
-    elif hostdet.is_windows():
-        local_basedir = hostdet.windows_docker_path(local_basedir)
-    else:
-
-        subp = subprocess.Popen(
-            "head -1 /proc/self/cgroup|cut -d/ -f3",
-            shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-        container_id, err = subp.communicate()
-        container_id = container_id.decode("utf-8").strip()
-
-        if container_id:
-            # Mount to the ~/.conducto of the host machine and not of the container
-            import json
-
-            subp = subprocess.Popen(
-                f"docker inspect -f '{{{{ json .Mounts }}}}' {container_id}",
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-            )
-            mount_data, err = subp.communicate()
-            if subp.returncode == 0:
-                mounts = json.loads(mount_data)
-                for mount in mounts:
-                    if mount["Destination"] == local_basedir:
-                        local_basedir = mount["Source"]
-                        break
-
-    # The homedir inside the manager is /root
+    # The homedir inside the manager is /root. Mapping will be verified by manager,
+    # internal to the container.
+    local_profdir = container_utils.get_external_conducto_dir(is_migration)
+    profile = api.Config().default_profile
     remote_basedir = "/root/.conducto"
+    # unix format path for docker
+    remote_profdir = "/".join([remote_basedir, profile])
 
-    tag = api.Config().get_image_tag()
-    manager_image = constants.ImageUtil.get_manager_image(tag)
     ccp = constants.ConductoPaths
     pipelinebase = ccp.get_local_path(pipeline_id, expand=False, base=remote_basedir)
     # Note: This path is in the docker which is always unix
@@ -362,28 +284,31 @@ def run_in_local_container(
         container_name,
         "--label",
         "conducto",
-        # Mount local conducto basedir on container. Allow TaskServer
+        # Mount local conducto profdir on container. Allow TaskServer
         # to access config and serialization and write logs.
         "-v",
-        f"{local_basedir}:{remote_basedir}",
+        f"{local_profdir}:{remote_profdir}",
         # Mount docker sock so we can spin out task workers.
         "-v",
         "/var/run/docker.sock:/var/run/docker.sock",
         # Specify expected base dir for container to verify.
         "-e",
-        f"CONDUCTO_BASE_DIR_VERIFY={remote_basedir}",
+        f"CONDUCTO_BASE_DIR_VERIFY={remote_profdir}",
         "-e",
-        f"CONDUCTO_LOCAL_BASE_DIR={local_basedir}",
+        f"CONDUCTO_PROFILE_DIR={local_profdir}",
         "-e",
         f"CONDUCTO_LOCAL_HOSTNAME={socket.gethostname()}",
         "-e",
         f"CONDUCTO_NETWORK={network_name}",
     ]
 
+    if api.Config().get_image_tag():
+        # this is dev/test only so we do not always set it
+        tag = api.Config().get_image_tag()
+        flags.extend(["-e", f"CONDUCTO_IMAGE_TAG={tag}"])
+
     for env_var in (
         "CONDUCTO_URL",
-        "CONDUCTO_CONFIG",
-        "IMAGE_TAG",
         "CONDUCTO_DEV_REGISTRY",
     ):
         if os.environ.get(env_var):
@@ -391,22 +316,7 @@ def run_in_local_container(
     for k, v in inject_env.items():
         flags.extend(["-e", f"{k}={v}"])
 
-    if hostdet.is_wsl() or hostdet.is_windows():
-        drives = docker_available_drives()
-
-        if docker_desktop_23():
-            flags.extend(["-e", "WINDOWS_HOST=host_mnt"])
-        else:
-            flags.extend(["-e", "WINDOWS_HOST=plain"])
-
-        for d in drives:
-            # Mount whole system read-only to enable rebuilding images as needed
-            mount = f"type=bind,source={d}:/,target={constants.ConductoPaths.MOUNT_LOCATION}/{d.lower()},readonly"
-            flags += ["--mount", mount]
-    else:
-        # Mount whole system read-only to enable rebuilding images as needed
-        mount = f"type=bind,source=/,target={constants.ConductoPaths.MOUNT_LOCATION},readonly"
-        flags += ["--mount", mount]
+    flags += container_utils.get_whole_host_mounting_flags()
 
     if _manager_debug():
         flags[0] = "-it"
@@ -419,11 +329,7 @@ def run_in_local_container(
     if mcpu > 0:
         flags += ["--cpus", str(mcpu)]
 
-    # WSL doesn't persist this into containers natively
-    # Have to have this configured so that we can use host docker creds to pull containers
-    docker_basedir = constants.ConductoPaths.get_local_docker_config_dir()
-    if docker_basedir:
-        flags += ["-v", f"{docker_basedir}:/root/.docker"]
+    flags += container_utils.get_docker_dir_mount_flags()
 
     cmd_parts = [
         "python",
@@ -441,6 +347,8 @@ def run_in_local_container(
     if update_token:
         cmd_parts += ["--update_token", "--token", token]
 
+    tag = api.Config().get_image_tag()
+    manager_image = constants.ImageUtil.get_manager_image(tag)
     if manager_image.startswith("conducto/"):
         docker_parts = ["docker", "pull", manager_image]
         log.debug(" ".join(pipes.quote(s) for s in docker_parts))
@@ -463,10 +371,6 @@ def run_in_local_container(
     if not _manager_debug():
         log.debug(f"Verifying manager docker startup pipeline_id={pipeline_id}")
 
-        def _get_docker_output():
-            p = subprocess.run(["docker", "ps"], stdout=subprocess.PIPE)
-            return p.stdout.decode("utf-8")
-
         pl = constants.PipelineLifecycle
         target = pl.active - pl.standby
         # wait 45 seconds, but this should be quick
@@ -479,11 +383,10 @@ def run_in_local_container(
             time.sleep(constants.ManagerAppParams.POLL_INTERVAL_SECS)
             log.debug(f"awaiting program {pipeline_id} active")
             data = api.Pipeline().get(token, pipeline_id)
-            if data["status"] in target and data["pgw"] not in ["", None]:
+            if data["status"] in target:
                 break
 
-            dps = _get_docker_output()
-            if container_name not in dps:
+            if container_name not in container_utils.get_running_containers():
                 attached = [param for param in docker_parts if param != "-d"]
                 dockerrun = " ".join(pipes.quote(s) for s in attached)
                 msg = f"There was an error starting the docker container.  Try running the command below for more diagnostics or contact us on Slack at ConductoHQ.\n{dockerrun}"
@@ -491,10 +394,10 @@ def run_in_local_container(
         else:
             # timeout, return error
             raise RuntimeError(
-                f"no manager connection to pgw for {pipeline_id} after {constants.ManagerAppParams.WAIT_TIME_SECS} seconds"
+                f"no manager connection to gw for {pipeline_id} after {constants.ManagerAppParams.WAIT_TIME_SECS} seconds"
             )
 
-        log.debug(f"Manager docker connected to pgw pipeline_id={pipeline_id}")
+        log.debug(f"Manager docker connected to gw pipeline_id={pipeline_id}")
 
 
 def clean_log_dirs(token):
@@ -504,8 +407,8 @@ def clean_log_dirs(token):
     pipeline_ids = set(p["pipeline_id"] for p in pipelines)
 
     # Remove all outdated logs directories.
-    profile = api.Config().default_profile
-    local_basedir = os.path.join(constants.ConductoPaths.get_local_base_dir(), profile)
+    local_basedir = constants.ConductoPaths.get_profile_base_dir()
+    local_basedir = os.path.join(local_basedir, "pipelines")
     if os.path.isdir(local_basedir):
         for subdir in os.listdir(local_basedir):
             if subdir not in pipeline_ids:

@@ -309,14 +309,10 @@ class _Data:
         web app. If you need the result for viewing outside of the web app, set this to
         False.
         """
-        # Convert CamelCase to snake_case
-        # https://stackoverflow.com/questions/1175208/elegant-python-function-to-convert-camelcase-to-snake-case
-        data_type = re.sub(r"(?<!^)(?=[A-Z])", "_", cls.__name__).lower()
-
         pipeline_id = os.environ["CONDUCTO_PIPELINE_ID"]
         conducto_url = "" if path_only else os.environ["CONDUCTO_AUTO_URL"]
         qname = urllib.parse.quote(name)
-        return f"{conducto_url}/pgw/data/{pipeline_id}/{data_type}/{qname}"
+        return f"{conducto_url}/gw/manager/data/{pipeline_id}/{cls.__name__}/{qname}"
 
 
 class pipeline(_Data):
@@ -485,7 +481,7 @@ class user(_Data):
     @staticmethod
     def _get_uri():
         if _Data._local:
-            return constants.ConductoPaths.get_local_base_dir(expand=False) + "/data/"
+            return constants.ConductoPaths.get_profile_base_dir(expand=False) + "/data/"
         else:
             credentials = _get_credentials(_Data._token)
             return f"s3://{_Data._s3_bucket}/{credentials['IdentityId']}/data/"

@@ -78,7 +78,7 @@ class ShellUI(object):
         self.pipeline = pipeline
         self.quitting = False
         self.loop = asyncio.get_event_loop()
-        self.pgw_socket = None
+        self.gw_socket = None
         self.start_func_complete = None
         self.starthelp = starthelp
 
@@ -110,40 +110,40 @@ class ShellUI(object):
             log.debug(f"Just refreshed auth token: {token}")
         return self.token
 
-    def set_pgw(self, pgw_socket):
-        self.pgw_socket = pgw_socket
+    def set_gw(self, gw_socket):
+        self.gw_socket = gw_socket
 
-    async def wait_pgw(self):
-        while self.pgw_socket is None:
+    async def wait_gw(self):
+        while self.gw_socket is None:
             await asyncio.sleep(0.1)
 
     async def start_pipeline(self):
-        if self.pgw_socket is None:
+        if self.gw_socket is None:
             pipeline_id = self.pipeline["pipeline_id"]
             api.Manager().launch(self.get_token(), pipeline_id)
-            await self.wait_pgw()
+            await self.wait_gw()
 
         payload = {"type": "SET_AUTORUN", "payload": {"value": True}}
-        await self.pgw_socket.send(json.dumps(payload))
+        await self.gw_socket.send(json.dumps(payload))
 
     async def sleep_pipeline(self):
-        if self.pgw_socket is None:
+        if self.gw_socket is None:
             pipeline_id = self.pipeline["pipeline_id"]
             api.Pipeline().sleep_standby(self.get_token(), pipeline_id)
         else:
             payload = {"type": "CLOSE_PROGRAM", "payload": None}
-            await self.pgw_socket.send(json.dumps(payload))
+            await self.gw_socket.send(json.dumps(payload))
 
     async def reset(self):
-        if self.pgw_socket is None:
+        if self.gw_socket is None:
             pipeline_id = self.pipeline["pipeline_id"]
             api.Manager().launch(self.get_token(), pipeline_id)
-            await self.wait_pgw()
+            await self.wait_gw()
 
         payload = {"type": "RESET", "payload": ["/"]}
-        await self.pgw_socket.send(json.dumps(payload))
+        await self.gw_socket.send(json.dumps(payload))
 
-    async def pgw_socket_loop(self):
+    async def gw_socket_loop(self):
         """
         Loop and listen for socket messages
         """
@@ -187,7 +187,7 @@ class ShellUI(object):
             for listener in self.listeners:
                 listener.install_normal_key_mode()
 
-            self.set_pgw(websocket)
+            self.set_gw(websocket)
 
             was_slept = False
 
@@ -196,11 +196,11 @@ class ShellUI(object):
                     json.dumps({"type": "RENDER_NODE", "payload": "/"})
                 )
 
-                log.info("[pgw_socket_loop] starting")
+                log.info("[gw_socket_loop] starting")
                 async for msg_text in websocket:
                     msg = json.loads(msg_text)
                     if msg["type"] in ("NODES_STATE_UPDATE", "RENDER_NODE"):
-                        log.debug(f"incoming pgw message {msg['type']}")
+                        log.debug(f"incoming gw message {msg['type']}")
                         for name, data in msg["payload"].items():
                             for listener in self.listeners:
                                 listener.update_node(name, data)
@@ -211,7 +211,7 @@ class ShellUI(object):
             except websockets.ConnectionClosedError as e:
                 log.debug(f"ConnectionClosedError {e.code} {e.reason}")
 
-            self.set_pgw(None)
+            self.set_gw(None)
             if was_slept:
                 break
 
@@ -359,7 +359,7 @@ class ShellUI(object):
         # key_loop needs to be run separately because it blocks on user input
         tasks = [
             self.loop.create_task(self.view_loop()),
-            self.loop.create_task(self.pgw_socket_loop()),
+            self.loop.create_task(self.gw_socket_loop()),
             self.loop.create_task(self.ns_socket_loop()),
             self.loop.create_task(self.key_loop()),
         ]

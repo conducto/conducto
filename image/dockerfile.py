@@ -65,7 +65,7 @@ async def text_for_build_dockerfile(
             )
 
         if "conducto" in reqs_py:
-            if api.Config().get("dev", "who"):
+            if api.Config().get_image_tag():
                 image = "conducto"
                 registry = os.environ.get("CONDUCTO_DEV_REGISTRY")
                 if registry:

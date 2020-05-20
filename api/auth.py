@@ -174,7 +174,9 @@ class Auth:
                     if new_token != token:
                         if os.environ.get("CONDUCTO_USE_ID_TOKEN"):
                             new_token = self.get_id_token(new_token)
-                        self.config.set(self.config.default_profile, "token", new_token)
+                        self.config.set_profile_general(
+                            self.config.default_profile, "token", new_token
+                        )
                     return new_token
 
         # If no token by now, prompt for login.

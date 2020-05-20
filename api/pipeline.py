@@ -18,7 +18,12 @@ class Pipeline:
         from ..pipeline import Node
 
         headers = api_utils.get_auth_headers(token)
-        in_data = {"command": command, "cloud": cloud, **kwargs}
+        in_data = {
+            "command": command,
+            "cloud": cloud,
+            **kwargs,
+            # "host_id": self.config.get_host_id(),
+        }
         # set the executable
         if "executable" not in kwargs:
             # conducto.internal has limited availability

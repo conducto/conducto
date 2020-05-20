@@ -67,7 +67,7 @@ async def get_exec_node_queue_stats(id, node, timestamp=None):
         return payload["queueStats"]
 
     try:
-        return await asyncio.wait_for(_internal(), 5)
+        return await asyncio.wait_for(_internal(), 15)
     except asyncio.TimeoutError:
         raise Exception(f"Timed out getting node details. Are {id} and {node} correct?")
 
@@ -106,15 +106,18 @@ def start_container(payload, live):
     options.append(f'--cpus {get_param(payload, "cpu")}')
     options.append(f'--memory {get_param(payload, "mem") * 1024**3}')
 
+    from . import api
+
     # TODO: Should actually pass these variables from manager, iff local
-    local_basedir = constants.ConductoPaths.get_local_base_dir()
+    local_basedir = constants.ConductoPaths.get_profile_base_dir()
     if hostdet.is_wsl():
         local_basedir = os.path.realpath(local_basedir)
         local_basedir = hostdet.wsl_host_docker_path(local_basedir)
     elif hostdet.is_windows():
         local_basedir = hostdet.windows_docker_path(local_basedir)
 
-    remote_basedir = f"{get_home_dir_for_image(image_name)}/.conducto"
+    profile = api.Config().default_profile
+    remote_basedir = f"{get_home_dir_for_image(image_name)}/.conducto/{profile}"
     options.append(f"-v {local_basedir}:{remote_basedir}")
 
     if live:

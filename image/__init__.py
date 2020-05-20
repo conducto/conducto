@@ -398,8 +398,8 @@ class Image:
         """
         Generator that pulls/builds/extends/pushes this Image.
         """
-        assert len(self.history) == 1 and self.history[0].status == Status.PENDING
-        self.history[0].finish()
+        if self.history and self.history[-1].end is None:
+            self.history[-1].finish()
 
         # Pull the image if needed
         if self.image and "/" in self.image:

@@ -99,7 +99,7 @@ class ManagerAppParams:
     POLL_INTERVAL_SECS = 0.25
 
 
-class PgwParams:
+class GwParams:
     # 6 MB
     WEBSOCKET_FRAME_BYTES = 6 * 1024 ** 2
     # 5 MB
@@ -130,6 +130,18 @@ class ConductoPaths:
         return base_dir
 
     @staticmethod
+    def get_profile_base_dir(expand=True, profile=None):
+        import conducto.api as api
+
+        conducto_root = ConductoPaths.get_local_base_dir(expand=expand)
+        profile = api.Config().default_profile if profile is None else profile
+        if profile is None:
+            # this is a (poorly defined) signal that you are in a cloud worker
+            return conducto_root
+        else:
+            return os.path.join(conducto_root, profile)
+
+    @staticmethod
     def get_local_path(pipeline_id, expand=True, base=None):
         import conducto.api as api
 
@@ -140,8 +152,7 @@ class ConductoPaths:
         profile = api.Config().default_profile
         if profile is None:
             profile = "logs"
-        def_log_dir = os.path.join(base_dir, profile)
-        log_dir = os.environ.get("CONDUCTO_LOG_DIR", def_log_dir)
+        log_dir = os.path.join(base_dir, profile, "pipelines")
         if expand:
             return os.path.expanduser(os.path.join(log_dir, pipeline_id))
         else:
@@ -153,7 +164,7 @@ class PipelineLifecycle:
     DEPLOYING_LOCAL = "deploying_local"
     ACTIVE_LOCAL = "active_local"
     SLEEPING_LOCAL = "sleeping_local"
-    # no STANDBY_LOCAL for now.
+    STANDBY_LOCAL = "standby_local"
 
     # Cloud states
     DEPLOYING_CLOUD = "deploying_cloud"
@@ -161,12 +172,12 @@ class PipelineLifecycle:
     SLEEPING_CLOUD = "sleeping_cloud"
     STANDBY_CLOUD = "standby_cloud"
 
-    local = {DEPLOYING_LOCAL, ACTIVE_LOCAL, SLEEPING_LOCAL}
+    local = {DEPLOYING_LOCAL, ACTIVE_LOCAL, SLEEPING_LOCAL, STANDBY_LOCAL}
     cloud = {DEPLOYING_CLOUD, ACTIVE_CLOUD, SLEEPING_CLOUD, STANDBY_CLOUD}
 
     deploying = {DEPLOYING_LOCAL, DEPLOYING_CLOUD}
     active = {ACTIVE_LOCAL, ACTIVE_CLOUD}
-    standby = {STANDBY_CLOUD}
+    standby = {STANDBY_LOCAL, STANDBY_CLOUD}
     sleeping = {SLEEPING_LOCAL, SLEEPING_CLOUD}
 
 

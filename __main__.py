@@ -4,6 +4,7 @@ import importlib.util
 import conducto as co
 from conducto.shared import constants
 from conducto.debug import debug, livedebug
+from conducto.profile import dir_init
 import asyncio
 
 
@@ -30,10 +31,10 @@ def show(id, app=True, shell=False):
 
     status = pipeline["status"]
     if status not in pl.active | pl.standby and status in pl.local:
-        local_basedir = constants.ConductoPaths.get_local_base_dir()
+        local_basedir = constants.ConductoPaths.get_profile_base_dir()
         cpser = constants.ConductoPaths.SERIALIZATION
         profile = api.Config().default_profile
-        serialization_path = f"{local_basedir}/{profile}/{pipeline_id}/{cpser}"
+        serialization_path = f"{local_basedir}/pipelines/{pipeline_id}/{cpser}"
 
         if not os.path.exists(serialization_path) and status not in pl.active:
             # TODO:  remove in May 2020 -- perhaps this is a pre-profile
@@ -101,58 +102,6 @@ def show(id, app=True, shell=False):
     build.run(token, pipeline_id, func, app, shell, msg, starting)
 
 
-def init(dir: str = ".", url: str = None):
-    from . import api
-
-    if url is None:
-        url = "https://conducto.com"
-    else:
-        if not api.is_conducto_url(url):
-            print(f"The url {url} is not recognized.", file=sys.stderr)
-            sys.exit(1)
-
-    dir = os.path.abspath(dir)
-
-    if not os.path.isdir(dir):
-        print(f"'{dir}' is not a directory or does not exist", file=sys.stderr)
-        sys.exit(1)
-
-    config = api.Config()
-    for profile in config.profile_sections():
-        if config.get(profile, "url") == url:
-            break
-    else:
-        profile = None
-
-    create_new = True
-    if profile is not None:
-        # we already have a profile for this url, let's see what the intent is.
-
-        profile_email = config.get(profile, "email")
-        email = os.environ.get("CONDUCTO_EMAIL")
-
-        if email == profile_email:
-            print(f"There is already a profile for {url} and e-mail {email}.")
-            question = "Do you wish to connect this directory to this profile? [yn] "
-            choice = input(question)
-
-            if choice.lower()[0] == "y":
-                # connect dir to this profile
-                create_new = False
-
-    if create_new:
-        os.environ["CONDUCTO_URL"] = url
-
-        token = api.Auth().get_token_from_shell(force=True)
-
-        config = api.Config()
-        for profile in config.profile_sections():
-            if config.get(profile, "token") == token:
-                break
-
-    api.dirconfig_write(dir, config.get(profile, "url"), config.get(profile, "org_id"))
-
-
 async def migrate(pipeline_id):
     from . import api
     import json
@@ -200,7 +149,7 @@ def main():
             "show": show,
             "debug": debug,
             "livedebug": livedebug,
-            "init": init,
+            "init": dir_init,
             "migrate": migrate,
         }
         co.main(variables=variables)

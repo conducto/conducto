@@ -107,7 +107,7 @@ def magic_doc(*, func=None, doc_only=False):
             if success:
                 break
     else:
-        docstring = module.__doc__
+        docstring = module.__doc__ or ""
         code = inspect.getsource(func)
 
     pretty_doc = log.unindent(docstring)

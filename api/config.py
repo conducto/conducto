@@ -223,7 +223,22 @@ class Config:
                 dest = os.path.join(basedir, newprof, "data")
                 os.makedirs(os.path.join(basedir, newprof), exist_ok=True)
                 if not os.path.exists(dest):
-                    shutil.move(orig, dest)
+                    # essentially:
+                    # mv ~/.conducto/data to ~/.conducto/<profile>/data
+                    #  (but this dir is likely owned by root due to being created from a docker mount)
+                    dotconducto = constants.ConductoPaths.get_local_base_dir()
+                    cmd = [
+                        "docker",
+                        "run",
+                        "--rm",
+                        "-v",
+                        f"{dotconducto}:/root/.conducto",
+                        "alpine",
+                        "mv",
+                        f"/root/.conducto/data",
+                        f"/root/.conducto/{profile}/data",
+                    ]
+                    subprocess.run(cmd, check=True)
             else:
                 dest = os.path.join(basedir, "<profile>", "data")
                 print(

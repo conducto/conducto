@@ -236,7 +236,7 @@ class Config:
                         "alpine",
                         "mv",
                         f"/root/.conducto/data",
-                        f"/root/.conducto/{profile}/data",
+                        f"/root/.conducto/{newprof}/data",
                     ]
                     subprocess.run(cmd, check=True)
             else:

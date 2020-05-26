@@ -157,22 +157,12 @@ class Image:
         path_map=None,
         name=None,
         pre_built=False,
-        **kwargs,
     ):
 
         if name is None:
             name = names.NameGenerator.name()
 
         self.name = name
-
-        if "cd_to_code" in kwargs:
-            # TODO: remove this after May 15
-            warnings.warn(
-                "cd_to_code is now known as docker_auto_workdir; please update accordingly",
-                UserWarning,
-                stacklevel=2,
-            )
-            docker_auto_workdir = kwargs["cd_to_code"]
 
         if image is not None and dockerfile is not None:
             raise ValueError(

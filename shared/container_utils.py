@@ -43,15 +43,18 @@ def docker_available_drives():
         from ctypes import windll  # Windows only
 
         # get all drives
-        drive_bitmask = windll.kernel32.GetLogicalDrives()
-        letters = string.ascii_lowercase
-        drives = [letters[i] for i, v in enumerate(bin(drive_bitmask)) if v == "1"]
+        bitmask = windll.kernel32.GetLogicalDrives()
+        drives = []
+        for letter in string.ascii_uppercase:
+            if bitmask & 1:
+                drives.append(letter)
+            bitmask >>= 1
 
         # filter to fixed drives
         is_fixed = lambda x: windll.kernel32.GetDriveTypeW(f"{x}:\\") == 3
-        drives = [d for d in drives if is_fixed(d.upper())]
+        drives = [d for d in drives if is_fixed(d)]
 
-    return drives
+    return [d.lower() for d in drives]
 
 
 def get_whole_host_mounting_flags():

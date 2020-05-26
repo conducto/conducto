@@ -50,7 +50,6 @@ def get(url, headers=None, params=None):
         response = urllib.request.urlopen(the_request)
     except urllib.error.HTTPError as e:
         response = e
-        response.url = url
     _add_status_code(response)
     return response
 
@@ -65,7 +64,6 @@ def put(url, headers=None, data=None):
         response = urllib.request.urlopen(the_request)
     except urllib.error.HTTPError as e:
         response = e
-        response.url = url
     _add_status_code(response)
     return response
 
@@ -80,7 +78,6 @@ def post(url, headers=None, data=None):
         response = urllib.request.urlopen(the_request)
     except urllib.error.HTTPError as e:
         response = e
-        response.url = url
     _add_status_code(response)
     return response
 
@@ -94,7 +91,6 @@ def delete(url, headers=None, params=None):
         response = urllib.request.urlopen(the_request)
     except urllib.error.HTTPError as e:
         response = e
-        response.url = url
     _add_status_code(response)
     return response
 
@@ -111,6 +107,5 @@ def patch(url, headers=None, data=None):
         response = urllib.request.urlopen(the_request)
     except urllib.error.HTTPError as e:
         response = e
-        response.url = url
     _add_status_code(response)
     return response

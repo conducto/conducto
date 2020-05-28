@@ -141,6 +141,7 @@ class Image:
     """
 
     PATH_PREFIX = ""
+    _PULLED_WORKER = False
 
     def __init__(
         self,
@@ -157,22 +158,12 @@ class Image:
         path_map=None,
         name=None,
         pre_built=False,
-        **kwargs,
     ):
 
         if name is None:
             name = names.NameGenerator.name()
 
         self.name = name
-
-        if "cd_to_code" in kwargs:
-            # TODO: remove this after May 15
-            warnings.warn(
-                "cd_to_code is now known as docker_auto_workdir; please update accordingly",
-                UserWarning,
-                stacklevel=2,
-            )
-            docker_auto_workdir = kwargs["cd_to_code"]
 
         if image is not None and dockerfile is not None:
             raise ValueError(
@@ -234,6 +225,8 @@ class Image:
             self.history.append(HistoryEntry(Status.DONE, finish=True))
 
         self._make_fut: typing.Optional[asyncio.Future] = None
+
+        self._remote_exec_fn: typing.Optional[typing.Callable] = None
 
     def __eq__(self, other):
         return isinstance(other, Image) and self.to_dict() == other.to_dict()
@@ -375,6 +368,27 @@ class Image:
                 return h.stdout
         return None
 
+    def _set_remote_exec_fn(self, func):
+        """
+        Support remote building. `func` must behave like `async_utils.run_and_check`.
+        """
+        self._remote_exec_fn = func
+
+    def _exec(self, *args, **kwargs):
+        # Docker steps may run in the cloud if they don't rely on anything from a user's
+        # machine. This is only 'dockerfile' and 'copy_dir'. Other inputs, like 'image',
+        # 'copy_url', or 'reqs_*' can all be done from anywhere, so those images can be
+        # built in the cloud.
+        may_run_in_cloud = self.dockerfile is None and self.copy_dir is None
+
+        # If it may not run in the cloud, and if a remote executor is installed, then
+        # use that runner.
+        if not may_run_in_cloud and self._remote_exec_fn is not None:
+            return self._remote_exec_fn(*args, **kwargs)
+        else:
+            # Otherwise, just build it here using `run_and_check`.
+            return async_utils.run_and_check(*args, **kwargs)
+
     async def make(self, push_to_cloud, callback=lambda: None):
         # Only call _make() once, and all other calls should just return the
         # same result.
@@ -405,7 +419,7 @@ class Image:
         if self.image and "/" in self.image:
             with self._new_status(Status.PULLING) as st:
                 callback()
-                out, err = await async_utils.run_and_check("docker", "pull", self.image)
+                out, err = await self._exec("docker", "pull", self.image)
                 st.finish(out, err)
         yield
 
@@ -481,7 +495,7 @@ class Image:
             Image.PATH_PREFIX + self.context,
         ]
 
-        out, err = await async_utils.run_and_check(
+        out, err = await self._exec(
             "docker",
             "build",
             "-t",
@@ -507,9 +521,10 @@ class Image:
             self.copy_url,
             self.copy_branch,
             self.docker_auto_workdir,
+            self._exec,
         )
 
-        out, err = await async_utils.run_and_check(
+        out, err = await self._exec(
             "docker",
             "build",
             "-t",
@@ -524,25 +539,24 @@ class Image:
     async def _extend(self):
         # Writes Dockerfile that extends user-provided image.
         text, worker_image = await dockerfile_mod.text_for_extend_dockerfile(
-            self.name_complete
+            self.name_complete, self._exec
         )
         if "/" in worker_image:
             pull_worker = True
             if os.environ.get("CONDUCTO_DEV_REGISTRY"):
                 # If image is not present locally, then try ecr login.
                 try:
-                    client_utils.subprocess_run(
-                        f"docker inspect {worker_image}", shell=True
-                    )
+                    await self._exec("docker", "inspect", worker_image)
                     pull_worker = False
                 except:
-                    client_utils.subprocess_run(
+                    await self._exec(
                         "$(aws ecr get-login --no-include-email --region us-east-2)",
                         shell=True,
                     )
-            if pull_worker:
-                await dockerfile_mod.pull_conducto_worker(worker_image)
-        out, err = await async_utils.run_and_check(
+            if pull_worker and not Image._PULLED_WORKER:
+                await self._exec("docker", "pull", worker_image)
+                Image._PULLED_WORKER = True
+        out, err = await self._exec(
             "docker",
             "build",
             "-t",
@@ -556,12 +570,10 @@ class Image:
 
     async def _push(self):
         # If push_to_cloud, tag the local image and push it
-        await async_utils.run_and_check(
+        await self._exec(
             "docker", "tag", self.name_local_extended, self.name_cloud_extended
         )
-        out, err = await async_utils.run_and_check(
-            "docker", "push", self.name_cloud_extended
-        )
+        out, err = await self._exec("docker", "push", self.name_cloud_extended)
         return out, err
 
     def needs_building(self):

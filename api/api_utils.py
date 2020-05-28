@@ -53,9 +53,15 @@ def is_conducto_url(url):
 
 
 class InvalidResponse(Exception):
-    def __init__(self, *args, status_code=None):
+    def __init__(self, *args, status_code=None, url=None):
         super().__init__(*args)
         self.status_code = status_code
+        self.url = url
+
+    def __str__(self):
+        return (
+            f"{super().__str__()}\n  status_code={self.status_code}\n  url={self.url}"
+        )
 
 
 def get_auth_headers(token: t.Token):
@@ -67,7 +73,9 @@ def get_auth_headers(token: t.Token):
 
 def get_data(response) -> typing.Union[None, dict, list]:
     if "application/json" not in response.headers["content-type"]:
-        raise InvalidResponse(response.read(), status_code=response.status_code)
+        raise InvalidResponse(
+            response.read(), status_code=response.status_code, url=response.url
+        )
     if response.status_code == hs.NO_CONTENT:
         return None
     data = json.loads(response.read())
@@ -75,6 +83,7 @@ def get_data(response) -> typing.Union[None, dict, list]:
         raise InvalidResponse(
             data["message"] if "message" in data else data,
             status_code=response.status_code,
+            url=response.url if hasattr(response, "url") else "",
         )
     return data
 
@@ -89,4 +98,5 @@ def get_text(response) -> str:
         raise InvalidResponse(
             f"Got unexpected result from {response}: {data}",
             status_code=response.status_code,
+            url=response.url if hasattr(response, "url") else "",
         )

@@ -601,7 +601,7 @@ class Node:
 
         self.check_images()
 
-        if build_mode != constants.BuildMode.LOCAL or prebuild_images:
+        if prebuild_images:
             image_mod.make_all(
                 self, push_to_cloud=build_mode != constants.BuildMode.LOCAL
             )

@@ -39,7 +39,7 @@ def _print_profile(profile, data):
     if data["default"]:
         default = log.format("default", color=log.Color.GREEN)
         defstr = " " + default
-    elif data["dir-default"]:
+    elif data.get("dir-default", False):
         default = log.format("directory default", color=log.Color.GREEN)
         defstr = " " + default
 
@@ -81,7 +81,7 @@ def profile_set_default(id):
         config.set("general", "default", id)
 
 
-def _profile_add(url, default=False):
+def _profile_add(url, default):
     os.environ["CONDUCTO_URL"] = url
 
     # this writes the profile
@@ -91,6 +91,11 @@ def _profile_add(url, default=False):
     for profile in config.profile_sections():
         if config.get_profile_general(profile, "token") == token:
             break
+    else:
+        raise Exception("Somehow there's no matching profile though we just made one.")
+
+    if default:
+        profile_set_default(profile)
     return profile
 
 
@@ -216,7 +221,7 @@ def dir_init(dir: str = ".", url: str = None):
 def main():
     variables = {
         "list": profile_list,
-        "set_default": profile_set_default,
+        "set-default": profile_set_default,
         "add": profile_add,
         "delete": profile_delete,
     }

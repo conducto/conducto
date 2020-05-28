@@ -1,13 +1,9 @@
-import asyncio
-import functools
 import json
 import packaging.version
-import pipes
 import re
 import subprocess
 import os
 
-from conducto.shared import async_utils
 from .. import api
 from .._version import __version__
 
@@ -15,12 +11,12 @@ COPY_DIR = "/mnt/conducto"
 
 
 async def text_for_build_dockerfile(
-    image, reqs_py, copy_dir, copy_url, copy_branch, docker_auto_workdir
+    image, reqs_py, copy_dir, copy_url, copy_branch, docker_auto_workdir, exec_
 ):
     lines = [f"FROM {image}"]
 
     if reqs_py:
-        py_binary, _py_version, pip_binary = await get_python_version(image)
+        py_binary, _py_version, pip_binary = await get_python_version(image, exec_)
 
         if reqs_py and not pip_binary:
             # install pip as per distro
@@ -28,9 +24,9 @@ async def text_for_build_dockerfile(
                 linux_flavor,
                 linux_version,
                 linux_name,
-            ) = await _get_linux_flavor_and_version(image)
+            ) = await _get_linux_flavor_and_version(image, exec_)
 
-            uid = await _get_uid(image)
+            uid = await _get_uid(image, exec_)
 
             lines.append("USER 0")
             if _is_debian(linux_flavor):
@@ -65,14 +61,13 @@ async def text_for_build_dockerfile(
             )
 
         if "conducto" in reqs_py:
-            if api.Config().get_image_tag():
+            tag = api.Config().get_image_tag()
+            if tag:
                 image = "conducto"
                 registry = os.environ.get("CONDUCTO_DEV_REGISTRY")
                 if registry:
                     image = f"{registry}/{image}"
-                tag = api.Config().get_image_tag(default=None)
-                if tag is not None:
-                    image = f"{image}:{tag}"
+                image = f"{image}:{tag}"
                 lines.append(f"COPY --from={image} /tmp/conducto /tmp/conducto")
                 lines.append(f"RUN {py_binary} -m pip install -e /tmp/conducto")
             else:
@@ -94,22 +89,22 @@ async def text_for_build_dockerfile(
     return "\n".join(lines)
 
 
-async def text_for_extend_dockerfile(user_image):
+async def text_for_extend_dockerfile(user_image, exec_):
     lines = [f"FROM {user_image}"]
 
     linux_flavor, linux_version, linux_name = await _get_linux_flavor_and_version(
-        user_image
+        user_image, exec_
     )
 
     # Determine python version and binary.
-    acceptable_binary, pyvers, _pip_binary = await get_python_version(user_image)
+    acceptable_binary, pyvers, _pip_binary = await get_python_version(user_image, exec_)
 
     default_python = None
     if pyvers is not None:
         if _is_fedora(linux_flavor) or _is_centos(linux_flavor):
             # The base Fedora and CentOS images don't have 'which' for some reason. A
             # workaround is to use python to print sys.executable.
-            which_python, _ = await async_utils.run_and_check(
+            which_python, _ = await exec_(
                 "docker",
                 "run",
                 "--rm",
@@ -120,12 +115,12 @@ async def text_for_extend_dockerfile(user_image):
             )
             default_python = which_python.decode("utf8").strip()
         else:
-            which_python, _ = await async_utils.run_and_check(
+            which_python, _ = await exec_(
                 "docker", "run", "--rm", user_image, "which", acceptable_binary
             )
             default_python = which_python.decode("utf8").strip()
 
-    uid = await _get_uid(user_image)
+    uid = await _get_uid(user_image, exec_)
     lines.append("USER 0")
 
     if _is_debian(linux_flavor):
@@ -171,13 +166,16 @@ async def text_for_extend_dockerfile(user_image):
     # python install
     tag = f"{pyvers[0]}.{pyvers[1]}-{suffix}"
     image = "conducto/worker"
-    dev_tag = api.Config().get_image_tag()
+    config = api.Config()
+    dev_tag = config.get_image_tag()
     if dev_tag is not None:
         image = f"worker-dev"
         tag += f"-{dev_tag}"
         registry = os.environ.get("CONDUCTO_DEV_REGISTRY")
         if registry:
             image = f"{registry}/{image}"
+    elif os.environ.get("CONDUCTO_USE_TEST_IMAGES"):
+        tag += "-test"
     worker_image = f"{image}:{tag}"
 
     # Write to /tmp instead of /opt because if you don't have root access inside the
@@ -200,21 +198,17 @@ class UnsupportedPythonException(Exception):
     pass
 
 
-@functools.lru_cache()
-def pull_conducto_worker(worker_image):
-    return asyncio.ensure_future(
-        async_utils.run_and_check("docker", "pull", worker_image)
-    )
-
-
 # Note: we don't need caching here except on get_python_version
 # because we already have caching mechanisms above
 # each image gets their .build called once, and everything below _get_python_version
 # is called just once per name_complete
 
 
-@async_utils.async_cache
-async def get_python_version(user_image):
+async def get_python_version(user_image, exec_):
+    cache = get_python_version._cache = getattr(get_python_version, "cache", {})
+    if user_image in cache:
+        return cache[user_image]
+
     pyresults = [None, None]
 
     for binary in [
@@ -226,7 +220,7 @@ async def get_python_version(user_image):
         "python3.8",
     ]:
         try:
-            version = await _get_python_version(user_image, binary)
+            version = await _get_python_version(user_image, binary, exec_)
             pyresults = [binary, version.release[0:2]]
             break
         except (
@@ -241,16 +235,20 @@ async def get_python_version(user_image):
     if pyresults[0]:
         for binary in ["pip", "pip3"]:
             try:
-                version = await _get_pip_version(user_image, binary)
+                _version = await _get_pip_version(user_image, binary, exec_)
                 pipresults = binary
                 break
             except subprocess.CalledProcessError:
                 pass
 
-    return pyresults[0], pyresults[1], pipresults
+    result = pyresults[0], pyresults[1], pipresults
+    cache[user_image] = result
+    return result
 
 
-async def _get_python_version(user_image, python_binary) -> packaging.version.Version:
+async def _get_python_version(
+    user_image, python_binary, exec_
+) -> packaging.version.Version:
     """Gets python version within a Docker image.
     Args:
         user_image: image name
@@ -262,17 +260,15 @@ async def _get_python_version(user_image, python_binary) -> packaging.version.Ve
         LowPException if version is too low
     """
 
-    proc = await asyncio.create_subprocess_exec(
+    out, err = await exec_(
         "docker",
         "run",
         "--rm",
         user_image,
         python_binary,
         "--version",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stop_on_error=False,
     )
-    out, err = await proc.communicate()
     out = out.decode("utf-8")
 
     python_version = re.sub(r"^Python\s+", r"", out, re.IGNORECASE,).strip()
@@ -282,7 +278,7 @@ async def _get_python_version(user_image, python_binary) -> packaging.version.Ve
     return python_version
 
 
-async def _get_pip_version(user_image, pip_binary) -> packaging.version.Version:
+async def _get_pip_version(user_image, pip_binary, exec_) -> packaging.version.Version:
     """Gets pip version within a Docker image.
     Args:
         user_image: image name
@@ -293,39 +289,21 @@ async def _get_pip_version(user_image, pip_binary) -> packaging.version.Version:
         supprocess.CalledProcessError if binary doesn't exist
     """
 
-    words = [
-        "docker",
-        "run",
-        "--rm",
-        user_image,
-        pip_binary,
-        "--version",
-    ]
-    proc = await asyncio.create_subprocess_exec(
-        *words, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    out, err = await exec_(
+        "docker", "run", "--rm", user_image, pip_binary, "--version",
     )
-    out, err = await proc.communicate()
-    out = out.decode("utf-8")
-
-    if proc.returncode != 0:
-        cmdstr = " ".join(pipes.quote(a) for a in words)
-        raise subprocess.CalledProcessError(proc.returncode, cmdstr, out, err)
 
     # we don't really care about the pip version, but I retain it here for
     # similarity with the python version of this function.
-    pip_version = re.search(r"^pip ([0-9.]+)", out)
+    pip_version = re.search(r"^pip ([0-9.]+)", out.decode("utf-8"))
     pip_version = packaging.version.Version(pip_version.group(1))
     return pip_version
 
 
-async def _get_linux_flavor_and_version(user_image):
-    subp = await asyncio.create_subprocess_shell(
-        f'docker run --rm {user_image} sh -c "cat /etc/*-release"',
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+async def _get_linux_flavor_and_version(user_image, exec_):
+    out, err = await exec_(
+        "docker", "run", "--rm", user_image, "sh", "-c", "cat /etc/*-release",
     )
-    out, err = await subp.communicate()
     out = out.decode("utf-8").strip()
 
     flavor = None
@@ -346,10 +324,8 @@ async def _get_linux_flavor_and_version(user_image):
     return flavor, version, pretty_name
 
 
-async def _get_uid(image_name):
-    out, _err = await async_utils.run_and_check(
-        "docker", "inspect", "--format", "{{json .}}", image_name
-    )
+async def _get_uid(image_name, exec_):
+    out, _err = await exec_("docker", "inspect", "--format", "{{json .}}", image_name)
     d = json.loads(out)
     uid_str = d["Config"]["User"]
     if uid_str == "":

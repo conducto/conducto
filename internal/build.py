@@ -7,7 +7,14 @@ import socket
 import sys
 
 from conducto import api
-from conducto.shared import client_utils, constants, container_utils, log, types as t
+from conducto.shared import (
+    client_utils,
+    constants,
+    container_utils,
+    local_daemon_utils,
+    log,
+    types as t,
+)
 import conducto.internal.host_detection as hostdet
 
 
@@ -182,6 +189,10 @@ def launch_from_serialization(
         func = local_deploy
         starting = True
 
+    # Make sure that a local daemon is running before we launch. A local manager will
+    # start it if none are running, but cloud has no way to do that.
+    local_daemon_utils.launch_local_daemon(token, inside_container=False)
+
     run(token, pipeline_id, func, use_app, use_shell, "Starting", starting)
 
     return pipeline_id
@@ -190,12 +201,14 @@ def launch_from_serialization(
 def run(token, pipeline_id, func, use_app, use_shell, msg, starting):
     from .. import api, shell_ui
 
-    url = api.Config().get_connect_url(pipeline_id)
+    config = api.Config()
+    url = config.get_connect_url(pipeline_id)
     u_url = log.format(url, underline=True)
 
     if starting:
-        tag = api.Config().get_image_tag()
-        manager_image = constants.ImageUtil.get_manager_image(tag)
+        tag = config.get_image_tag()
+        is_test = os.environ.get("CONDUCTO_USE_TEST_IMAGES")
+        manager_image = constants.ImageUtil.get_manager_image(tag, is_test)
         try:
             client_utils.subprocess_run(["docker", "image", "inspect", manager_image])
         except client_utils.CalledProcessError:
@@ -224,7 +237,7 @@ def run(token, pipeline_id, func, use_app, use_shell, msg, starting):
     data = api.Pipeline().get(token, pipeline_id)
     if data.get("is_public"):
         unauth_password = data["unauth_password"]
-        url = api.Config().get_url()
+        url = config.get_url()
         public_url = f"{url}/app/s/{pipeline_id}/{unauth_password}"
         u_public_url = log.format(public_url, underline=True)
         print(f"\nPublic view at:\n{u_public_url}")
@@ -242,7 +255,8 @@ def run_in_local_container(
     # The homedir inside the manager is /root. Mapping will be verified by manager,
     # internal to the container.
     local_profdir = container_utils.get_external_conducto_dir(is_migration)
-    profile = api.Config().default_profile
+    config = api.Config()
+    profile = config.default_profile
     remote_basedir = "/root/.conducto"
     # unix format path for docker
     remote_profdir = "/".join([remote_basedir, profile])
@@ -302,14 +316,15 @@ def run_in_local_container(
         f"CONDUCTO_NETWORK={network_name}",
     ]
 
-    if api.Config().get_image_tag():
+    if config.get_image_tag():
         # this is dev/test only so we do not always set it
-        tag = api.Config().get_image_tag()
+        tag = config.get_image_tag()
         flags.extend(["-e", f"CONDUCTO_IMAGE_TAG={tag}"])
 
     for env_var in (
         "CONDUCTO_URL",
         "CONDUCTO_DEV_REGISTRY",
+        "CONDUCTO_USE_TEST_IMAGES",
     ):
         if os.environ.get(env_var):
             flags.extend(["-e", f"{env_var}={os.environ[env_var]}"])
@@ -340,15 +355,16 @@ def run_in_local_container(
         "-i",
         serialization,
         "--profile",
-        api.Config().default_profile,
+        config.default_profile,
         "--local",
     ]
 
     if update_token:
         cmd_parts += ["--update_token", "--token", token]
 
-    tag = api.Config().get_image_tag()
-    manager_image = constants.ImageUtil.get_manager_image(tag)
+    tag = config.get_image_tag()
+    is_test = os.environ.get("CONDUCTO_USE_TEST_IMAGES")
+    manager_image = constants.ImageUtil.get_manager_image(tag, is_test)
     if manager_image.startswith("conducto/"):
         docker_parts = ["docker", "pull", manager_image]
         log.debug(" ".join(pipes.quote(s) for s in docker_parts))

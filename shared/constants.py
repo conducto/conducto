@@ -68,13 +68,27 @@ WORKER_VERSION = "v3.1.3"
 
 class ImageUtil:
     MANAGER_VERSION = "0.1"
+    LOCAL_DAEMON_VERSION = "0.1"
 
     @staticmethod
-    def get_manager_image(tag):
+    def get_manager_image(tag, is_test):
+        return ImageUtil._get_image("manager", ImageUtil.MANAGER_VERSION, tag, is_test)
+
+    @staticmethod
+    def get_local_daemon_image(tag, is_test):
+        return ImageUtil._get_image(
+            "local-daemon", ImageUtil.LOCAL_DAEMON_VERSION, tag, is_test
+        )
+
+    @staticmethod
+    def _get_image(base, version, tag, is_test):
         if tag is None:
-            return f"conducto/manager:{ImageUtil.MANAGER_VERSION}"
+            image = f"conducto/{base}:{version}"
+            if is_test:
+                image += "-test"
+            return image
         else:
-            image = f"manager-dev:{ImageUtil.MANAGER_VERSION}-{tag}"
+            image = f"{base}-dev:{version}-{tag}"
             registry = os.environ.get("CONDUCTO_DEV_REGISTRY")
             if registry:
                 return f"{registry}/{image}"

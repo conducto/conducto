@@ -13,45 +13,11 @@ import conducto.internal.host_detection as hostdet
 
 
 @functools.lru_cache(None)
-def docker_desktop_23():
-    # Docker Desktop
-    try:
-        kwargs = dict(check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        # Docker Desktop 2.2.x
-        lsdrives = "docker run --rm -v /:/mnt/external alpine ls /mnt/external/host_mnt"
-        subprocess.run(lsdrives, shell=True, **kwargs)
-        return False
-    except subprocess.CalledProcessError:
-        return True
-
-
-@functools.lru_cache(None)
 def docker_available_drives():
-    import string
-
-    if hostdet.is_wsl():
-        kwargs = dict(check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        drives = []
-        for drive in string.ascii_lowercase:
-            drivedir = f"{drive}:\\"
-            try:
-                subprocess.run(f"wslpath -u {drivedir}", shell=True, **kwargs)
-                drives.append(drive)
-            except subprocess.CalledProcessError:
-                pass
-    else:
-        from ctypes import windll  # Windows only
-
-        # get all drives
-        drive_bitmask = windll.kernel32.GetLogicalDrives()
-        letters = string.ascii_lowercase
-        drives = [letters[i] for i, v in enumerate(bin(drive_bitmask)) if v == "1"]
-
-        # filter to fixed drives
-        is_fixed = lambda x: windll.kernel32.GetDriveTypeW(f"{x}:\\") == 3
-        drives = [d for d in drives if is_fixed(d.upper())]
-
-    return drives
+    kwargs = dict(check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    lsdrives = "docker run --rm -v /:/mnt/external alpine ls /mnt/external/host_mnt"
+    proc = subprocess.run(lsdrives, shell=True, **kwargs)
+    return proc.stdout.decode("utf8").split()
 
 
 def get_whole_host_mounting_flags():
@@ -61,17 +27,13 @@ def get_whole_host_mounting_flags():
     if hostdet.is_wsl() or hostdet.is_windows():
         drives = docker_available_drives()
 
-        output = []
-        if docker_desktop_23():
-            output += ["-e", "WINDOWS_HOST=host_mnt"]
-        else:
-            output += ["-e", "WINDOWS_HOST=plain"]
+        output = ["-e", "WINDOWS_HOST=plain"]
 
         for d in drives:
             # Mount whole system read-only to enable rebuilding images as needed
             mount = f"type=bind,source={d}:/,target={constants.ConductoPaths.MOUNT_LOCATION}/{d.lower()},readonly"
             output += ["--mount", mount]
-            return output
+        return output
     else:
         # Mount whole system read-only to enable rebuilding images as needed
         mount = f"type=bind,source=/,target={constants.ConductoPaths.MOUNT_LOCATION},readonly"
@@ -153,7 +115,7 @@ async def does_newer_version_exist():
 
     # Pull the latest version of image_name, if needed
     if "/" in image_name:
-        await async_utils.run_and_check("docker", "image", "pull")
+        await async_utils.run_and_check("docker", "image", "pull", image_name)
 
     # Get the current SHA of the image
     out, _err = await async_utils.run_and_check(

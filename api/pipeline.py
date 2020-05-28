@@ -22,7 +22,7 @@ class Pipeline:
             "command": command,
             "cloud": cloud,
             **kwargs,
-            # "host_id": self.config.get_host_id(),
+            "host_id": self.config.get_host_id(),
         }
         # set the executable
         if "executable" not in kwargs:

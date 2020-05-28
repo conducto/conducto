@@ -50,6 +50,26 @@ class _Context:
     def get_path(self, name):
         return _safe_join(self.uri, name)
 
+    def cleanup(self, key, skip_latest=False):
+        key = self.get_s3_key(key)
+        # this method is invoked to clear out all but the latest version, or to delete all versions
+        while True:
+            versions = self.s3_client.list_object_versions(
+                Bucket=self.bucket, Prefix=key
+            )["Versions"]
+            to_delete = [
+                i["VersionId"]
+                for i in versions
+                if (not (skip_latest and i["IsLatest"])) and i["Key"] == key
+            ]
+
+            if not to_delete:
+                break
+            for version_id in to_delete:
+                self.s3_client.delete_object(
+                    Bucket=self.bucket, Key=key, VersionId=version_id
+                )
+
 
 class _Data:
     _pipeline_id: t.PipelineId = None
@@ -141,6 +161,7 @@ class _Data:
         ctx = cls._ctx()
         if not ctx.local:
             ctx.get_s3_obj(name).upload_file(file)
+            ctx.cleanup(name, skip_latest=True)
         else:
             # Make sure to write the obj atomically. Write to a temp file then move it
             # into the final location. If anything goes wrong delete the temp file.
@@ -165,6 +186,7 @@ class _Data:
         ctx = cls._ctx()
         if not ctx.local:
             ctx.get_s3_obj(name).put(Body=obj)
+            ctx.cleanup(name, skip_latest=True)
         else:
             # Make sure to write the obj atomically. Write to a temp file then move it
             # into the final location. If anything goes wrong delete the temp file.
@@ -193,7 +215,7 @@ class _Data:
             if recursive:
                 # TODO: S3 delete recursive
                 raise NotImplementedError("Haven't done this yet.")
-            return ctx.get_s3_obj(name).delete()
+            ctx.cleanup(name)
         else:
             import shutil
 

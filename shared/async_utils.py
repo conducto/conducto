@@ -216,9 +216,14 @@ async def run_and_check(*args, input=None, stop_on_error=True, shell=False):
     if input is not None:
         log.info("stdin:", input)
     PIPE = asyncio.subprocess.PIPE
-    proc = await asyncio.subprocess.create_subprocess_exec(
-        *args, stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=shell
-    )
+    if shell:
+        proc = await asyncio.subprocess.create_subprocess_shell(
+            *args, stdin=PIPE, stdout=PIPE, stderr=PIPE
+        )
+    else:
+        proc = await asyncio.subprocess.create_subprocess_exec(
+            *args, stdin=PIPE, stdout=PIPE, stderr=PIPE
+        )
     stdout, stderr = await proc.communicate(input=input)
 
     if stop_on_error and proc.returncode != 0:

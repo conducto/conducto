@@ -49,10 +49,7 @@ class Dir:
         return api_utils.get_data(response)
 
     def user(self, token: t.Token) -> dict:
-        user_id = None
-
-        claims = api.Auth().get_unverified_claims(token)
-        user_id = claims["sub"]
+        user_id = api.Auth().get_user_id(token)
 
         headers = api_utils.get_auth_headers(token)
         response = request_utils.get(self.url + f"/dir/user/{user_id}", headers=headers)

@@ -72,6 +72,9 @@ class Auth:
         claims = jwt.get_unverified_claims(token)
         return claims
 
+    def get_user_id(self, token: t.Token):
+        return self.get_unverified_claims(token)["sub"]
+
     def prompt_for_login(self) -> dict:
         print(f"Log in to Conducto. To register, visit {self.url}/app/")
         login = {}

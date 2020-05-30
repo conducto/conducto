@@ -3,6 +3,7 @@ import functools
 import subprocess
 import inspect
 import os
+import re
 import pipes
 import pprint
 import sys
@@ -170,12 +171,15 @@ class Wrapper(object):
     def to_command(self, *args, **kwargs):
         abspath = os.path.abspath(inspect.getfile(self.callFunc))
         ctxpath = image_mod.Image.get_contextual_path(abspath)
-        if hostdet.is_wsl():
-            import conducto.internal.build as cib
+        # see also parse_registered_path
+        mm = re.match(r"^(\$\{([A-Z_][A-Z0-9_]*)(|=([^}]*))\})(.*)", ctxpath)
+        unique_string = "__CBIH5EX57NYHGC6YO69U__"
+        replacement = None
+        if mm:
+            # ctxpath became a named mount
+            replacement = mm.group(1)
+            ctxpath = ctxpath.replace(mm.group(1), unique_string)
 
-            ctxpath = cib._split_windocker(ctxpath)
-        elif hostdet.is_windows():
-            ctxpath = hostdet.windows_docker_path(ctxpath)
         parts = [
             "conducto",
             f"__conducto_path:{ctxpath}:endpath__",
@@ -195,7 +199,10 @@ class Wrapper(object):
                 parts += ["--{}={}".format(k, t.List.join(map(t.serialize, v)))]
             else:
                 parts += ["--{}={}".format(k, t.serialize(v))]
-        return " ".join(pipes.quote(part) for part in parts)
+        command = " ".join(pipes.quote(part) for part in parts)
+        if replacement:
+            command = command.replace(unique_string, replacement)
+        return command
 
     def pretty(self):
         myargs = self.getArguments()
@@ -454,7 +461,7 @@ def main(
         if not name.startswith("_") and not inspect.isclass(obj) and callable(obj)
     }
 
-    if filename:
+    if filename and hostdet.runtime_mode() == "external":
         api.dirconfig_select(filename)
 
     if "__all__" in variables:

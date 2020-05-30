@@ -1,20 +1,22 @@
 import asyncio
+import collections
 import contextlib
 import concurrent.futures
 import functools
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 import traceback
 import typing
 import uuid
-import warnings
 
 import conducto.internal.host_detection as hostdet
 from conducto.shared import async_utils, client_utils, log
+import conducto
 from .. import pipeline
 from . import dockerfile as dockerfile_mod, names
 
@@ -31,13 +33,146 @@ def relpath(path):
     """
 
     ctxpath = Image.get_contextual_path(path)
-    if hostdet.is_wsl():
-        import conducto.internal.build as cib
-
-        ctxpath = cib._split_windocker(ctxpath)
-    elif hostdet.is_windows():
-        ctxpath = hostdet.windows_docker_path(ctxpath)
     return f"__conducto_path:{ctxpath}:endpath__"
+
+
+def parse_registered_path(path):
+    """
+    This function takes a path which may include registered names for the
+    active profile and parses out the registered name, path hints and tail.
+    """
+
+    regpath = collections.namedtuple("regpath", ["name", "hint", "tail"])
+
+    mm = re.match(r"^\$\{([A-Z_][A-Z0-9_]*)(|=([^}]*))\}(.*)", path)
+    if mm is not None:
+        name = mm.group(1)
+        hint = mm.group(3)
+        tail = mm.group(4)
+        if tail is None:
+            tail = ""
+
+        return regpath(name, hint, tail)
+    return None
+
+
+def resolve_registered_path(path):
+    # This converts a path from a serialization to a host machine.  It may or
+    # may not the same host machine as the one that made the serialization and
+    # it may need to be interactive with the user.
+
+    if hostdet.runtime_mode() != "external":
+        raise RuntimeError(
+            "this is an interactive function and has no manager implementation"
+        )
+
+    regparse = parse_registered_path(path)
+    if regparse is None:
+        result = path
+    else:
+        conf = conducto.api.Config()
+        mounts = conf.get_named_mount_paths(conf.default_profile, regparse.name)
+
+        if len(mounts) == 1:
+            result = "/".join([mounts[0], regparse.tail.lstrip("/")])
+        elif len(mounts) == 0:
+            # ask
+            print(
+                f"The named mount {regparse.name} is not known on this host. Enter a path for that mount (blank to abort)."
+            )
+            path = input("path:  ")
+            if path == "":
+                raise RuntimeError("error mounting directories")
+            result = "/".join([path, regparse.tail.lstrip("/")])
+            conf.register_named_mount(conf.default_profile, regparse.name, path)
+        elif regparse.hint in mounts:
+            result = "/".join([regparse.hint, regparse.tail.lstrip("/")])
+        else:
+            # disambiguate by asking which
+            print(
+                f"The named mount {regparse.name} is associated with multiple directories on this host. Select one or enter a new directory."
+            )
+            for index, mpath in enumerate(mounts):
+                print(f"\t[{index+1}] {mpath}")
+            print("\t[new] Enter a new path")
+
+            def safe_int(s):
+                try:
+                    return int(s)
+                except ValueError:
+                    return None
+
+            while True:
+                sel = input(f"path [1-{len(mounts)}, new]:  ")
+                if sel == "":
+                    raise RuntimeError("error mounting directories")
+                if sel == "new" or safe_int(sel) is not None:
+                    break
+
+            if sel == "new":
+                path = input("path:  ")
+                conf.register_named_mount(conf.default_profile, regparse.name, path)
+            else:
+                path = mounts[int(sel) - 1]
+            result = "/".join([path, regparse.tail.lstrip("/")])
+
+    if hostdet.is_windows() or hostdet.is_wsl():
+        # The profile is kept on windows and the mount path is kept as windows format
+        result = hostdet.windows_docker_path(result)
+
+    return result
+
+
+def serialization_path_interpretation(p):
+    # This converts a path from a serialization to the manager or the host
+    # machine which created this serialization.  It is will return a valid path
+    # supposing that the host machine's directory structure matches what was at
+    # the point of pipeline creation.  No information required from the user as
+    # in resolve_registered_path.
+
+    if hostdet.runtime_mode() == "manager":
+        regparse = parse_registered_path(p)
+        baseseg = regparse.hint if regparse else p
+        if os.getenv("WINDOWS_HOST") and baseseg[1] == ":":
+            baseseg = hostdet.windows_docker_path(baseseg)
+        tail = regparse.tail if regparse else ""
+
+        # host `/` is mounted at `/mnt/external`
+        return Image.PATH_PREFIX + baseseg + tail
+    else:
+        regparse = parse_registered_path(p)
+        if regparse is not None:
+            unix_path = f"{regparse.hint}/{regparse.tail}"
+        else:
+            unix_path = p
+        # this results in a unix host path ...
+        if hostdet.is_wsl() or hostdet.is_windows():
+            # ... or a docker-friendly windows path
+            unix_path = hostdet.windows_docker_path(unix_path)
+        return unix_path
+
+
+@functools.lru_cache(None)
+def _split_windocker(path):
+    # TODO:  is this used?
+    chunks = path.split("//")
+    mangled = hostdet.wsl_host_docker_path(chunks[0])
+    if len(chunks) > 1:
+        newctx = f"{mangled}//{chunks[1]}"
+    else:
+        newctx = mangled
+    return newctx
+
+
+@functools.lru_cache(None)
+def _split_winpath(path):
+    chunks = path.split("//")
+    mangled = hostdet.windows_drive_path(chunks[0]).replace("\\", "/")
+    if len(chunks) > 1:
+        newctx = f"{mangled}//{chunks[1]}"
+    else:
+        newctx = mangled
+    return newctx
 
 
 class Status:
@@ -200,14 +335,19 @@ class Image:
 
         if not self.pre_built:
             if dockerfile is not None:
-                self.dockerfile = self.get_contextual_path(dockerfile)
                 if context is None:
+                    # NOTE:  get_contextual_path is not idempotent (as below)
                     context = os.path.dirname(self.dockerfile)
+                self.dockerfile = self.get_contextual_path(dockerfile)
                 self.context = self.get_contextual_path(context)
 
             if copy_dir is not None:
                 self.copy_dir = self.get_contextual_path(copy_dir)
-                self.path_map = {self.copy_dir: dockerfile_mod.COPY_DIR}
+                # NOTE:  get_contextual_path is not idempotent (although
+                # perhaps it should be).  This is the reason why I assign the
+                # key as copy_dir here and the keys are transformed with
+                # get_contextual_path below.
+                self.path_map = {copy_dir: dockerfile_mod.COPY_DIR}
 
         if self.path_map:
             # Don't use a dict comprehension here - get_contextual_path looks back a
@@ -268,7 +408,15 @@ class Image:
 
     @staticmethod
     def get_contextual_path(p):
+        if hostdet.runtime_mode() == "manager":
+            # Note:  This can run in the worker in Lazy nodes.
+            return p
+
         op = os.path
+
+        regparse = parse_registered_path(p)
+        if regparse is not None:
+            return p
 
         # Translate relative paths as starting from the file where they were defined.
         if not op.isabs(p):
@@ -302,6 +450,50 @@ class Image:
             if git_root:
                 p = p.replace(git_root, git_root + "/", 1)
 
+        if hostdet.is_wsl():
+            # The point is largely that we state paths in terms of the docker
+            # host and the recommended docker method in WSL1 is to use the
+            # windows installation as a remote docker host.
+            p_host = _split_winpath(p).replace("/", "\\")
+        else:
+            p_host = p
+
+        auto_reg_path = None
+        auto_reg_name = None
+        dirsettings = conducto.api.dirconfig_detect(p)
+        if dirsettings and "registered" in dirsettings:
+            auto_reg_name = dirsettings["registered"]
+            auto_reg_path = dirsettings["dir-path"]
+
+        # iterate through named mounts looking for a match in this org
+        if auto_reg_path is None:
+            conf = conducto.api.Config()
+            mounts = conf.get_named_mount_mapping(conf.default_profile)
+
+            def enum():
+                for name, paths in mounts.items():
+                    for path in paths:
+                        yield name, path
+
+            for name, path in enum():
+                if p_host.startswith(path):
+                    # bingo, we have recognized this as a mount for your org
+                    auto_reg_name = name
+                    auto_reg_path = path
+                    break
+
+        if auto_reg_path:
+            # convert to registered path and return
+            unix_tail = p_host[len(auto_reg_path) :].replace("\\", "/")
+            p = f"${{{auto_reg_name.upper()}={auto_reg_path}}}" + unix_tail
+            return p
+        else:
+            # convert to windows now
+            if hostdet.is_wsl():
+                p = _split_winpath(p).replace("/", "\\")
+            elif hostdet.is_windows():
+                p = hostdet.windows_docker_path(p)
+
         return p
 
     @staticmethod
@@ -321,6 +513,25 @@ class Image:
             # log, but essentially pass
             log.debug("no git installation found, skipping directory indication")
         return result
+
+    @staticmethod
+    def register_directory(name, relative):
+        op = os.path
+
+        # Translate relative paths as starting from the file where they were defined.
+        if not op.isabs(relative):
+            # Walk the stack. The first file that's not in the Conducto dir is the one
+            # the user called this from. Evaluate `p` relative to that file.
+
+            for frame, _lineno in traceback.walk_stack(None):
+                filename = frame.f_code.co_filename
+                if not filename.startswith(_conducto_dir):
+                    from_dir = op.dirname(filename)
+                    relative = op.realpath(op.join(from_dir, relative))
+                    break
+
+        config = conducto.api.Config()
+        config.register_named_mount(config.default_profile, name, relative)
 
     @property
     def name_built(self):
@@ -491,8 +702,8 @@ class Image:
                 build_args += ["--build-arg", "{}={}".format(k, v)]
         build_args += [
             "-f",
-            Image.PATH_PREFIX + self.dockerfile,
-            Image.PATH_PREFIX + self.context,
+            serialization_path_interpretation(self.dockerfile),
+            serialization_path_interpretation(self.context),
         ]
 
         out, err = await self._exec(
@@ -510,7 +721,11 @@ class Image:
         # Create dockerfile from stdin. Replace "-f <dockerfile> <copy_dir>"
         # with "-"
         if self.copy_dir:
-            build_args = ["-f", "-", Image.PATH_PREFIX + self.copy_dir]
+            build_args = [
+                "-f",
+                "-",
+                serialization_path_interpretation(self.copy_dir),
+            ]
         else:
             build_args = ["-"]
         build_args += ["--build-arg", f"CONDUCTO_CACHE_BUSTER={uuid.uuid4()}"]

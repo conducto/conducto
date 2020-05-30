@@ -228,12 +228,8 @@ async def run_and_check(*args, input=None, stop_on_error=True, shell=False):
 
     if stop_on_error and proc.returncode != 0:
         cmd_str = " ".join(pipes.quote(a) for a in args)
-        try:
-            raise client_utils.CalledProcessError(
-                proc.returncode, cmd_str, stdout, stderr, "", stdin=input
-            )
-        except:
-            traceback.print_exc()
-            raise
+        raise client_utils.CalledProcessError(
+            proc.returncode, cmd_str, stdout, stderr, "", stdin=input
+        )
     else:
         return stdout, stderr

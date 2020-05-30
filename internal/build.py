@@ -1,12 +1,12 @@
 import os
 import time
-import functools
 import pipes
 import shutil
 import socket
 import sys
 
 from conducto import api
+import conducto.image as image_mod
 from conducto.shared import (
     client_utils,
     constants,
@@ -16,79 +16,6 @@ from conducto.shared import (
     types as t,
 )
 import conducto.internal.host_detection as hostdet
-
-
-@functools.lru_cache(None)
-def _split_windocker(path):
-    chunks = path.split("//")
-    mangled = hostdet.wsl_host_docker_path(chunks[0])
-    if len(chunks) > 1:
-        newctx = f"{mangled}//{chunks[1]}"
-    else:
-        newctx = mangled
-    return newctx
-
-
-def _wsl_translate_locations(node):
-    # Convert image contexts to Windows host paths in the format that docker
-    # understands.
-
-    drives = set()
-
-    image_ids = []
-    imagelist = []
-    for child in node.stream():
-        if id(child.image) not in image_ids:
-            image_ids.append(id(child.image))
-            imagelist.append(child.image)
-
-    for img in imagelist:
-        path = img.copy_dir
-        if path:
-            newpath = _split_windocker(path)
-            img.copy_dir = newpath
-            drives.add(newpath[1])
-        path = img.context
-        if path:
-            newpath = _split_windocker(path)
-            img.context = newpath
-            drives.add(newpath[1])
-        path = img.dockerfile
-        if path:
-            newpath = _split_windocker(path)
-            img.dockerfile = newpath
-            drives.add(newpath[1])
-    return drives
-
-
-def _windows_translate_locations(node):
-    # Convert image contexts to format that docker understands.
-    drives = set()
-
-    image_ids = []
-    imagelist = []
-    for child in node.stream():
-        if id(child.image) not in image_ids:
-            image_ids.append(id(child.image))
-            imagelist.append(child.image)
-
-    for img in imagelist:
-        path = img.copy_dir
-        if path:
-            newpath = hostdet.windows_docker_path(path)
-            img.copy_dir = newpath
-            drives.add(newpath[1])
-        path = img.context
-        if path:
-            newpath = hostdet.windows_docker_path(path)
-            img.context = newpath
-            drives.add(newpath[1])
-        path = img.dockerfile
-        if path:
-            newpath = hostdet.windows_docker_path(path)
-            img.dockerfile = newpath
-            drives.add(newpath[1])
-    return drives
 
 
 def build(
@@ -101,18 +28,6 @@ def build(
 ):
     assert node.parent is None
     assert node.name == "/"
-
-    if hostdet.is_wsl():
-        required_drives = _wsl_translate_locations(node)
-    elif hostdet.is_windows():
-        required_drives = _windows_translate_locations(node)
-
-    if hostdet.is_wsl() or hostdet.is_windows():
-        available = container_utils.docker_available_drives()
-        unavailable = set(required_drives).difference(available)
-        if len(unavailable) > 0:
-            msg = f"The drive {unavailable.pop()} is used in an image context, but is not available in Docker.   Review your Docker Desktop file sharing settings."
-            raise hostdet.WindowsMapError(msg)
 
     from .. import api
 

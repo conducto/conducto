@@ -811,16 +811,12 @@ class Exec(Node):
                     path_map[external] = COPY_DIR
 
                 # Normalize path to get rid of the //.
+                path = image_mod.serialization_path_interpretation(path)
                 path = os.path.normpath(path)
 
-                # temporary windows translations -- these are translated for
-                # real just-in-time during the final serialization, but we
-                # convert them here to faciliate this validation.
-                if hostdet.is_windows():
-                    wdp = hostdet.windows_docker_path
-                    path_map = {wdp(k): v for k, v in path_map.items()}
-
                 for external, internal in path_map.items():
+                    external = image_mod.serialization_path_interpretation(external)
+
                     # For each element of path_map, see if the external path matches
                     external = os.path.normpath(external.rstrip("/"))
                     if not path.startswith(external):

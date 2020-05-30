@@ -33,24 +33,7 @@ def show(id, app=True, shell=False):
     if status not in pl.active | pl.standby and status in pl.local:
         local_basedir = constants.ConductoPaths.get_profile_base_dir()
         cpser = constants.ConductoPaths.SERIALIZATION
-        profile = api.Config().default_profile
         serialization_path = f"{local_basedir}/pipelines/{pipeline_id}/{cpser}"
-
-        if not os.path.exists(serialization_path) and status not in pl.active:
-            # TODO:  remove in May 2020 -- perhaps this is a pre-profile
-            # pipeline and it needs to be moved to the correct profile
-            # directory.  Check and convert if so.
-            oldser = f"{local_basedir}/logs/{pipeline_id}/{cpser}"
-            if os.path.exists(oldser):
-                import shutil
-
-                olddir = f"{local_basedir}/logs/{pipeline_id}"
-                newdir = f"{local_basedir}/{profile}/{pipeline_id}"
-                shutil.move(olddir, newdir)
-
-                api.Pipeline().update(
-                    token, pipeline_id, {"program_path": serialization_path}
-                )
 
         if not os.path.exists(serialization_path):
             m = (

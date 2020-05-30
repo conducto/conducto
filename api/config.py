@@ -9,7 +9,7 @@ import time
 from conducto.shared import constants, log
 
 
-def dirconfig_detect(dirname):
+def dirconfig_detect(dirname, auth_new=False):
     log.debug(f"auto-detecting profile from directory of {dirname}")
 
     def has_dcprofile(_dn):
@@ -47,9 +47,18 @@ def dirconfig_detect(dirname):
         if url == section["url"] and org_id == section["org_id"]:
             break
     else:
-        profile = None
+        if auth_new:
+            profile = Config.get_profile_id(section["url"], section["org_id"])
+        else:
+            profile = None
 
-    return profile
+    section["profile-id"] = profile
+    section["dir-path"] = parent
+
+    if "registered" in section and profile:
+        Config().register_named_mount(profile, section["registered"], parent)
+
+    return section
 
 
 def dirconfig_select(filename):
@@ -59,15 +68,18 @@ def dirconfig_select(filename):
     log.debug(f"auto-detecting profile from directory of {filename}")
     dirname = os.path.dirname(os.path.abspath(filename))
 
-    profile = dirconfig_detect(dirname)
+    dirsettings = dirconfig_detect(dirname, auth_new=True)
+    profile = dirsettings["profile-id"] if dirsettings else None
 
     if profile is not None:
         os.environ["CONDUCTO_PROFILE"] = profile
 
 
-def dirconfig_write(dirname, url, org_id):
+def dirconfig_write(dirname, url, org_id, name=None):
     dirconfig = configparser.ConfigParser()
     dirconfig["default"] = {"url": url, "org_id": org_id}
+    if name is not None:
+        dirconfig.set("default", "registered", name)
     dotconducto = os.path.join(dirname, ".conducto")
     if not os.path.isdir(dotconducto):
         os.mkdir(dotconducto)
@@ -104,14 +116,6 @@ class Config:
         self.config.read(configFile)
 
         if format_update():
-            # TODO: delete this convert chunk in May 2020
-            if self.config.has_option("login", "token"):
-                # convert old pre-profile format
-                self._convert1()
-                # re-read
-                self.config = configparser.ConfigParser()
-                self.config.read(configFile)
-
             # TODO: delete this convert chunk in June 2020
             inline_sections = list(self.legacy_profile_sections())
             basedir = constants.ConductoPaths.get_local_base_dir()
@@ -142,42 +146,6 @@ class Config:
             self.default_profile = os.environ["CONDUCTO_PROFILE"]
         else:
             self.default_profile = self.get("general", "default")
-
-    def _convert1(self):
-        # TODO: remove in may 2020
-        url = self.config.get("cloud", "url", fallback="https://www.conducto.com")
-        token = self.config.get("login", "token", fallback="__none__")
-        if token != "__none__":
-            try:
-                self.config.remove_option("cloud", "url")
-            except:
-                pass
-            try:
-                self.config.remove_option("login", "token")
-            except:
-                pass
-            self.write()
-
-            self.write_profile(url, token)
-
-        if self.config.has_option("launch", "show_shell"):
-            self.config.set(
-                "general", "show_shell", self.config.get("launch", "show_shell")
-            )
-            self.config.remove_option("launch", "show_shell")
-        if self.config.has_option("launch", "show_app"):
-            self.config.set(
-                "general", "show_app", self.config.get("launch", "show_app")
-            )
-            self.config.remove_option("launch", "show_app")
-
-        if self.config.has_section("launch") and self.config.options("launch") == []:
-            self.config.remove_section("launch")
-        if self.config.has_section("cloud") and self.config.options("cloud") == []:
-            self.config.remove_section("cloud")
-        if self.config.has_section("login") and self.config.options("login") == []:
-            self.config.remove_section("login")
-        self.write()
 
     def _convert2(self):
         inline_sections = list(self.legacy_profile_sections())
@@ -423,26 +391,103 @@ commands:
             return self._profile_general(self.default_profile).get("token", None)
         return None
 
-    def get_profile_general(self, profile, option, fallback=None):
+    def get_profile_config(self, profile):
         profdir = constants.ConductoPaths.get_profile_base_dir(profile=profile)
         conffile = os.path.join(profdir, "config")
 
         profconfig = configparser.ConfigParser()
         profconfig.read(conffile)
+        return profconfig
 
-        return profconfig.get("general", option, fallback=fallback)
-
-    def set_profile_general(self, profile, option, value):
+    def write_profile_config(self, profile, profconfig):
         profdir = constants.ConductoPaths.get_profile_base_dir(profile=profile)
         conffile = os.path.join(profdir, "config")
-
-        profconfig = configparser.ConfigParser()
-        profconfig.read(conffile)
-
-        profconfig.set("general", option, value)
 
         with open(conffile, "w") as fconf:
             profconfig.write(fconf)
+
+    def get_profile_general(self, profile, option, fallback=None):
+        profconfig = self.get_profile_config(profile)
+        return profconfig.get("general", option, fallback=fallback)
+
+    def set_profile_general(self, profile, option, value):
+        profconfig = self.get_profile_config(profile)
+        profconfig.set("general", option, value)
+        self.write_profile_config(profile, profconfig)
+
+    def register_named_mount(self, profile, name, dirname):
+        """
+        Create or append to a named directory list in the profile
+        configuration.
+        """
+        import conducto.internal.host_detection as hostdet
+
+        sep = os.pathsep
+        if hostdet.is_wsl():
+            # pretend to be windows because we are going to creating this as a
+            # windows path.
+            sep = ";"
+            dirname = hostdet.windows_drive_path(dirname).replace("/", "\\")
+
+        profconfig = self.get_profile_config(profile)
+
+        current = profconfig.get("mounts", name, fallback=None)
+        if current == None:
+            current = dirname
+        else:
+            current = current.split(sep)
+
+            if dirname in current:
+                return
+            else:
+                current.append(dirname)
+                current = sep.join(current)
+
+        if not profconfig.has_section("mounts"):
+            profconfig.add_section("mounts")
+        profconfig.set("mounts", name, current)
+
+        self.write_profile_config(profile, profconfig)
+
+    @staticmethod
+    def _get_mount_sep():
+        import conducto.internal.host_detection as hostdet
+
+        sep = os.pathsep
+        if hostdet.runtime_mode() == "manager":
+            if os.getenv("WINDOWS_HOST"):
+                # outer docker host is windows
+                sep = ";"
+        elif hostdet.is_wsl():
+            # pretend to be windows because we are going to creating this as a
+            # windows path.
+            sep = ";"
+        return sep
+
+    def get_named_mount_mapping(self, profile):
+        profconfig = self.get_profile_config(profile)
+        sep = self._get_mount_sep()
+
+        try:
+            mounts = profconfig.items("mounts")
+        except configparser.NoSectionError:
+            mounts = {}
+
+        return {k: v.split(sep) for k, v in mounts}
+
+    def get_named_mount_paths(self, profile, name):
+        profconfig = self.get_profile_config(profile)
+        sep = self._get_mount_sep()
+
+        try:
+            current = profconfig.get("mounts", name, fallback=None)
+        except configparser.NoSectionError:
+            current = None
+        if current == None:
+            return []
+        else:
+            current = current.split(sep)
+            return current
 
     def get_connect_url(self, pipeline_id):
         if self.get_url().find("conducto.com") > 0:

@@ -1,6 +1,9 @@
 import asyncio
+import socket
 import functools
 import os
+import json
+import sys
 import re
 import subprocess
 import time
@@ -9,6 +12,7 @@ import io
 from conducto.shared.log import format
 from conducto.shared import constants
 import conducto.internal.host_detection as hostdet
+import conducto.image as image_mod
 
 NULL = subprocess.DEVNULL
 PIPE = subprocess.PIPE
@@ -31,13 +35,12 @@ PIPE = subprocess.PIPE
 # - "livedebug": livedebug is to debug as liverun is to live.
 
 
-async def get_exec_node_queue_stats(id, node, timestamp=None):
+async def get_exec_node_queue_stats(token, id, node, timestamp=None):
     async def _internal():
         assert type(node) == str
         from . import api
         import json
 
-        token = api.Auth().get_token_from_shell(force=True)
         conn = await api.connect_to_pipeline(token, id)
         try:
             await conn.send(
@@ -122,6 +125,8 @@ def start_container(payload, live):
 
     if live:
         for external, internal in image["path_map"].items():
+            external = image_mod.resolve_registered_path(external)
+
             if not os.path.isabs(internal):
                 internal = get_work_dir_for_image(image_name) + "/" + internal
             options.append(f"-v {external}:{internal}")
@@ -153,6 +158,14 @@ def dump_command(container_name, command, live):
 
     execute_in(container_name, f"chmod u+x /cmd.conducto")
     print(f"Execute command by running {format('sh /cmd.conducto', color='cyan')}")
+
+
+@functools.lru_cache()
+def get_image_inspection(image_name):
+    proc = subprocess.run(
+        ["docker", "image", "inspect", image_name], stderr=PIPE, stdout=PIPE,
+    )
+    return proc.stdout.decode().strip()
 
 
 @functools.lru_cache()
@@ -248,13 +261,61 @@ def start_shell(container_name, env_list):
 async def _debug(id, node, live, timestamp):
     from . import api
 
-    payload = await get_exec_node_queue_stats(id, node, timestamp)
+    pl = constants.PipelineLifecycle
+
+    pipeline_id = id
+    token = api.Auth().get_token_from_shell(force=True)
+    try:
+        pipeline = api.Pipeline().get(token, pipeline_id)
+    except api.InvalidResponse as e:
+        if "not found" in str(e):
+            print(str(e), file=sys.stderr)
+            sys.exit(1)
+        else:
+            raise
+
+    status = pipeline["status"]
+
+    if status not in pl.active | pl.standby:
+        print(
+            "The pipeline {pipeline_id} is sleeping.  Wake with conducto show and retry this command to debug.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if status in pl.standby:
+        api.Manager().launch(token, pipeline_id)
+        pipeline = api.Pipeline().get(token, pipeline_id)
+
+    payload = await get_exec_node_queue_stats(token, pipeline_id, node, timestamp)
+
+    if status in pl.local:
+        image = get_param(payload, "image", default={})
+        image_name = image["name_debug"]
+        inspect_json = get_image_inspection(image_name)
+        inspect = json.loads(inspect_json)
+        if len(inspect) == 0:
+            m = f"The container for pipeline {pipeline_id} is not in this host's docker registry."
+            host = pipeline["meta"].get("hostname", None)
+            if host == socket.gethostname():
+                m += f" The image may still be building in the pipeline.  Check the images drawer in the app at {api.Config().get_connect_url(pipeline_id)}."
+            elif host != None:
+                m += f" Try debugging it from '{host}' with conducto debug."
+
+            print(m, file=sys.stderr)
+            sys.exit(1)
 
     env_dict = get_param(payload, "Env", default={})
     secret_dict = get_param(payload, "Secrets", default={})
     autogen_dict = get_param(payload, "AutogenEnv", default={})
 
-    autogen_dict["CONDUCTO_DATA_TOKEN"] = api.Auth().get_token_from_shell()
+    autogen_dict["CONDUCTO_DATA_TOKEN"] = token
+    autogen_dict["CONDUCTO_PROFILE"] = api.Config().default_profile
+    if status not in pl.local:
+        # This env var is a lie, but I think it's a reasonable white lie in
+        # service of a good cause -- the co.api.Config.get_location function
+        # checks for the presence of this variable to determine local/cloud.
+        autogen_dict["AWS_EXECUTION_ENV"] = "conducto_local_debug"
 
     env_list = []
     for key, value in {**env_dict, **secret_dict, **autogen_dict}.items():

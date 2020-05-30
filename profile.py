@@ -57,7 +57,8 @@ def profile_list():
     conf = api.Config()
 
     mydir = os.getcwd()
-    dirprofile = config.dirconfig_detect(mydir)
+    dirsettings = config.dirconfig_detect(mydir)
+    dirprofile = dirsettings["profile-id"] if dirsettings else None
 
     for profile in conf.profile_sections():
         data = conf._profile_general(profile)
@@ -172,7 +173,7 @@ def profile_delete(id=None, url=None, email=None):
             conf.delete_profile(state["profile"])
 
 
-def dir_init(dir: str = ".", url: str = None):
+def dir_init(dir: str = ".", url: str = None, name: str = None):
     from . import api
 
     if url is None:
@@ -215,7 +216,9 @@ def dir_init(dir: str = ".", url: str = None):
         profile = _profile_add(url, default=False)
 
     profdata = config._profile_general(profile)
-    api.dirconfig_write(dir, profdata["url"], profdata["org_id"])
+    api.dirconfig_write(dir, profdata["url"], profdata["org_id"], name=name)
+    if name is not None:
+        config.register_named_mount(profile, name, dir)
 
 
 def main():

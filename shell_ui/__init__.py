@@ -8,7 +8,6 @@ import traceback
 import typing
 import socket
 import re
-import concurrent.futures
 import select
 
 import websockets

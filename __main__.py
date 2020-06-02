@@ -1,4 +1,5 @@
 import sys
+import json
 import os.path
 import importlib.util
 import conducto as co
@@ -12,7 +13,7 @@ def show(id, app=True, shell=False):
     """
     Attach to a an active pipeline.  If it is sleeping it will be awakened.
     """
-    from . import api, shell_ui
+    from . import api
     from .internal import build
 
     pl = constants.PipelineLifecycle
@@ -87,7 +88,6 @@ def show(id, app=True, shell=False):
 
 async def migrate(pipeline_id):
     from . import api
-    import json
 
     token = api.Auth().get_token_from_shell(force=True)
     conn = await api.connect_to_pipeline(token, pipeline_id)
@@ -97,6 +97,46 @@ async def migrate(pipeline_id):
         await asyncio.sleep(0.1)
     finally:
         await conn.close()
+
+
+def dump_serialization(id, outfile=None):
+    from . import api
+
+    pipeline_id = id
+    token = api.Auth().get_token_from_shell(force=True)
+    try:
+        pipeline = api.Pipeline().get(token, pipeline_id)
+    except api.InvalidResponse as e:
+        if "not found" in str(e):
+            print(str(e), file=sys.stderr)
+            sys.exit(1)
+        else:
+            raise
+
+    status = pipeline["status"]
+    pl = constants.PipelineLifecycle
+    if status in pl.local:
+        local_basedir = constants.ConductoPaths.get_profile_base_dir()
+        cpser = constants.ConductoPaths.SERIALIZATION
+        serialization_path = f"{local_basedir}/pipelines/{pipeline_id}/{cpser}"
+
+        with open(serialization_path, "rb") as f:
+            serialization = f.read()
+    else:
+        import conducto.api.pipeline as pipemod
+
+        serialization = pipemod.get_serialization_s3(token, pipeline["program_path"])
+
+    import gzip
+    import base64
+
+    string = gzip.decompress(base64.b64decode(serialization))
+    data = json.loads(string)
+    if outfile == None:
+        print(json.dumps(data, indent=4, sort_keys=True))
+    else:
+        with open(outfile, "w") as f2:
+            json.dump(data, f2)
 
 
 def _load_file_module(filename):
@@ -126,6 +166,7 @@ def main():
         "debug",
         "livedebug",
         "init",
+        "dump-serialization",
         "migrate",
     ):
         variables = {
@@ -134,6 +175,7 @@ def main():
             "livedebug": livedebug,
             "init": dir_init,
             "migrate": migrate,
+            "dump-serialization": dump_serialization,
         }
         co.main(variables=variables)
     else:

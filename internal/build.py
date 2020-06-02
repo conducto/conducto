@@ -6,7 +6,6 @@ import socket
 import sys
 
 from conducto import api
-import conducto.image as image_mod
 from conducto.shared import (
     client_utils,
     constants,

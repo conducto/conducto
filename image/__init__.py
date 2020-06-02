@@ -15,7 +15,7 @@ import typing
 import uuid
 
 import conducto.internal.host_detection as hostdet
-from conducto.shared import async_utils, client_utils, log
+from conducto.shared import async_utils, log, constants
 import conducto
 from .. import pipeline
 from . import dockerfile as dockerfile_mod, names
@@ -61,9 +61,9 @@ def resolve_registered_path(path):
     # may not the same host machine as the one that made the serialization and
     # it may need to be interactive with the user.
 
-    if hostdet.runtime_mode() != "external":
+    if constants.ExecutionEnv.value() not in constants.ExecutionEnv.external:
         raise RuntimeError(
-            "this is an interactive function and has no manager implementation"
+            "this is an interactive function and has no manager (or worker) implementation"
         )
 
     regparse = parse_registered_path(path)
@@ -130,7 +130,7 @@ def serialization_path_interpretation(p):
     # the point of pipeline creation.  No information required from the user as
     # in resolve_registered_path.
 
-    if hostdet.runtime_mode() == "manager":
+    if constants.ExecutionEnv.value() in constants.ExecutionEnv.manager_all:
         regparse = parse_registered_path(p)
         baseseg = regparse.hint if regparse else p
         if os.getenv("WINDOWS_HOST") and baseseg[1] == ":":
@@ -408,7 +408,7 @@ class Image:
 
     @staticmethod
     def get_contextual_path(p):
-        if hostdet.runtime_mode() == "manager":
+        if constants.ExecutionEnv.value() in constants.ExecutionEnv.manager_all:
             # Note:  This can run in the worker in Lazy nodes.
             return p
 
@@ -509,7 +509,7 @@ class Image:
             nongit = "fatal: not a git repository"
             if not err.decode("utf-8").rstrip().startswith(nongit):
                 result = out.decode("utf-8").rstrip()
-        except FileNotFoundError as e:
+        except FileNotFoundError:
             # log, but essentially pass
             log.debug("no git installation found, skipping directory indication")
         return result

@@ -1,5 +1,3 @@
-import urllib
-import urllib.request
 import collections
 import random
 

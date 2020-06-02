@@ -10,7 +10,6 @@ import re
 import traceback
 import typing
 
-import conducto.internal.host_detection as hostdet
 from .shared import constants, log, types as t
 from . import api, callback, image as image_mod
 
@@ -601,7 +600,7 @@ class Node:
 
         self.check_images()
 
-        if prebuild_images:
+        if prebuild_images or build_mode != constants.BuildMode.LOCAL:
             image_mod.make_all(
                 self, push_to_cloud=build_mode != constants.BuildMode.LOCAL
             )

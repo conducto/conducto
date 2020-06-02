@@ -1,6 +1,5 @@
 import asyncio
 import functools
-import subprocess
 import inspect
 import os
 import re
@@ -10,7 +9,6 @@ import sys
 import types
 import typing
 
-import conducto.internal.host_detection as hostdet
 from ..shared import client_utils, constants, log, types as t
 from .._version import __version__, __sha1__
 
@@ -461,7 +459,7 @@ def main(
         if not name.startswith("_") and not inspect.isclass(obj) and callable(obj)
     }
 
-    if filename and hostdet.runtime_mode() == "external":
+    if filename and constants.ExecutionEnv.value() in constants.ExecutionEnv.external:
         api.dirconfig_select(filename)
 
     if "__all__" in variables:

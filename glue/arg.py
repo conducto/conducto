@@ -1,11 +1,9 @@
-import sys
 import argparse
 import collections
 import copy
 import datetime
 import inspect
 import pipes
-import types
 import typing
 
 from ..shared import client_utils, log, types as t, kwarg_exception, termsize

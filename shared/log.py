@@ -113,7 +113,7 @@ def format(s, color=None, bold=True, underline=False, dim=False):
 
 def strip_format(string):
     regex = re.compile(
-        """
+        r"""
         \033\[             # Start with '\033['
         (\d);              # '0;' is regular, '1;' is bold
         (\d+)m             # The number + 'm' is the end of the color sequence
@@ -474,7 +474,7 @@ class base_logger(object):
                 f, line, method = getFileAndLine(back=back + 1)
 
                 # Finalize display of file name.
-                f = re.sub("\.pyc?", "", f)
+                f = re.sub(r"\.pyc?", "", f)
                 if nofw:
                     # In non-fixed-width mode, display the entire file name, no padding.
                     fileDisplay = f
@@ -925,7 +925,7 @@ def unindent(string):
     string = string.replace("\t", "    ")
 
     # Find minimum indentation distance
-    indents = [len(match) for match in re.findall("\n( +)\S", string)]
+    indents = [len(match) for match in re.findall("\n( +)\\S", string)]
     if indents:
         minIndent = min(indents)
 

@@ -1,8 +1,7 @@
 import pipes
-import traceback
-from . import client_utils, log
 import asyncio, functools, logging, time
 import concurrent.futures
+from . import client_utils, log
 
 logger = logging.getLogger("conducto_async_utils")
 logger.setLevel(logging.INFO)

@@ -311,11 +311,10 @@ async def _debug(id, node, live, timestamp):
 
     autogen_dict["CONDUCTO_DATA_TOKEN"] = token
     autogen_dict["CONDUCTO_PROFILE"] = api.Config().default_profile
-    if status not in pl.local:
-        # This env var is a lie, but I think it's a reasonable white lie in
-        # service of a good cause -- the co.api.Config.get_location function
-        # checks for the presence of this variable to determine local/cloud.
-        autogen_dict["AWS_EXECUTION_ENV"] = "conducto_local_debug"
+
+    ee = constants.ExecutionEnv
+    eedebug = ee.DEBUG_CLOUD if status in pl.cloud else ee.DEBUG_LOCAL
+    autogen_dict["CONDUCTO_EXECUTION_ENV"] = eedebug
 
     env_list = []
     for key, value in {**env_dict, **secret_dict, **autogen_dict}.items():

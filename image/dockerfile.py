@@ -235,7 +235,9 @@ async def get_python_version(user_image, exec_):
     if pyresults[0]:
         for binary in ["pip", "pip3"]:
             try:
-                _version = await _get_pip_version(user_image, binary, exec_)
+                # we are only interested here in known the binary
+                # name that responds with-out shell error
+                await _get_pip_version(user_image, binary, exec_)
                 pipresults = binary
                 break
             except subprocess.CalledProcessError:

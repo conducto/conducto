@@ -454,7 +454,7 @@ commands:
         import conducto.internal.host_detection as hostdet
 
         sep = os.pathsep
-        if hostdet.runtime_mode() == "manager":
+        if constants.ExecutionEnv.value() in constants.ExecutionEnv.manager_all:
             if os.getenv("WINDOWS_HOST"):
                 # outer docker host is windows
                 sep = ";"
@@ -500,7 +500,7 @@ commands:
         return url
 
     def get_location(self):
-        if "AWS_EXECUTION_ENV" in os.environ:
+        if constants.ExecutionEnv.value() in constants.ExecutionEnv.cloud:
             return Config.Location.AWS
         else:
             return Config.Location.LOCAL

@@ -31,6 +31,8 @@ def launch_local_daemon(token, inside_container=False):
     # so that the innermost layers can always know the outermost name.
     hostname = os.environ.get("CONDUCTO_LOCAL_HOSTNAME", socket.gethostname())
 
+    eedaemon = constants.ExecutionEnv.DAEMON_LOCAL
+
     flags = [
         # Detached mode.
         "-d",
@@ -52,6 +54,8 @@ def launch_local_daemon(token, inside_container=False):
         "-v",
         "/var/run/docker.sock:/var/run/docker.sock",
         # Specify expected base dir for container to verify.
+        "-e",
+        f"CONDUCTO_EXECUTION_ENV={eedaemon}",
         "-e",
         f"CONDUCTO_BASE_DIR_VERIFY={internal_base_dir}",
         "-e",

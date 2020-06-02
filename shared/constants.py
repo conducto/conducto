@@ -173,6 +173,38 @@ class ConductoPaths:
             return os.path.join(log_dir, pipeline_id)
 
 
+class ExecutionEnv:
+    # environment -- CONDUCTO_EXECUTION_ENV
+
+    # Local states
+    MANAGER_LOCAL = "manager_local"
+    WORKER_LOCAL = "worker_local"
+    DEBUG_LOCAL = "debug_local"
+    DAEMON_LOCAL = "daemon_local"
+
+    # Cloud states
+    MANAGER_CLOUD = "manager_cloud"
+    WORKER_CLOUD = "worker_cloud"
+    DEBUG_CLOUD = "debug_cloud"
+
+    EXTERNAL = "external"
+
+    local = {MANAGER_LOCAL, WORKER_LOCAL, DEBUG_LOCAL, DAEMON_LOCAL}
+    cloud = {MANAGER_CLOUD, WORKER_CLOUD, DEBUG_CLOUD}
+
+    worker_all = {DEBUG_LOCAL, DEBUG_CLOUD, WORKER_LOCAL, WORKER_CLOUD}
+    worker = {WORKER_LOCAL, WORKER_CLOUD}
+    debug = {DEBUG_LOCAL, DEBUG_CLOUD}
+    manager_all = {MANAGER_LOCAL, MANAGER_CLOUD, DAEMON_LOCAL}
+    manager = {MANAGER_LOCAL, MANAGER_CLOUD}
+    daemon = {DAEMON_LOCAL}
+    external = {EXTERNAL}
+
+    @staticmethod
+    def value():
+        return os.getenv("CONDUCTO_EXECUTION_ENV", ExecutionEnv.EXTERNAL)
+
+
 class PipelineLifecycle:
     # Local states
     DEPLOYING_LOCAL = "deploying_local"

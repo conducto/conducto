@@ -101,7 +101,7 @@ def magic_doc(*, func=None, doc_only=False):
                     # This first step leaves a blank line with whitespace, so the second
                     # step removes it.
                     code = code.replace(f"{quote}{docstring}{quote}", "", 1)
-                    code = re.sub("\n\s+\n", "\n", code, 1)
+                    code = re.sub("\n\\s+\n", "\n", code, 1)
                     success = True
                     break
             if success:

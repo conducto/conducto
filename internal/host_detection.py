@@ -16,15 +16,6 @@ def is_wsl():
     return "microsoft" in platform.uname().version.lower()
 
 
-def runtime_mode():
-    if "CONDUCTO_LOCAL_HOSTNAME" in os.environ:
-        return "manager"
-    elif "CONDUCTO_PIPELINE_ID" in os.environ:
-        return "worker"
-    else:
-        return "external"
-
-
 def host_exec():
     venv = os.environ.get("VIRTUAL_ENV", None)
     # woah, os.path.sep vs. os.pathsep -- gotta be kidding

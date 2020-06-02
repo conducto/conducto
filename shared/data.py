@@ -47,7 +47,6 @@ class _Context:
 
         if not self.local:
             import boto3
-            from conducto.api import Auth
 
             self.is_s3 = True
 

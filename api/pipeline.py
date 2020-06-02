@@ -140,4 +140,22 @@ def put_serialization_s3(token, s3path, serialization):
     s3.put_object(Body=serialization.encode("utf-8"), Bucket=bucket, Key=key)
 
 
+def get_serialization_s3(token, s3path):
+    bucket, key = _get_s3_split(s3path)
+    # log.log("S3 bucket={}, key={}".format(bucket, key))
+
+    auth = api.Auth()
+    token = auth.get_refreshed_token(token)
+    creds = auth.get_credentials(token)
+
+    session = boto3.Session(
+        aws_access_key_id=creds["AccessKeyId"],
+        aws_secret_access_key=creds["SecretKey"],
+        aws_session_token=creds["SessionToken"],
+    )
+    s3 = session.client("s3")
+    r = s3.get_object(Bucket=bucket, Key=key)
+    return r["Body"].read().decode("utf-8")
+
+
 AsyncPipeline = api_utils.async_helper(Pipeline)

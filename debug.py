@@ -316,6 +316,12 @@ async def _debug(id, node, live, timestamp):
     eedebug = ee.DEBUG_CLOUD if status in pl.cloud else ee.DEBUG_LOCAL
     autogen_dict["CONDUCTO_EXECUTION_ENV"] = eedebug
 
+    if not (hostdet.is_windows() or hostdet.is_wsl()):
+        outer_xid = f"{os.getuid()}:{os.getgid()}"
+    else:
+        outer_xid = ""
+    autogen_dict["CONDUCTO_OUTER_OWNER"] = outer_xid
+
     env_list = []
     for key, value in {**env_dict, **secret_dict, **autogen_dict}.items():
         env_list += ["-e", f"{key}={value}"]

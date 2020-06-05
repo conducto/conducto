@@ -16,6 +16,10 @@ def is_wsl():
     return "microsoft" in platform.uname().version.lower()
 
 
+def is_linux():
+    return "linux" in platform.system().lower()
+
+
 def host_exec():
     venv = os.environ.get("VIRTUAL_ENV", None)
     # woah, os.path.sep vs. os.pathsep -- gotta be kidding
@@ -28,6 +32,46 @@ def host_exec():
         return os.path.basename(sys.executable)
     else:
         return sys.executable
+
+
+def os_name():
+    if "CONDUCTO_OS" in os.environ:
+        return os.environ["CONDUCTO_OS"]
+
+    if is_mac():
+        # If we want to convert this to a name, uncomment the following code:
+        # major_version = platform.release().split(".")[0]
+        # version_str = {
+        #     "7": "Panther",
+        #     "8": "Tiger",
+        #     "9": "Leopard",
+        #     "10": "Snow Leopard",
+        #     "11": "Lion",
+        #     "12": "Mountain Lion",
+        #     "13": "Mavericks",
+        #     "14": "Yosemite",
+        #     "15": "El Capitan",
+        #     "16": "Sierra",
+        #     "17": "High Sierra",
+        #     "18": "Mojave",
+        #     "19": "Catalina"
+        # }.get(major_version, "")
+        # return f"Mac OS X {version_str}".strip()
+        return f"macOS {platform.release()}"
+    elif is_windows():
+        return f"Windows {platform.release()}"  # Works for 10 and Vista
+    elif is_wsl():
+        return f"WSL {platform.release()}"
+    elif is_linux():
+        if os.path.exists("/etc/os-release"):
+            with open("/etc/os-release") as f:
+                lines = f.read().splitlines()
+            for line in lines:
+                if line.startswith("PRETTY_NAME="):
+                    return line.split("=", 1)[1].strip('"')
+        return "Linux"
+    else:
+        return platform.platform(aliased=1, terse=1)
 
 
 def system_open(url):

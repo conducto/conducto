@@ -712,7 +712,7 @@ class Image:
             "-t",
             self.name_built,
             "--label",
-            "conducto",
+            "com.conducto.build",
             *build_args,
         )
         return out, err
@@ -745,7 +745,7 @@ class Image:
             "-t",
             self.name_complete,
             "--label",
-            "conducto",
+            "com.conducto.complete",
             *build_args,
             input=text.encode(),
         )
@@ -771,13 +771,21 @@ class Image:
             if pull_worker and not Image._PULLED_WORKER:
                 await self._exec("docker", "pull", worker_image)
                 Image._PULLED_WORKER = True
+
+        profile = conducto.api.Config().default_profile
+        pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID")
+
         out, err = await self._exec(
             "docker",
             "build",
             "-t",
             self.name_local_extended,
             "--label",
-            "conducto",
+            "com.conducto.extend",
+            "--label",
+            f"com.conducto.profile={profile}",
+            "--label",
+            f"com.conducto.pipeline={pipeline_id}",
             "-",
             input=text.encode(),
         )

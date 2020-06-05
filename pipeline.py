@@ -800,7 +800,7 @@ class Exec(Node):
 
             def repl(match):
                 path = match.group(1)
-                path_map = dict(img.path_map)
+                path_map = dict(img.path_map) if img.path_map is not None else {}
 
                 # If a gitroot was detected, it was marked in the command with a "//".
                 # If copy_url was set then we can determine what the external portion

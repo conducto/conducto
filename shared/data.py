@@ -8,7 +8,7 @@ import typing
 import urllib.parse
 import time
 from conducto import api
-from . import constants, types as t
+from . import constants, types as t, path_utils
 
 
 class Credentials:
@@ -193,7 +193,7 @@ class _Data:
 
             path = ctx.get_path(name)
             dirpath = os.path.dirname(path)
-            os.makedirs(os.path.dirname(path), exist_ok=True)
+            path_utils.makedirs(os.path.dirname(path), exist_ok=True)
             fd, tmppath = tempfile.mkstemp(dir=dirpath)
             try:
                 shutil.copy(file, tmppath)
@@ -202,6 +202,7 @@ class _Data:
                 raise
             else:
                 shutil.move(tmppath, path)
+                path_utils.outer_chown(path)
 
     @classmethod
     def puts(cls, name, obj: bytes):
@@ -218,7 +219,7 @@ class _Data:
 
             path = ctx.get_path(name)
             dirpath = os.path.dirname(path)
-            os.makedirs(dirpath, exist_ok=True)
+            path_utils.makedirs(dirpath, exist_ok=True)
             fd, tmppath = tempfile.mkstemp(dir=dirpath)
             try:
                 with open(fd, "wb") as f:
@@ -228,6 +229,7 @@ class _Data:
                 raise
             else:
                 shutil.move(tmppath, path)
+                path_utils.outer_chown(path)
 
     @classmethod
     def delete(cls, name, recursive=False):

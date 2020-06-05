@@ -183,17 +183,29 @@ def run_in_local_container(
 
     container_name = f"conducto_manager_{pipeline_id}"
 
+    labels = [
+        "--label",
+        f"com.conducto.profile={profile}",
+        "--label",
+        f"com.conducto.pipeline={pipeline_id}",
+    ]
+
     network_name = os.getenv("CONDUCTO_NETWORK", f"conducto_network_{pipeline_id}")
     if not is_migration:
         try:
             client_utils.subprocess_run(
-                ["docker", "network", "create", network_name, "--label=conducto"]
+                ["docker", "network", "create", network_name] + labels
             )
         except client_utils.CalledProcessError as e:
             if f"network with name {network_name} already exists" in e.stderr.decode():
                 pass
             else:
                 raise
+
+    if not (hostdet.is_windows() or hostdet.is_wsl()):
+        outer_xid = f"{os.getuid()}:{os.getgid()}"
+    else:
+        outer_xid = ""
 
     flags = [
         # Detached mode.
@@ -210,8 +222,7 @@ def run_in_local_container(
         network_name,
         "--hostname",
         container_name,
-        "--label",
-        "conducto",
+        *labels,
         # Mount local conducto profdir on container. Allow TaskServer
         # to access config and serialization and write logs.
         "-v",
@@ -228,6 +239,10 @@ def run_in_local_container(
         f"CONDUCTO_LOCAL_HOSTNAME={socket.gethostname()}",
         "-e",
         f"CONDUCTO_NETWORK={network_name}",
+        "-e",
+        f"CONDUCTO_OUTER_OWNER={outer_xid}",
+        "-e",
+        f"CONDUCTO_OS={hostdet.os_name()}",
     ]
 
     if config.get_image_tag():

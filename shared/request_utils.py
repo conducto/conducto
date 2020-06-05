@@ -55,6 +55,20 @@ def get(url, headers=None, params=None):
     return response
 
 
+def head(url, headers=None, params=None):
+    if headers is None:
+        headers = {}
+    url = _put_params(url, params)
+    the_request = urllib.request.Request(url, headers=headers, method="HEAD")
+    try:
+        response = urllib.request.urlopen(the_request)
+    except urllib.error.HTTPError as e:
+        response = e
+        response.url = url
+    _add_status_code(response)
+    return response
+
+
 def put(url, headers=None, data=None):
     if headers is None:
         headers = {}

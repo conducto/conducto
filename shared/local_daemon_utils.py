@@ -3,6 +3,7 @@ import pipes
 import socket
 import conducto as co
 from . import client_utils, constants, container_utils, log
+from ..internal import host_detection as hostdet
 
 
 def name():
@@ -45,7 +46,7 @@ def launch_local_daemon(token, inside_container=False):
         "--name",
         container_name,
         "--label",
-        "conducto",
+        f"com.conducto.profile={profile}",
         # Mount local conducto basedir on container. Allow TaskServer
         # to access config and serialization and write logs.
         "-v",
@@ -62,6 +63,8 @@ def launch_local_daemon(token, inside_container=False):
         f"CONDUCTO_LOCAL_BASE_DIR={external_profile_dir}",
         "-e",
         f"CONDUCTO_LOCAL_HOSTNAME={hostname}",
+        "-e",
+        f"CONDUCTO_OS={hostdet.os_name()}",
     ]
 
     for env_var in "CONDUCTO_URL", "CONDUCTO_IMAGE_TAG":
@@ -105,6 +108,6 @@ def launch_local_daemon(token, inside_container=False):
     log.debug(" ".join(pipes.quote(s) for s in docker_parts))
     client_utils.subprocess_run(
         docker_parts,
-        msg="Error starting manager container",
+        msg="Error starting Conducto daemon container",
         capture_output=capture_output,
     )

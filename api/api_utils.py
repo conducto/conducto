@@ -9,10 +9,10 @@ from conducto.shared import types as t, request_utils
 
 
 async def eval_in_thread(pool, cb, *args, **kwargs):
-    with pool:
-        return await asyncio.get_running_loop().run_in_executor(
-            pool, functools.partial(cb, *args, **kwargs)
-        )
+    # with pool: will cause the pool to shut down after executing and is only good for one call
+    return await asyncio.get_running_loop().run_in_executor(
+        pool, functools.partial(cb, *args, **kwargs)
+    )
 
 
 def async_helper(wrapped_class):

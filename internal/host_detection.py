@@ -57,7 +57,7 @@ def os_name():
         #     "19": "Catalina"
         # }.get(major_version, "")
         # return f"Mac OS X {version_str}".strip()
-        return f"macOS {platform.release()}"
+        return f"macOS {platform.mac_ver()[0]}"
     elif is_windows():
         return f"Windows {platform.release()}"  # Works for 10 and Vista
     elif is_wsl():

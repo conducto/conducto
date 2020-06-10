@@ -5,7 +5,7 @@ import hashlib
 import shutil
 import secrets
 import subprocess
-import time
+import urllib.parse
 from conducto.shared import constants, log
 
 
@@ -384,6 +384,15 @@ commands:
         else:
             return "https://conducto.com"
 
+    def get_docker_domain(self):
+        url = self.get_url()
+        if url == "https://conducto.com":
+            return "docker.conducto.com"
+        else:
+            docker_url = url.replace(".conducto.", "-docker.conducto.", 1)
+            netloc = urllib.parse.urlparse(docker_url).netloc
+            return netloc
+
     def get_token(self):
         if self.default_profile and os.path.exists(
             self.__get_profile_config_file(self.default_profile)
@@ -535,29 +544,11 @@ commands:
         if not self.config.has_section("general"):
             self.config.add_section("general")
 
-        from . import dir
+        from .. import api
 
-        dir_api = dir.Dir()
+        dir_api = api.dir.Dir()
         dir_api.url = url
-
-        i = 0
-        while True:
-            try:
-                userdata = dir_api.user(token)
-            except Exception as e:
-                # There can be a race condition before the directory entry is ready.
-                # Try up to three times before erroring. Assigning a profile_id
-                # requires an org_id, so we need this directory data before we can
-                # proceed.
-                if not str(e).startswith("No user information found."):
-                    raise
-                if i == 2:
-                    raise
-            else:
-                break
-
-            i += 1
-            time.sleep(1)
+        userdata = dir_api.user(token, post_login=True)
 
         # search for url & org matching
         is_first = True

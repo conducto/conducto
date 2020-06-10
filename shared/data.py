@@ -7,27 +7,43 @@ import tarfile
 import typing
 import urllib.parse
 import time
+import functools
 from conducto import api
 from . import constants, types as t, path_utils
+import threading
+
+
+client_creation_lock = threading.Lock()
 
 
 class Credentials:
 
     _creds = None
     _token = None
+    _s3_client = None
+    local = True
     refresh_time = None
 
     @classmethod
     def refresh(cls):
         if cls.refresh_time is None or time.time() - cls.refresh_time >= 3000:
-            from conducto.api import Auth
+            with client_creation_lock:
+                import boto3
+                from conducto.api import Auth
 
-            auth = Auth()
-            if cls._token is None:
-                cls._token = os.environ["CONDUCTO_DATA_TOKEN"]
-            cls._token = auth.get_refreshed_token(cls._token)
-            cls._creds = auth.get_credentials(cls._token)
-            cls.refresh_time = time.time()
+                auth = Auth()
+                if cls._token is None:
+                    cls._token = os.environ["CONDUCTO_DATA_TOKEN"]
+                cls._token = auth.get_refreshed_token(cls._token, force=True)
+                cls._creds = auth.get_credentials(cls._token)
+
+                session = boto3.Session(
+                    aws_access_key_id=cls._creds["AccessKeyId"],
+                    aws_secret_access_key=cls._creds["SecretKey"],
+                    aws_session_token=cls._creds["SessionToken"],
+                )
+                cls._s3_client = session.client("s3")
+                cls.refresh_time = time.time()
 
     @classmethod
     def creds(cls):
@@ -39,6 +55,11 @@ class Credentials:
         cls.refresh()
         return cls._token
 
+    @classmethod
+    def s3_client(cls):
+        cls.refresh()
+        return cls._s3_client
+
 
 class _Context:
     def __init__(self, local, uri):
@@ -48,17 +69,7 @@ class _Context:
         if not self.local:
             import boto3
 
-            self.is_s3 = True
-
-            creds = Credentials.creds()
-            self.session = boto3.Session(
-                aws_access_key_id=creds["AccessKeyId"],
-                aws_secret_access_key=creds["SecretKey"],
-                aws_session_token=creds["SessionToken"],
-            )
-
-            self.s3 = self.session.resource("s3")
-            self.s3_client = self.session.client("s3")
+            self.s3_client = Credentials.s3_client()
             m = re.search("^s3://(.*?)/(.*)", self.uri)
             self.bucket, self.key_root = m.group(1, 2)
         else:
@@ -67,8 +78,9 @@ class _Context:
     def get_s3_key(self, name):
         return _safe_join(self.key_root, name)
 
-    def get_s3_obj(self, name):
-        return self.s3.Object(self.bucket, self.get_s3_key(name))
+    def get_function(self, function_name, name):
+        fxn = getattr(self.s3_client, function_name)
+        return functools.partial(fxn, Bucket=self.bucket, Key=self.get_s3_key(name))
 
     def get_path(self, name):
         return _safe_join(self.uri, name)
@@ -149,7 +161,7 @@ class _Data:
         """
         ctx = cls._ctx()
         if not ctx.local:
-            return ctx.get_s3_obj(name).download_file(file)
+            return ctx.get_function("download_file", name)(file)
         else:
             import shutil
 
@@ -167,7 +179,7 @@ class _Data:
             if byte_range:
                 begin, end = byte_range
                 kwargs["Range"] = f"bytes={begin}-{end - 1}"
-            return ctx.get_s3_obj(name).get(**kwargs)["Body"].read()
+            return ctx.get_function("get_object", name)(**kwargs)["Body"].read()
         else:
             with open(ctx.get_path(name), "rb") as f:
                 if byte_range:
@@ -184,7 +196,7 @@ class _Data:
         """
         ctx = cls._ctx()
         if not ctx.local:
-            ctx.get_s3_obj(name).upload_file(file)
+            ctx.get_function("upload_file", name)(file)
             ctx.cleanup(name, skip_latest=True)
         else:
             # Make sure to write the obj atomically. Write to a temp file then move it
@@ -210,7 +222,7 @@ class _Data:
             raise ValueError(f"Expected 'obj' of type 'bytes', but got {type(bytes)}")
         ctx = cls._ctx()
         if not ctx.local:
-            ctx.get_s3_obj(name).put(Body=obj)
+            ctx.get_function("put_object", name)(Body=obj)
             ctx.cleanup(name, skip_latest=True)
         else:
             # Make sure to write the obj atomically. Write to a temp file then move it
@@ -259,12 +271,18 @@ class _Data:
         # TODO: make this more like listdir or more like glob. Right now pattern matching is inconsistent between local and cloud.
         ctx = cls._ctx()
         if not ctx.local:
-            bkt = ctx.s3.Bucket(ctx.bucket)
+            paginator = ctx.s3_client.get_paginator("list_objects")
+
             prefix_size = len(ctx.get_s3_key(""))
-            return [
-                obj.key[prefix_size:]
-                for obj in bkt.objects.filter(Prefix=ctx.get_s3_key(prefix))
-            ]
+
+            page_iterator = paginator.paginate(
+                Bucket=ctx.bucket, Prefix=ctx.get_s3_key(prefix)
+            )
+            res = []
+            for page in page_iterator:
+                for obj in page["Contents"]:
+                    res.append(obj["Key"][prefix_size:])
+            return res
         else:
             path = ctx.get_path(prefix)
             try:

@@ -137,9 +137,9 @@ async def text_for_extend_dockerfile(user_image, exec_):
             )
         if pyvers is None:
             lines.append("RUN apt-get update")
-            lines.append(f"RUN apt-get install -y python3.7")
-            pyvers = (3, 7)
-            default_python = "/usr/bin/python3.7"
+            lines.append(f"RUN apt-get install -y python3")
+            pyvers = (3, 8)
+            default_python = "/usr/bin/python3"
     elif _is_alpine(linux_flavor):
         suffix = "alpine"
         if pyvers is None:
@@ -274,6 +274,9 @@ async def _get_python_version(
     out = out.decode("utf-8")
 
     python_version = re.sub(r"^Python\s+", r"", out, re.IGNORECASE,).strip()
+    # Some weird versions cannot be parsed by packaging.version.
+    if python_version.endswith("+"):
+        python_version = python_version[:-1]
     python_version = packaging.version.Version(python_version)
     if python_version < packaging.version.Version("3.5"):
         raise LowPException("")

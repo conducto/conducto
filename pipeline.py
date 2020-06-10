@@ -600,11 +600,6 @@ class Node:
 
         self.check_images()
 
-        if prebuild_images or build_mode != constants.BuildMode.LOCAL:
-            image_mod.make_all(
-                self, push_to_cloud=build_mode != constants.BuildMode.LOCAL
-            )
-
         self._autorun = run
         self._sleep_when_done = sleep_when_done
 
@@ -617,6 +612,7 @@ class Node:
             use_app=use_app,
             retention=retention,
             is_public=is_public,
+            prebuild_images=prebuild_images,
         )
 
     def check_images(self):

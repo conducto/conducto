@@ -44,13 +44,32 @@ async def cleanup(label, age, clean_networks=True):
 
     print("Deleting unused images:", to_delete)
 
-    # Set stop_on_error=False because some images cannot be deleted and that's okay.
-    # This can happen if some containers are still running, or if they're basic images
-    # like 'python' or 'alpine' that are used by images outside of this label.
     if to_delete:
-        await async_utils.run_and_check(
-            "docker", "image", "rm", *to_delete, stop_on_error=False
+        # We convert to repo tags because when you push an image to another
+        # repository, delete will only delete the image by id with -f switch.
+        stdout, stderr = await async_utils.run_and_check(
+            "docker", "inspect", *to_delete, "--format={{json .RepoTags}}",
         )
+
+        to_delete_tags = []
+        for line in stdout.decode("utf8").split("\n"):
+            if line.strip() == "":
+                continue
+            to_delete_tags += json.loads(line.strip())
+
+        # Set stop_on_error=False because some images cannot be deleted and that's okay.
+        # This can happen if some containers are still running, or if they're basic images
+        # like 'python' or 'alpine' that are used by images outside of this label.
+        if to_delete_tags:
+            stdout, stderr = await async_utils.run_and_check(
+                "docker", "image", "rm", *to_delete_tags, stop_on_error=False
+            )
+
+        # if images are not tagged and match the label, remove them this way
+        await async_utils.run_and_check(
+            "docker", "image", "prune", "--filter", f"label={label}", "--force"
+        )
+
     if clean_networks:
         await async_utils.run_and_check(
             "docker",

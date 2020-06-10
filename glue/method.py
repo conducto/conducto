@@ -167,7 +167,7 @@ class Wrapper(object):
         return args
 
     def to_command(self, *args, **kwargs):
-        abspath = os.path.abspath(inspect.getfile(self.callFunc))
+        abspath = os.path.realpath(inspect.getfile(self.callFunc))
         ctxpath = image_mod.Image.get_contextual_path(abspath)
         # see also parse_registered_path
         mm = re.match(r"^(\$\{([A-Z_][A-Z0-9_]*)(|=([^}]*))\})(.*)", ctxpath)
@@ -381,7 +381,7 @@ def _get_calling_filename():
         return os.path.basename(calling_file) + " "
 
 
-def _get_default_title(is_local, specifiedFuncName, default_method_name):
+def _get_default_title(specifiedFuncName, default_was_used):
     # Construct a default title from the command line arguments.  Start
     # from a copy of sys.argv to not modify in-place!
     args = sys.argv[:]
@@ -395,15 +395,231 @@ def _get_default_title(is_local, specifiedFuncName, default_method_name):
     ):
         args = args[1:]
 
-    if (
-        default_method_name is not None
-        and specifiedFuncName == default_method_name
-        and specifiedFuncName not in args
-    ):
+    if default_was_used:
         args.insert(1, specifiedFuncName)
 
     # here is the default title
     return " ".join(pipes.quote(a) for a in args)
+
+
+def _get_call_func(argv, default, methods, accepts_cloud):
+    prog = _get_calling_filename()
+
+    usage_message = _make_usage_message(methods, accepts_cloud)
+
+    if argv and argv[0] == "--version":
+        print(f"{__version__} (sha1={__sha1__})")
+        sys.exit(0)
+    if argv and argv[0] in ("-h", "--help"):
+        print("usage:", usage_message, file=sys.stderr)
+        sys.exit(0)
+    if default is None:
+        if not argv:
+            print("usage:", usage_message, file=sys.stderr)
+            print(f"{prog}: error: must specify method", file=sys.stderr)
+            sys.exit(1)
+        if argv[0] not in methods:
+            print(f"{prog}: error: {argv[0]} is not a valid method", file=sys.stderr)
+            sys.exit(1)
+        callFunc = methods[argv[0]]
+        remainder = argv[1:]
+        default_was_used = False
+    else:
+        if argv and not argv[0].startswith("--"):
+            if argv[0] not in methods:
+                print(
+                    f"{prog}: error: {argv[0]} is not a valid method", file=sys.stderr
+                )
+                sys.exit(1)
+            callFunc = methods[argv[0]]
+            remainder = argv[1:]
+            default_was_used = False
+        else:
+            callFunc = default
+            remainder = argv
+            default_was_used = True
+
+    return callFunc, remainder, default_was_used
+
+
+def _make_usage_message(methods, accepts_cloud):
+    returns_node = []
+    doesnt_return_node = []
+    for name, fxn in methods.items():
+        try:
+            hints = typing.get_type_hints(fxn)
+        except (TypeError, ValueError):
+            continue
+        if (
+            "return" in hints
+            and isinstance(hints["return"], type)
+            and issubclass(hints["return"], pipeline.Node)
+        ):
+            returns_node.append((fxn, name))
+        else:
+            doesnt_return_node.append((fxn, name))
+    spacing = 2 + max(len(i) for i in methods) if methods else 0
+
+    def beautify_method_list(lst):
+        return "\n".join(beautify(*i, space=spacing) for i in lst)
+
+    titles = (
+        ["methods that return conducto pipelines", "other methods"]
+        if returns_node
+        else ["", "methods"]
+    )
+    returns_node = (
+        f"{titles[0]}:\n" + beautify_method_list(returns_node) if returns_node else ""
+    )
+    doesnt_return_node = (
+        f"{titles[1]}:\n" + beautify_method_list(doesnt_return_node)
+        if doesnt_return_node
+        else ""
+    )
+    methods_pretty = returns_node + "\n" + doesnt_return_node
+
+    prog = _get_calling_filename()
+
+    if returns_node:
+        commands = "[--run] [--sleep-when-done]"
+        if accepts_cloud:
+            commands = "[--local | --cloud] " + commands
+        else:
+            commands = "[--local] " + commands
+        node_l1 = commands
+        node_l2 = "[--app | --no-app] [--shell | --no-shell]"
+        node_usage = "\n".join([" " * (len(prog) + 8) + l for l in [node_l1, node_l2]])
+    else:
+        node_usage = ""
+
+    return (
+        f"{prog} [-h] <method> [method arguments]\n"
+        + f"{node_usage}\n"
+        + methods_pretty
+    )
+
+
+def _bool_mutex_group(parser, base, default=None):
+    group = parser.add_mutually_exclusive_group(required=False)
+    group.add_argument(f"--{base}", dest=base, action="store_true")
+    group.add_argument(f"--no-{base}", dest=base, action="store_false")
+    if default != None:
+        parser.set_defaults(**{base: default})
+
+
+def _get_state(callFunc, remainder, default, accepts_cloud):
+    import argparse
+
+    prog = _get_calling_filename()
+    parser = argparse.ArgumentParser(prog=prog)
+
+    types = {}
+    empty = inspect.Parameter.empty
+    signature = inspect.signature(callFunc)
+
+    for param_name, sig in signature.parameters.items():
+        args = ["--" + param_name]
+        if "_" in param_name:
+            args.append("--" + param_name.replace("_", "-"))
+
+        if sig.annotation != inspect.Parameter.empty:
+            types[param_name] = arg._wrap_type(sig.annotation)
+        elif sig.default != inspect.Parameter.empty:
+            types[param_name] = sig.default.__class__
+        else:
+            types[param_name] = str
+
+        # Add arguments to the argparser for each of callFunc's parameters. Don't
+        # include the defaults here because that would cause them to be parsed later
+        # unnecessarily. Leave the defaults unset, and they will get
+        if types[param_name] in (bool, t.Bool):
+            group = parser.add_mutually_exclusive_group()
+            group.add_argument(
+                *args, default=empty, dest=param_name, action="store_true"
+            )
+            negated = ["--no-" + a[2:] for a in args]
+            group.add_argument(
+                *negated, default=empty, dest=param_name, action="store_false"
+            )
+        else:
+            parser.add_argument(*args, default=empty)
+
+    if default is None:
+        parser.add_argument(
+            "__remainder__", nargs=argparse.REMAINDER, help=argparse.SUPPRESS
+        )
+
+    return_type = typing.get_type_hints(callFunc).get("return")
+    if isinstance(return_type, type) and issubclass(return_type, pipeline.Node):
+        called_func_returns_node = True
+    else:
+        called_func_returns_node = False
+
+    parser.add_argument("--profile")
+    if called_func_returns_node:
+        config = api.Config()
+        default_shell = t.Bool(config.get("general", "show_shell", default=False))
+        default_app = t.Bool(config.get("general", "show_app", default=True))
+
+        if accepts_cloud:
+            parser.add_argument("--cloud", action="store_true")
+        parser.add_argument("--local", action="store_true")
+        parser.add_argument("--run", action="store_true")
+        _bool_mutex_group(parser, "shell", default=default_shell)
+        _bool_mutex_group(parser, "app", default=default_app)
+        parser.add_argument("--no-clean", action="store_true")
+        parser.add_argument("--prebuild-images", action="store_true")
+        parser.add_argument("--sleep-when-done", action="store_true")
+        parser.add_argument("--public", action="store_true")
+        global CONDUCTO_ARGS
+        CONDUCTO_ARGS = [
+            "cloud",
+            "local",
+            "run",
+            "shell",
+            "app",
+            "no_clean",
+            "prebuild_images",
+            "sleep_when_done",
+            "public",
+        ]
+
+    call_state = vars(parser.parse_args(remainder))
+
+    profile = call_state.pop("profile")
+    if profile:
+        authed = list(api.Config().profile_sections())
+        if profile in authed:
+            os.environ["CONDUCTO_PROFILE"] = profile
+        else:
+            msg = (
+                f"The profile '{profile}' is not recognized. "
+                "Log-in with 'conducto-profile add --url=<url>'. "
+                "List authenticated profiles with 'conducto-profile list'."
+            )
+            print(msg, file=sys.stderr)
+            sys.exit(1)
+
+    conducto_state = {k: call_state.pop(k, None) for k in CONDUCTO_ARGS}
+
+    # Apply the variable and named args to callFunc
+    remainder = call_state.pop("__remainder__", [])
+    named_args_passed = {
+        k: v for k, v in call_state.items() if v != empty and k not in CONDUCTO_ARGS
+    }
+
+    try:
+        bound = signature.bind(*remainder, **named_args_passed)
+    except TypeError as e:
+        print(f"{prog}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Parse the arguments according to their types
+    call_state = {
+        name: arg.Base(name, defaultType=types[name]).parseCL(value)
+        for name, value in bound.arguments.items()
+    }
+    return call_state, conducto_state, called_func_returns_node
 
 
 def main(
@@ -424,8 +640,8 @@ def main(
 
     :param default:  Specify a method that is the default to run if the user doesn't specify one on the command line.
     :param image: Specify a default docker image for the pipeline. (See also :py:class:`conducto.Image`).
-    :param env, cpu, mem, requires_docker: Computational attributes to set on any Node called through `co.main`. 
-      
+    :param env, cpu, mem, requires_docker: Computational attributes to set on any Node called through `co.main`.
+
     See :ref:`Node Methods and Attributes` for more details.
     """
 
@@ -467,192 +683,25 @@ def main(
             func: methods[func] for func in variables["__all__"] if func in methods
         }
 
-    returns_node = []
-    doesnt_return_node = []
-
-    for name, fxn in methods.items():
-        try:
-            hints = typing.get_type_hints(fxn)
-        except (TypeError, ValueError):
-            continue
-        if (
-            "return" in hints
-            and isinstance(hints["return"], type)
-            and issubclass(hints["return"], pipeline.Node)
-        ):
-            returns_node.append((fxn, name))
-        else:
-            doesnt_return_node.append((fxn, name))
-
-    spacing = 2 + max(len(i) for i in methods) if methods else 0
-
-    def beautify_method_list(lst):
-        return "\n".join(beautify(*i, space=spacing) for i in lst)
-
-    titles = (
-        ["methods that return conducto pipelines", "other methods"]
-        if returns_node
-        else ["", "methods"]
-    )
-    returns_node = (
-        f"{titles[0]}:\n" + beautify_method_list(returns_node) if returns_node else ""
-    )
-    doesnt_return_node = (
-        f"{titles[1]}:\n" + beautify_method_list(doesnt_return_node)
-        if doesnt_return_node
-        else ""
-    )
-
-    valid_methods = returns_node + "\n" + doesnt_return_node
-
     # if main is executed from __main__, some functions will have
     # __module__ == "__main__". For these, we need to set their name properly.
     for name, obj in methods.items():
         if obj.__module__ == "__main__":
             obj.name = name
 
-    config = api.Config()
-    who = api.Config().get("dev", "who")
-    accepts_cloud = who != None
+    accepts_cloud = api.Config().get("dev", "who") is not None
 
-    import argparse
-
-    prog = _get_calling_filename()
-
-    if returns_node:
-        commands = "[--local] [--run] [--sleep-when-done]"
-        if accepts_cloud:
-            commands = "[--cloud] " + commands
-
-        node_l1 = commands
-        node_l2 = "[--app / --no-app] [--shell / --no-shell]"
-        node_usage = "\n".join([" " * (len(prog) + 8) + l for l in [node_l1, node_l2]])
-    else:
-        node_usage = ""
-
-    usage_message = (
-        f"{prog}[-h] <method> [< --arg1 val1 --arg2 val2 ...>]\n"
-        + f"{node_usage}\n"
-        + valid_methods
+    # Parse argv to figure out which method is requested
+    callFunc, remainder, default_was_used = _get_call_func(
+        argv, default, methods, accepts_cloud
     )
 
-    default_method_name = default.__name__ if default != None else None
-
-    parser = argparse.ArgumentParser(prog=prog, usage=usage_message)
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=f"{__version__} (sha1={__sha1__})",
-        help="show conducto package version",
+    # Parse the remainder to get the request for the callFunc and for conducto
+    call_state, conducto_state, called_func_returns_node = _get_state(
+        callFunc, remainder, default, accepts_cloud
     )
-    if default is not None:
-        parser.add_argument(
-            "method", nargs="?", default=default.__name__, help=argparse.SUPPRESS
-        )
-    else:
-        parser.add_argument("method", help=argparse.SUPPRESS)
-
-    dispatchState, unknown = parser.parse_known_args(argv)
-    dispatchState = vars(dispatchState)
-    specifiedFuncName = dispatchState.get("method")
-    callFunc = None
-    if isinstance(specifiedFuncName, str):
-        if specifiedFuncName not in methods:
-            if specifiedFuncName != argv[0]:
-                parser.error(f"{argv[0]} is not a valid method")
-                exit(1)
-
-            parser.error(f"'{specifiedFuncName}' is not a valid method")
-            exit(1)
-        callFunc = methods[specifiedFuncName]
-
-    types = {}
-
-    for param_name, sig in inspect.signature(callFunc).parameters.items():
-        _required = sig.default == inspect.Parameter.empty
-        args = ["--" + param_name]
-        if "_" in param_name:
-            args.append("--" + param_name.replace("_", "-"))
-        if _required:
-            default = inspect.Parameter.empty
-        elif sig.default is None:
-            default = None
-        else:
-            default = t.serialize(sig.default)
-
-        if sig.annotation != inspect.Parameter.empty:
-            types[param_name] = arg._wrap_type(sig.annotation)
-        elif sig.default != inspect.Parameter.empty:
-            types[param_name] = sig.default.__class__
-        else:
-            types[param_name] = str
-
-        # Add arguments to the argparser for each of callFunc's parameters. Don't
-        # include the defaults here because that would cause them to be parsed later
-        # unnecessarily. Leave the defaults unset, and they will get
-        if types[param_name] in (bool, t.Bool):
-            group = parser.add_mutually_exclusive_group(required=_required)
-            group.add_argument(*args, dest=param_name, action="store_true")
-            negated = ["--no-" + a[2:] for a in args]
-            group.add_argument(*negated, dest=param_name, action="store_false")
-        else:
-            parser.add_argument(*args, required=_required)
 
     wrapper = Wrapper.get_or_create(callFunc)
-
-    return_type = typing.get_type_hints(callFunc).get("return")
-    if isinstance(return_type, type) and issubclass(return_type, pipeline.Node):
-        called_func_returns_node = True
-    else:
-        called_func_returns_node = False
-
-    def bool_mutex_group(parser, base, default=None):
-        group = parser.add_mutually_exclusive_group(required=False)
-        group.add_argument(f"--{base}", dest=base, action="store_true")
-        group.add_argument(f"--no-{base}", dest=base, action="store_false")
-        if default != None:
-            parser.set_defaults(**{base: default})
-
-    if called_func_returns_node:
-        default_shell = t.Bool(config.get("general", "show_shell", default=False))
-        default_app = t.Bool(config.get("general", "show_app", default=True))
-
-        if accepts_cloud:
-            parser.add_argument("--cloud", action="store_true")
-        parser.add_argument("--local", action="store_true")
-        parser.add_argument("--run", action="store_true")
-        bool_mutex_group(parser, "shell", default=default_shell)
-        bool_mutex_group(parser, "app", default=default_app)
-        parser.add_argument("--no-clean", action="store_true")
-        parser.add_argument("--prebuild-images", action="store_true")
-        parser.add_argument("--sleep-when-done", action="store_true")
-        parser.add_argument("--public", action="store_true")
-        global CONDUCTO_ARGS
-        CONDUCTO_ARGS = [
-            "cloud",
-            "local",
-            "run",
-            "shell",
-            "app",
-            "no_clean",
-            "prebuild_images",
-            "sleep_when_done",
-            "public",
-        ]
-
-    call_state = vars(parser.parse_args(argv))
-    call_state.pop("method")
-
-    conducto_state = {k: call_state.pop(k, None) for k in CONDUCTO_ARGS}
-
-    call_state = {
-        name: arg.Base(name, defaultType=types[name]).parseCL(value)
-        for name, value in call_state.items()
-        if name not in CONDUCTO_ARGS
-        and value != inspect.Parameter.empty
-        and value is not None
-    }
-
     output = callFunc(**wrapper.getCallArgs(**call_state))
 
     # Support async methods. There's not necessarily a strong need to do so. but
@@ -705,9 +754,7 @@ def main(
 
         if will_build:
             if output.title is None:
-                output.title = _get_default_title(
-                    is_local, specifiedFuncName, default_method_name
-                )
+                output.title = _get_default_title(callFunc.__name__, default_was_used)
             BM = constants.BuildMode
             output._build(
                 use_shell=use_shell,

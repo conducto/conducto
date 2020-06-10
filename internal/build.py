@@ -5,7 +5,7 @@ import shutil
 import socket
 import sys
 
-from conducto import api
+from conducto import api, image as image_mod
 from conducto.shared import (
     client_utils,
     constants,
@@ -24,6 +24,7 @@ def build(
     use_app=True,
     retention=7,
     is_public=False,
+    prebuild_images=False,
 ):
     assert node.parent is None
     assert node.name == "/"
@@ -33,8 +34,6 @@ def build(
     # refresh the token for every pipeline launch
     # Force in case of cognito change
     node.token = token = api.Auth().get_token_from_shell(force=True)
-
-    serialization = node.serialize()
 
     command = " ".join(pipes.quote(a) for a in sys.argv)
 
@@ -49,6 +48,15 @@ def build(
         title=node.title,
         is_public=is_public,
     )
+
+    # note: image_mod.make_all will set the .pre_built attribute in the images
+    # it is important to take the serialization after this step otherwise
+    # these changes are not recorded
+    if prebuild_images:
+        image_mod.make_all(
+            node, pipeline_id, push_to_cloud=build_mode != constants.BuildMode.LOCAL
+        )
+    serialization = node.serialize()
 
     launch_from_serialization(
         serialization, pipeline_id, build_mode, use_shell, use_app, token

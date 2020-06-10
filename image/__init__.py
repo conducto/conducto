@@ -367,6 +367,7 @@ class Image:
         self._make_fut: typing.Optional[asyncio.Future] = None
 
         self._remote_exec_fn: typing.Optional[typing.Callable] = None
+        self._pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID")
 
     def __eq__(self, other):
         return isinstance(other, Image) and self.to_dict() == other.to_dict()
@@ -551,19 +552,17 @@ class Image:
 
     @property
     def name_local_extended(self):
-        return (
-            "conducto_extended:" + hashlib.md5(self.name_complete.encode()).hexdigest()
-        )
+        return f"conducto_extended:{self._pipeline_id}_{hashlib.md5(self.name_complete.encode()).hexdigest()}"
 
     @property
     def name_cloud_extended(self):
-        return (
-            f"263615699688.dkr.ecr.us-east-2.amazonaws.com/{self.name_local_extended}"
-        )
+        from .. import api
 
-    @property
-    def cloud_buildable(self):
-        return self.copy_dir is None
+        if self._pipeline_id is None:
+            raise ValueError("Must specify pipeline_id before pushing to cloud")
+        docker_domain = api.Config().get_docker_domain()
+        tag = hashlib.md5(self.name_complete.encode()).hexdigest()
+        return f"{docker_domain}/{self._pipeline_id}:{tag}"
 
     @property
     def status(self):
@@ -810,12 +809,13 @@ class Image:
         )
 
 
-def make_all(node: "pipeline.Node", push_to_cloud):
+def make_all(node: "pipeline.Node", pipeline_id, push_to_cloud):
     images = {}
     for n in node.stream():
         if n.user_set["image_name"]:
             img = n.repo[n.user_set["image_name"]]
             img.pre_built = True
+            img._pipeline_id = pipeline_id
             if img.name_complete not in images:
                 images[img.name_complete] = img
 
@@ -831,10 +831,7 @@ def make_all(node: "pipeline.Node", push_to_cloud):
 
     # Run all the builds concurrently.
     # TODO: limit simultaneous builds using an asyncio.Semaphore
-    futs = [
-        img.make(push_to_cloud=push_to_cloud, callback=_print_status)
-        for img in images.values()
-    ]
+    futs = [img.make(push_to_cloud, callback=_print_status) for img in images.values()]
 
     asyncio.get_event_loop().run_until_complete(asyncio.gather(*futs))
     print(f"\r{log.Control.ERASE_LINE}", end="", flush=True)

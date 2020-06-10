@@ -14,7 +14,8 @@ def name():
 def launch_local_daemon(token, inside_container=False):
     container_name = name()
 
-    if container_name in container_utils.get_running_containers():
+    running = container_utils.get_running_containers()
+    if container_name in running or f"{container_name}-old" in running:
         return
 
     # The homedir inside the manager is /root. Mapping will be verified by manager,

@@ -75,8 +75,11 @@ class Auth:
     def get_user_id(self, token: t.Token):
         return self.get_unverified_claims(token)["sub"]
 
-    def prompt_for_login(self) -> dict:
-        print(f"Log in to Conducto. To register, visit {self.url}/app/")
+    def prompt_for_login(self, i=None) -> dict:
+        if not i:
+            # only print this on the first iteration to avoid obscuring the
+            # failure mode
+            print(f"Log in to Conducto. To register, visit {self.url}/app/")
         login = {}
         while True:
             login["email"] = input("Email: ")
@@ -120,14 +123,27 @@ class Auth:
     def _get_token_from_login(self):
         NUM_TRIES = 3
         for i in range(NUM_TRIES):
-            login = self.prompt_for_login()
+            login = self.prompt_for_login(i)
             try:
                 token = self.get_token(login)
+
+                # test that the directory entry from the user is complete, it
+                # makes a mockery to say successful when this is required too
+                dir_api = api.dir.Dir()
+                dir_api.url = self.url
+                dir_api.user(token, post_login=True)
+
+                # All good
+                print("Login Successful...")
             except Exception as e:
-                if "Incorrect email or password" in str(e) or "User not found" in str(
-                    e
-                ):
+                incorrects = ["Incorrect email or password", "User not found"]
+                unfinished = ["User must confirm email", "No user information found"]
+                if any(s in str(e) for s in incorrects):
                     print("Could not login. Incorrect email or password.")
+                elif any(s in str(e) for s in unfinished):
+                    print(
+                        "Could not login. Complete registration from the link in the confirmation e-mail."
+                    )
                 else:
                     raise e
             else:

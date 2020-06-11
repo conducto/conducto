@@ -538,7 +538,8 @@ class Image:
     def name_built(self):
         if self.needs_building():
             key = json.dumps(self.to_raw_image()).encode()
-            return "conducto_built:" + hashlib.md5(key).hexdigest()
+            tag = hashlib.md5(key).hexdigest()
+            return f"conducto_built:{self._pipeline_id}_{tag}"
         else:
             return self.image
 
@@ -546,13 +547,15 @@ class Image:
     def name_complete(self):
         if self.needs_completing():
             key = json.dumps(self.to_raw_image()).encode()
-            return "conducto_complete:" + hashlib.md5(key).hexdigest()
+            tag = hashlib.md5(key).hexdigest()
+            return f"conducto_complete:{self._pipeline_id}_{tag}"
         else:
             return self.name_built
 
     @property
     def name_local_extended(self):
-        return f"conducto_extended:{self._pipeline_id}_{hashlib.md5(self.name_complete.encode()).hexdigest()}"
+        tag = hashlib.md5(self.name_complete.encode()).hexdigest()
+        return f"conducto_extended:{self._pipeline_id}_{tag}"
 
     @property
     def name_cloud_extended(self):

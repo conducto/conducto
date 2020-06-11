@@ -9,26 +9,31 @@ from conducto.profile import dir_init
 import asyncio
 
 
-def show(id, app=True, shell=False):
-    """
-    Attach to a an active pipeline.  If it is sleeping it will be awakened.
-    """
-    from . import api
-    from .internal import build
-
-    pl = constants.PipelineLifecycle
-
-    pipeline_id = id
-    token = api.Auth().get_token_from_shell(force=True)
+def _get_pipeline_validated(token, pipeline_id):
     try:
-        pipeline = api.Pipeline().get(token, pipeline_id)
-    except api.InvalidResponse as e:
+        pipeline = co.api.Pipeline().get(token, pipeline_id)
+    except co.api.InvalidResponse as e:
         if "not found" in str(e):
             print(str(e), file=sys.stderr)
             sys.exit(1)
         else:
             raise
-    perms = api.Pipeline().perms(token, pipeline_id)
+
+    return pipeline
+
+
+def show(id, app=True, shell=False):
+    """
+    Attach to a an active pipeline.  If it is sleeping it will be awakened.
+    """
+    from .internal import build
+
+    pl = constants.PipelineLifecycle
+
+    pipeline_id = id
+    token = co.api.Auth().get_token_from_shell(force=True)
+    pipeline = _get_pipeline_validated(token, pipeline_id)
+    perms = co.api.Pipeline().perms(token, pipeline_id)
 
     status = pipeline["status"]
     if status not in pl.active | pl.standby and status in pl.local:
@@ -50,7 +55,7 @@ def show(id, app=True, shell=False):
             sys.exit(1)
 
     def cloud_wakeup():
-        api.Manager().launch(token, pipeline_id)
+        co.api.Manager().launch(token, pipeline_id)
 
     def local_wakeup():
         build.run_in_local_container(token, pipeline_id, update_token=True)
@@ -87,10 +92,8 @@ def show(id, app=True, shell=False):
 
 
 async def migrate(pipeline_id):
-    from . import api
-
-    token = api.Auth().get_token_from_shell(force=True)
-    conn = await api.connect_to_pipeline(token, pipeline_id)
+    token = co.api.Auth().get_token_from_shell(force=True)
+    conn = await co.api.connect_to_pipeline(token, pipeline_id)
     try:
         await conn.send(json.dumps({"type": "MIGRATE"}))
         # sleep, if I don't do this sometimes the command doesn't go through ¯\_(ツ)_/¯
@@ -99,19 +102,44 @@ async def migrate(pipeline_id):
         await conn.close()
 
 
-def dump_serialization(id, outfile=None):
-    from . import api
-
+async def sleep(id):
     pipeline_id = id
-    token = api.Auth().get_token_from_shell(force=True)
-    try:
-        pipeline = api.Pipeline().get(token, pipeline_id)
-    except api.InvalidResponse as e:
-        if "not found" in str(e):
-            print(str(e), file=sys.stderr)
+    token = co.api.Auth().get_token_from_shell(force=True)
+    pipeline = _get_pipeline_validated(token, pipeline_id)
+
+    status = pipeline["status"]
+    pl = constants.PipelineLifecycle
+    if status in pl.active:
+        conn = await co.api.connect_to_pipeline(token, pipeline_id)
+        try:
+            await conn.send(json.dumps({"type": "CLOSE_PROGRAM"}))
+
+            async def await_confirm(conn):
+                was_slept = False
+                async for msg_text in conn:
+                    msg = json.loads(msg_text)
+                    if msg["type"] == "SLEEP":
+                        was_slept = True
+                        # we are done here, acknowledged!
+                        break
+                return was_slept
+
+            # 60 seconds is an extravagantly long expectation here, but it is
+            # intended to cover our bases and only error on true errors.
+            await asyncio.wait_for(await_confirm(conn), timeout=60.0)
+        except asyncio.TimeoutError:
+            print("The pipeline was not slept successfully.", file=sys.stderr)
             sys.exit(1)
-        else:
-            raise
+        finally:
+            await conn.close()
+    else:
+        co.api.Pipeline().sleep_standby(token, pipeline_id)
+
+
+def dump_serialization(id, outfile=None):
+    pipeline_id = id
+    token = co.api.Auth().get_token_from_shell(force=True)
+    pipeline = _get_pipeline_validated(token, pipeline_id)
 
     status = pipeline["status"]
     pl = constants.PipelineLifecycle
@@ -166,8 +194,9 @@ def main():
         "debug",
         "livedebug",
         "init",
-        "dump-serialization",
         "migrate",
+        "dump-serialization",
+        "sleep",
     ):
         variables = {
             "show": show,
@@ -176,6 +205,7 @@ def main():
             "init": dir_init,
             "migrate": migrate,
             "dump-serialization": dump_serialization,
+            "sleep": sleep,
         }
         co.main(variables=variables)
     else:

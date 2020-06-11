@@ -111,7 +111,7 @@ def profile_add(url, default=False):
     _print_profile(profile, data)
 
 
-def profile_delete(id=None, url=None, email=None):
+def profile_delete(id=None, url=None, email=None, force=False):
     """
     Delete a log-in profile on this computer selected by id, url or email.
     """
@@ -158,7 +158,7 @@ def profile_delete(id=None, url=None, email=None):
         else:
             count = 0
 
-        if count == 0:
+        if count == 0 or force:
             response = "y"
         else:
             _enrich_profile(profile, state)

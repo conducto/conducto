@@ -848,6 +848,7 @@ class Parallel(Node):
     Same interface as :py:func:`conducto.Node`. 
     """
 
+    __slots__ = []
     pass
 
 

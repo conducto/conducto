@@ -15,7 +15,7 @@ import typing
 import uuid
 
 import conducto.internal.host_detection as hostdet
-from conducto.shared import async_utils, log, constants
+from conducto.shared import async_utils, log, constants, path_utils
 import conducto
 from .. import pipeline
 from . import dockerfile as dockerfile_mod, names
@@ -477,7 +477,7 @@ class Image:
                         yield name, path
 
             for name, path in enum():
-                if p_host.startswith(path):
+                if path_utils.is_parent_subdir(path, p_host):
                     # bingo, we have recognized this as a mount for your org
                     auto_reg_name = name
                     auto_reg_path = path

@@ -41,3 +41,19 @@ def outer_chown(path):
     do_set, uid, gid = outer_set()
     if do_set:
         os.chown(path, uid, gid)
+
+
+def is_parent_subdir(parent, subdir):
+    # This function is focused on recognizing named mounts, hence it is biased
+    # towards the windows code path. This is because named mounts are always
+    # stored in the format of the docker host.
+    import conducto.internal.host_detection as hostdet
+
+    if os.getenv("WINDOWS_HOST") or hostdet.is_windows() or hostdet.is_wsl():
+        import ntpath
+
+        return parent.rstrip("/\\") == ntpath.commonpath([parent, subdir])
+    else:
+        import posixpath
+
+        return parent.rstrip("/") == posixpath.commonpath([parent, subdir])

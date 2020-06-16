@@ -1,9 +1,9 @@
 import os
-import time
 import pipes
 import shutil
 import socket
 import sys
+import time
 
 from conducto import api, image as image_mod
 from conducto.shared import (
@@ -12,6 +12,7 @@ from conducto.shared import (
     container_utils,
     local_daemon_utils,
     log,
+    resource_validation,
     types as t,
 )
 import conducto.internal.host_detection as hostdet
@@ -56,6 +57,9 @@ def build(
         image_mod.make_all(
             node, pipeline_id, push_to_cloud=build_mode != constants.BuildMode.LOCAL
         )
+    if cloud:
+        _check_nodes_for_cloud(node)
+
     serialization = node.serialize()
 
     launch_from_serialization(
@@ -366,6 +370,54 @@ def clean_log_dirs(token):
         for subdir in os.listdir(local_basedir):
             if subdir not in pipeline_ids:
                 shutil.rmtree(os.path.join(local_basedir, subdir), ignore_errors=True)
+
+
+def _check_nodes_for_cloud(root):
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+
+    adjusted_nodes = []
+    for n in root.stream():
+        if n.cpu is not None or n.mem is not None:
+            req_cpu = n.get_inherited_attribute("cpu")
+            req_mem = n.get_inherited_attribute("mem")
+            try:
+                new_cpu, new_mem = resource_validation.round_resources_for_fargate(
+                    req_cpu, req_mem
+                )
+            except resource_validation.InvalidCloudParams:
+                raise resource_validation.InvalidCloudParams(
+                    f"Node {n} will not fit in the cloud. Limits:\n"
+                    f"  cpu<=4 (requested: {req_cpu})\n"
+                    f"  mem<=30 (requested: {req_mem})"
+                )
+            if new_cpu != req_cpu or new_mem != req_mem:
+                adjusted_nodes.append((req_cpu, req_mem, new_cpu, new_mem, str(n)))
+
+    if adjusted_nodes:
+        table = Table("cpu", "mem", "node", title="Resources adjusted for cloud mode")
+        adjusted_nodes.sort()
+        if len(adjusted_nodes) > 10:
+            idxs = [0, 1, 2, 3, 4, None, -5, -4, -3, -2, -1]
+        else:
+            idxs = range(len(adjusted_nodes))
+        for idx in idxs:
+            if idx is None:
+                table.add_row("...", "...", "...")
+            else:
+                req_cpu, req_mem, new_cpu, new_mem, n = adjusted_nodes[idx]
+                if req_cpu == new_cpu:
+                    cpu_str = f"[dim]{new_cpu}[/dim]"
+                else:
+                    cpu_str = f"[red]{req_cpu}[/red]->[green]{new_cpu}[/green]"
+                if req_mem == new_mem:
+                    mem_str = f"[dim]{new_mem}[/dim]"
+                else:
+                    mem_str = f"[red]{req_mem}[/red]->[green]{new_mem}[/green]"
+                table.add_row(cpu_str, mem_str, n)
+        console.print(table)
 
 
 def _manager_debug():

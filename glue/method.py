@@ -289,29 +289,55 @@ class Wrapper(object):
             return Wrapper(func)
 
 
-def _get_common(tuples):
-    from collections import defaultdict
+def _get_common(parent_dict, child_dicts):
+    common_in_children = None
+    set_in_parent = {k: v for k, v in parent_dict.items() if v is not None}
 
-    d = defaultdict(set)
-    for k, v in tuples:
-        if v is not None:
-            d[k].add(v)
-    return {k: d[k].pop() for k, v in d.items() if len(v) == 1}
+    for d in child_dicts:
+        # Find all key/value pairs that are identical among all children and are unset
+        # in the parent
+        if common_in_children is None:
+            common_in_children = {
+                k: v
+                for k, v in d.items()
+                if v is not None and parent_dict.get(k) is None
+            }
+        else:
+            for common_k, common_v in list(common_in_children.items()):
+                if d.get(common_k, _UNSET) != common_v:
+                    del common_in_children[common_k]
+
+        # Find all key/value pairs where the child's value either is unset or is
+        # identical to that of the parent
+        for key, value in list(set_in_parent.items()):
+            child_value = d.get(key)
+            if child_value is not None and child_value != value:
+                del set_in_parent[key]
+
+    # There should be no overlap between these two dicts: keys in set_in_parent must
+    # have had non-None value in the parent, whereas keys in common_in_children must
+    # have been None in the parent. Anything in either can be pulled up to the parent.
+    return {**set_in_parent, **common_in_children}
 
 
 def simplify_attributes(root):
-    attributes = ["mem", "cpu", "gpu", "image", "requires_docker"] + [
-        i for i in root.user_set if i.startswith("__env__")
-    ]
-
     for node in root.stream(reverse=True):
-        nodes = list(node.children.values()) + [node]
-        for attr in attributes:
-            common = _get_common([(attr, c.user_set.get(attr)) for c in nodes])
-            for k, v in common.items():
+        if node.children:
+            # Propagate user_set attributes, setting them to None in the children
+            common_attrs = _get_common(
+                node.user_set, [c.user_set for c in node.children.values()]
+            )
+            for k, v in common_attrs.items():
                 node.user_set[k] = v
                 for child in node.children.values():
                     child.user_set[k] = None
+
+            # Propagate environment variables, removing them from the children
+            common_env = _get_common(node.env, [c.env for c in node.children.values()])
+            for k, v in common_env.items():
+                node.env[k] = v
+                for child in node.children.values():
+                    child.env.pop(k, None)
 
 
 def beautify(function, name, space):
@@ -567,7 +593,6 @@ def _get_state(callFunc, remainder, default, accepts_cloud):
         parser.add_argument("--run", action="store_true")
         _bool_mutex_group(parser, "shell", default=default_shell)
         _bool_mutex_group(parser, "app", default=default_app)
-        parser.add_argument("--no-clean", action="store_true")
         parser.add_argument("--prebuild-images", action="store_true")
         parser.add_argument("--sleep-when-done", action="store_true")
         parser.add_argument("--public", action="store_true")
@@ -578,7 +603,6 @@ def _get_state(callFunc, remainder, default, accepts_cloud):
             "run",
             "shell",
             "app",
-            "no_clean",
             "prebuild_images",
             "sleep_when_done",
             "public",
@@ -745,12 +769,13 @@ def main(
         is_local = conducto_state["local"]
         use_app = conducto_state["app"]
         use_shell = conducto_state["shell"]
-        no_clean = conducto_state["no_clean"]
         run = conducto_state["run"]
         sleep_when_done = conducto_state["sleep_when_done"]
         prebuild_images = conducto_state["prebuild_images"]
         is_public = conducto_state["public"]
         will_build = is_cloud or is_local
+
+        simplify_attributes(output)
 
         if will_build:
             if output.title is None:
@@ -769,7 +794,6 @@ def main(
             if t.Bool(os.getenv("__RUN_BY_WORKER__")):
                 # Variable is set in conducto_worker/__main__.py to avoid
                 # printing ugly serialization when not needed.
-                simplify_attributes(output)
                 s = output.serialize()
                 print(f"<__conducto_serialization>{s}</__conducto_serialization>\n")
             print(output.pretty(strict=False))

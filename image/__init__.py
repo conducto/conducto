@@ -276,7 +276,7 @@ class Image:
     """
 
     PATH_PREFIX = ""
-    _PULLED_WORKER = False
+    _PULLED_IMAGES = set()
 
     def __init__(
         self,
@@ -415,6 +415,9 @@ class Image:
 
         op = os.path
 
+        # First, we check if the path is fully qualified as a registered path
+        # and return immediately if so, we check this again later after
+        # possible recursive path map resolution.
         regparse = parse_registered_path(p)
         if regparse is not None:
             return p
@@ -439,6 +442,11 @@ class Image:
             for external, internal in path_map.items():
                 if p.startswith(internal):
                     p = p.replace(internal, external, 1)
+
+            # test again, now with path_resolution
+            regparse = parse_registered_path(p)
+            if regparse is not None:
+                return p
 
         # If ".copy_dir" wasn't set, find the git root so that we could possibly use this
         # inside an Image with ".copy_url" set.
@@ -587,20 +595,21 @@ class Image:
         """
         self._remote_exec_fn = func
 
-    def _exec(self, *args, **kwargs):
+    async def _exec(self, *args, **kwargs):
         # Docker steps may run in the cloud if they don't rely on anything from a user's
         # machine. This is only 'dockerfile' and 'copy_dir'. Other inputs, like 'image',
         # 'copy_url', or 'reqs_*' can all be done from anywhere, so those images can be
         # built in the cloud.
         may_run_in_cloud = self.dockerfile is None and self.copy_dir is None
+        may_run_in_cloud = False  # Until we have RD working, nothing is cloud-buildable
 
         # If it may not run in the cloud, and if a remote executor is installed, then
         # use that runner.
         if not may_run_in_cloud and self._remote_exec_fn is not None:
-            return self._remote_exec_fn(*args, **kwargs)
+            return await self._remote_exec_fn(*args, **kwargs)
         else:
             # Otherwise, just build it here using `run_and_check`.
-            return async_utils.run_and_check(*args, **kwargs)
+            return await async_utils.run_and_check(*args, **kwargs)
 
     async def make(self, push_to_cloud, callback=lambda: None):
         # Only call _make() once, and all other calls should just return the
@@ -741,6 +750,31 @@ class Image:
             self._exec,
         )
 
+        # Only in test setting, if the conducto image is used, pull it!
+        if (
+            self.reqs_py
+            and "conducto" in self.reqs_py
+            and os.environ.get("CONDUCTO_DEV_REGISTRY")
+        ):
+            conducto_image = "conducto"
+            pull_image = True
+
+            tag = conducto.api.Config().get_image_tag()
+            registry = os.environ.get("CONDUCTO_DEV_REGISTRY")
+            conducto_image = f"{registry}/conducto:{tag}"
+
+            # If this is dev/test, we may or may not have the image
+            # locally, decline the pull accordingly.
+            try:
+                await self._exec("docker", "inspect", conducto_image)
+                pull_image = False
+            except:
+                pass
+
+            if pull_image and conducto_image not in Image._PULLED_IMAGES:
+                await self._exec("docker", "pull", conducto_image)
+                Image._PULLED_IMAGES.add(conducto_image)
+
         out, err = await self._exec(
             "docker",
             "build",
@@ -761,18 +795,16 @@ class Image:
         if "/" in worker_image:
             pull_worker = True
             if os.environ.get("CONDUCTO_DEV_REGISTRY"):
-                # If image is not present locally, then try ecr login.
+                # If this is dev/test, we may or may not have the image
+                # locally, decline the pull accordingly.
                 try:
                     await self._exec("docker", "inspect", worker_image)
                     pull_worker = False
                 except:
-                    await self._exec(
-                        "$(aws ecr get-login --no-include-email --region us-east-2)",
-                        shell=True,
-                    )
-            if pull_worker and not Image._PULLED_WORKER:
+                    pass
+            if pull_worker and worker_image not in Image._PULLED_IMAGES:
                 await self._exec("docker", "pull", worker_image)
-                Image._PULLED_WORKER = True
+                Image._PULLED_IMAGES.add(worker_image)
 
         profile = conducto.api.Config().default_profile
         pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID")

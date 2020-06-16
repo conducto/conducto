@@ -72,6 +72,9 @@ def launch_local_daemon(token, inside_container=False):
         if os.environ.get(env_var):
             flags.extend(["-e", f"{env_var}={os.environ[env_var]}"])
 
+    if config.get("dev", "who", None):
+        flags.extend(["-e", f"CONDUCTO_AWS_ECR={config.get_ecr_registry()}"])
+
     flags += container_utils.get_whole_host_mounting_flags()
 
     if co.env_bool("CONDUCTO_DAEMON_DEBUG"):

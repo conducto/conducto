@@ -1,5 +1,10 @@
 import os
 import sys
+import time
+import json
+import socket
+import subprocess
+import urllib.error
 import conducto as co
 import conducto.api.config as config
 from conducto.shared import constants, log
@@ -12,7 +17,6 @@ def _enrich_profile(profile, data):
     auth_api.url = data["url"]
 
     token = data["token"]
-    import urllib.error
 
     try:
         token = auth_api.get_refreshed_token(token)
@@ -149,27 +153,138 @@ def profile_delete(id=None, url=None, email=None, force=False):
     else:
         # Exactly one, delete it
         state = matches[0]
+        os.environ["CONDUCTO_PROFILE"] = state["profile"]
+
+        def containers_by_profile(profile):
+            docker_ps = [
+                "docker",
+                "ps",
+                "--all",
+                "--no-trunc",
+                "--filter",
+                f"label=com.conducto.profile={profile}",
+                "--format",
+                "{{ json . }}",
+            ]
+
+            proc = subprocess.run(docker_ps, check=True, stdout=subprocess.PIPE)
+            output = proc.stdout.decode("utf8")
+
+            managers = []
+            # should be 0 or 1
+            daemons = []
+
+            for json_line in output.split("\n"):
+                if json_line.strip() == "":
+                    continue
+                container = json.loads(json_line)
+
+                if container["Names"].startswith("conducto_manager_"):
+                    managers.append(container)
+                elif container["Names"].startswith("conducto_daemon_"):
+                    daemons.append(container)
+
+            return managers, daemons
+
+        managers, daemons = containers_by_profile(state["profile"])
+
+        count_running = len(managers)
 
         profdir = constants.ConductoPaths.get_profile_base_dir(profile=state["profile"])
         pipedir = os.path.join(profdir, "pipelines")
 
         if os.path.exists(pipedir):
-            count = len(os.listdir(pipedir))
+            local_pipelines = os.listdir(pipedir)
         else:
-            count = 0
+            local_pipelines = []
 
-        if count == 0 or force:
+        if (len(local_pipelines) == 0 and count_running == 0) or force:
             response = "y"
         else:
             _enrich_profile(profile, state)
 
+            msgs = []
+            if count_running > 0:
+                plural = "s" if count_running > 1 else ""
+                msgs.append(f"{count_running} running manager{plural}")
+
+            if len(local_pipelines) > 0:
+                plural = "s" if len(local_pipelines) > 1 else ""
+                msgs.append(f"{len(local_pipelines)} local pipeline{plural}")
+
             print(
-                f"There are {count} local pipelines in the profile for {state['org_name']}.  "
+                f"There are {' and '.join(msgs)} in the profile for {state['org_name']}. "
                 "Deleting removes the serialized pipeline structure."
             )
             response = input("Are you sure you want to delete them? [yn] ")
 
         if response.lower() in ("y", "yes"):
+            # sleep managers
+            for manager in managers:
+                docker_stop = ["docker", "stop", manager["ID"]]
+                subprocess.run(docker_stop, check=True, stdout=subprocess.PIPE)
+
+            # iterate until stopped
+            while True:
+                managers, _ = containers_by_profile(state["profile"])
+                if len(managers) > 0:
+                    time.sleep(1)
+                else:
+                    break
+
+            # stop daemon (should be at most one, but the loop is safe and
+            # easy)
+            for daemon in daemons:
+                docker_stop = ["docker", "stop", daemon["ID"]]
+                subprocess.run(docker_stop, check=True, stdout=subprocess.PIPE)
+
+            # iterate until stopped
+            for _ in range(20):
+                _, daemons = containers_by_profile(state["profile"])
+                if len(daemons) > 0:
+                    time.sleep(1)
+                else:
+                    break
+
+            # delete pipelines - this step is imperfect, but it is written here
+            # to avoid deleting pipelines on the server which may be in my
+            # local dir which really shouldn't be. Of course this process is
+            # imperfect and cannot be perfect since there is no obligation to
+            # run conducto-profile delete before removing your entire home dir
+            # (for instance).
+
+            # allow default of empty list
+            org_pipelines = []
+            try:
+                token = api.Config().get_token()
+                token = api.Auth().get_refreshed_token(token)
+                pipe_api = api.Pipeline()
+                org_pipelines = pipe_api.list(token)
+            except urllib.error.URLError:
+                print(
+                    "Warning: could not connect to Conducto servers to delete programs; they will be deleted after their retention period expires.",
+                    file=sys.stderr,
+                )
+            except api.InvalidResponse:
+                print(
+                    "Warning: unauthorized connecting to Conducto servers to delete programs; they will be deleted after their retention period expires.",
+                    file=sys.stderr,
+                )
+
+            hostname = socket.gethostname()
+            pl = constants.PipelineLifecycle
+            for pipedata in org_pipelines:
+                meta_host = pipedata.get("meta", {}).get("hostname", None)
+                is_my_local = (
+                    pipedata["status"] in pl.local
+                    and pipedata["pipeline_id"] in local_pipelines
+                    and meta_host == hostname
+                )
+                if is_my_local:
+                    log.debug(f"archiving {pipedata['pipeline_id']}")
+                    pipe_api.archive(token, pipedata["pipeline_id"])
+
+            # delete data
             conf.delete_profile(state["profile"])
 
 

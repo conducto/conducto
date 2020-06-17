@@ -630,7 +630,7 @@ class Image:
         async for _ in self._make_generator(push_to_cloud, callback):
             pass
 
-    async def _make_generator(self, push_to_cloud, callback):
+    async def _make_generator(self, push_to_cloud, callback, force_rebuild=False):
         """
         Generator that pulls/builds/extends/pushes this Image.
         """
@@ -640,31 +640,43 @@ class Image:
         # Pull the image if needed
         if self.image and "/" in self.image:
             with self._new_status(Status.PULLING) as st:
-                callback()
-                out, err = await self._exec("docker", "pull", self.image)
-                st.finish(out, err)
+                if force_rebuild or not await self._image_exists(self.image):
+                    callback()
+                    out, err = await self._exec("docker", "pull", self.image)
+                    st.finish(out, err)
+                else:
+                    st.finish("Image already pulled")
         yield
 
         # Build the image if needed
         if self.needs_building():
             with self._new_status(Status.BUILDING) as st:
-                callback()
-                out, err = await self._build()
-                st.finish(out, err)
+                if force_rebuild or not await self._image_exists(self.name_built):
+                    callback()
+                    out, err = await self._build()
+                    st.finish(out, err)
+                else:
+                    st.finish("Dockerfile already built")
         yield
 
         # If needed, copy files into the image and install packages
         if self.needs_completing():
             with self._new_status(Status.COMPLETING) as st:
-                callback()
-                out, err = await self._complete()
-                st.finish(out, err)
+                if force_rebuild or not await self._image_exists(self.name_complete):
+                    callback()
+                    out, err = await self._complete()
+                    st.finish(out, err)
+                else:
+                    st.finish("Code and/or Python libraries already installed.")
         yield
 
         with self._new_status(Status.EXTENDING) as st:
-            callback()
-            out, err = await self._extend()
-            st.finish(out, err)
+            if force_rebuild or not await self._image_exists(self.name_local_extended):
+                callback()
+                out, err = await self._extend()
+                st.finish(out, err)
+            else:
+                st.finish("Conducto toolchain already added")
         yield
 
         if push_to_cloud:
@@ -674,6 +686,14 @@ class Image:
                 st.finish(out, err)
 
         self.history.append(HistoryEntry(Status.DONE, finish=True))
+
+    async def _image_exists(self, image):
+        try:
+            await self._exec("docker", "image", "inspect", image)
+        except subprocess.CalledProcessError:
+            return False
+        else:
+            return True
 
     @contextlib.contextmanager
     def _new_status(self, status):

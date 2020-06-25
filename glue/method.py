@@ -533,7 +533,7 @@ def _bool_mutex_group(parser, base, default=None):
         parser.set_defaults(**{base: default})
 
 
-def _get_state(callFunc, remainder, default, accepts_cloud):
+def _get_state(callFunc, remainder, accepts_cloud):
     import argparse
 
     prog = _get_calling_filename()
@@ -570,11 +570,6 @@ def _get_state(callFunc, remainder, default, accepts_cloud):
         else:
             parser.add_argument(*args, default=empty)
 
-    if default is None:
-        parser.add_argument(
-            "__remainder__", nargs=argparse.REMAINDER, help=argparse.SUPPRESS
-        )
-
     return_type = typing.get_type_hints(callFunc).get("return")
     if isinstance(return_type, type) and issubclass(return_type, pipeline.Node):
         called_func_returns_node = True
@@ -608,9 +603,9 @@ def _get_state(callFunc, remainder, default, accepts_cloud):
             "public",
         ]
 
-    call_state = vars(parser.parse_args(remainder))
+    args, kwargs = _parse_args(parser, remainder)
 
-    profile = call_state.pop("profile")
+    profile = kwargs.pop("profile")
     if profile:
         authed = list(api.Config().profile_sections())
         if profile in authed:
@@ -624,16 +619,13 @@ def _get_state(callFunc, remainder, default, accepts_cloud):
             print(msg, file=sys.stderr)
             sys.exit(1)
 
-    conducto_state = {k: call_state.pop(k, None) for k in CONDUCTO_ARGS}
+    # Separate out conducto args and strip unset ones
+    conducto_state = {k: kwargs.pop(k, None) for k in CONDUCTO_ARGS}
+    kwargs = {k: v for k, v in kwargs.items() if v != empty}
 
     # Apply the variable and named args to callFunc
-    remainder = call_state.pop("__remainder__", [])
-    named_args_passed = {
-        k: v for k, v in call_state.items() if v != empty and k not in CONDUCTO_ARGS
-    }
-
     try:
-        bound = signature.bind(*remainder, **named_args_passed)
+        bound = signature.bind(*args, **kwargs)
     except TypeError as e:
         print(f"{prog}: {e}", file=sys.stderr)
         sys.exit(1)
@@ -644,6 +636,55 @@ def _get_state(callFunc, remainder, default, accepts_cloud):
         for name, value in bound.arguments.items()
     }
     return call_state, conducto_state, called_func_returns_node
+
+
+def _parse_args(parser, argv):
+    """
+    Mimic argparse except we allow options to come after positional args. This feels
+    more Pythonic - kwargs come after args. Only handle the subset of argparse that is
+    relevant for _get_state().
+    """
+    import argparse
+
+    i = 0
+    args = []
+    kwargs = {}
+
+    for action in parser._option_string_actions.values():
+        if action.dest != "help":
+            kwargs[action.dest] = action.default
+
+    while i < len(argv):
+        arg = argv[i]
+        if arg.startswith("--"):
+            if "=" in arg:
+                key, value = arg.split("=", 1)
+            else:
+                key = arg
+                value = None
+            try:
+                action = parser._option_string_actions[key]
+            except KeyError:
+                raise ValueError(f"Unknown argument: {arg}")
+
+            if isinstance(action, argparse._StoreAction):
+                if value is None:
+                    value = argv[i + 1]
+                    i += 1
+            elif isinstance(action, argparse._StoreConstAction):
+                if value is not None:
+                    raise ValueError(
+                        f"--{key} accepts no arguments. Got: {repr(value)}"
+                    )
+                value = action.const
+            else:
+                raise Exception(f"Cannot handle argparse action: {action}")
+            kwargs[action.dest] = value
+        else:
+            args.append(arg)
+        i += 1
+
+    return args, kwargs
 
 
 def main(
@@ -722,7 +763,7 @@ def main(
 
     # Parse the remainder to get the request for the callFunc and for conducto
     call_state, conducto_state, called_func_returns_node = _get_state(
-        callFunc, remainder, default, accepts_cloud
+        callFunc, remainder, accepts_cloud
     )
 
     wrapper = Wrapper.get_or_create(callFunc)

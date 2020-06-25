@@ -91,10 +91,12 @@ class Pipeline:
         pipeline = self.get(token, pipeline_id)
         put_serialization_s3(token, pipeline["program_path"], serialization)
 
-    def touch(self, token: t.Token, pipeline_id: t.PipelineId):
+    def touch(self, token: t.Token, pipeline_id: t.PipelineId, **kwargs):
         headers = api_utils.get_auth_headers(token)
         response = request_utils.put(
-            self.url + f"/program/program/{pipeline_id}/touch", headers=headers
+            self.url + f"/program/program/{pipeline_id}/touch",
+            headers=headers,
+            data=kwargs,
         )
         api_utils.get_data(response)
 

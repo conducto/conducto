@@ -6,7 +6,7 @@ from . import client_utils, log
 logger = logging.getLogger("conducto_async_utils")
 logger.setLevel(logging.INFO)
 
-"""Asynio cheat sheet
+"""Asyncio cheat sheet
 
 Called *BEFORE* running loop:
  - asyncio.run*() # Begin *new* loop & run coroutine (any futures created before this call cannot be applied)

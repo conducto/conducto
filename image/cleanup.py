@@ -116,6 +116,8 @@ async def _get_image_ids(label):
 
 
 async def _get_last_use_times(image_ids) -> typing.Dict[str, datetime]:
+    if not image_ids:
+        return {}
     out, _err = await async_utils.run_and_check(
         "docker",
         "image",

@@ -7,7 +7,7 @@ import subprocess
 import urllib.error
 import conducto as co
 import conducto.api.config as config
-from conducto.shared import constants, log
+from conducto.shared import constants, log, local_daemon_utils, container_utils
 from . import api
 
 
@@ -336,11 +336,46 @@ def dir_init(dir: str = ".", url: str = None, name: str = None):
         config.register_named_mount(profile, name, dir)
 
 
+def profile_start_daemon(id=None):
+    """
+    Start the local daemon for the default or specified profile.
+    """
+    if id is not None:
+        os.environ["CONDUCTO_PROFILE"] = id
+
+    config = api.Config()
+
+    local_daemon_utils.launch_local_daemon(config.get_token())
+
+
+def profile_stop_daemon(id=None):
+    """
+    Stop the local daemon for the default or specified profile.
+    """
+    if id is not None:
+        os.environ["CONDUCTO_PROFILE"] = id
+
+    container_name = local_daemon_utils.name()
+
+    running = container_utils.get_running_containers()
+    if f"{container_name}-old" in running:
+        cmd = ["docker", "stop", f"{container_name}-old"]
+        subprocess.run(cmd, stdout=subprocess.PIPE)
+    if container_name in running:
+        cmd = ["docker", "stop", container_name]
+        subprocess.run(cmd, stdout=subprocess.PIPE)
+    else:
+        config = api.Config()
+        print(f"No daemon running for profile {config.default_profile}")
+
+
 def main():
     variables = {
         "list": profile_list,
         "set-default": profile_set_default,
         "add": profile_add,
         "delete": profile_delete,
+        "start-daemon": profile_start_daemon,
+        "stop-daemon": profile_stop_daemon,
     }
     co.main(variables=variables)

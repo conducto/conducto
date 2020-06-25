@@ -8,6 +8,23 @@ import typing
 from conducto.shared import types as t, request_utils
 
 
+class InvalidResponse(Exception):
+    def __init__(self, *args, status_code=None, url=None):
+        super().__init__(*args)
+        self.status_code = status_code
+        self.url = url
+
+    def __str__(self):
+        return (
+            f"{super().__str__()}\n  status_code={self.status_code}\n  url={self.url}"
+        )
+
+
+# All responses of unauthorized (401) imply a response of invalid request (400 range)
+class UnauthorizedResponse(InvalidResponse):
+    pass
+
+
 async def eval_in_thread(pool, cb, *args, **kwargs):
     # with pool: will cause the pool to shut down after executing and is only good for one call
     return await asyncio.get_running_loop().run_in_executor(
@@ -52,18 +69,6 @@ def is_conducto_url(url):
         return False
 
 
-class InvalidResponse(Exception):
-    def __init__(self, *args, status_code=None, url=None):
-        super().__init__(*args)
-        self.status_code = status_code
-        self.url = url
-
-    def __str__(self):
-        return (
-            f"{super().__str__()}\n  status_code={self.status_code}\n  url={self.url}"
-        )
-
-
 def get_auth_headers(token: t.Token):
     return {
         "content-type": "application/json",
@@ -79,12 +84,17 @@ def get_data(response) -> typing.Union[None, dict, list]:
     if response.status_code == hs.NO_CONTENT:
         return None
     data = json.loads(response.read())
+
     if response.status_code != hs.OK:
-        raise InvalidResponse(
-            data["message"] if "message" in data else data,
-            status_code=response.status_code,
-            url=response.url if hasattr(response, "url") else "",
-        )
+        message = data["message"] if "message" in data else data
+        status_code = response.status_code
+        url = response.url if hasattr(response, "url") else ""
+
+        if response.status_code == hs.UNAUTHORIZED:
+            raise UnauthorizedResponse(message, status_code=status_code, url=url)
+        else:
+            raise InvalidResponse(message, status_code=status_code, url=url)
+
     return data
 
 

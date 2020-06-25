@@ -535,15 +535,7 @@ commands:
         raise NotImplementedError("maybe there is another way")
 
     def get_image_tag(self, default=None):
-        if os.getenv("CONDUCTO_IMAGE_TAG"):
-            return os.getenv("CONDUCTO_IMAGE_TAG")
-        tag = self.get("dev", "image_tag", default)
-        if tag != default:
-            return tag
-        tag = self.get("docker", "image_tag", default)
-        if tag != default:
-            return tag
-        return self.get("dev", "who", default)
+        return os.getenv("CONDUCTO_IMAGE_TAG") or self.get("dev", "who", default)
 
     def get_host_id(self):
         """

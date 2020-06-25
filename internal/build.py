@@ -200,6 +200,8 @@ def run_in_local_container(
         f"com.conducto.profile={profile}",
         "--label",
         f"com.conducto.pipeline={pipeline_id}",
+        "--label",
+        f"conducto",
     ]
 
     network_name = os.getenv("CONDUCTO_NETWORK", f"conducto_network_{pipeline_id}")

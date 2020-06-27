@@ -20,6 +20,10 @@ def _enrich_profile(profile, data):
 
     try:
         token = auth_api.get_refreshed_token(token)
+    except api.UnauthorizedResponse:
+        data["org_name"] = log.format(
+            "Unauthorized token, cannot fetch org details", color="red", bold=False
+        )
     except urllib.error.URLError:
         data["org_name"] = log.format(
             "Invalid URL, cannot fetch org details", color="red", bold=False

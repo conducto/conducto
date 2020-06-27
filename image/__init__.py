@@ -366,6 +366,7 @@ class Image:
 
         self._make_fut: typing.Optional[asyncio.Future] = None
 
+        self._cloud_tag_convert = None
         self._remote_exec_fn: typing.Optional[typing.Callable] = None
         self._pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID")
 
@@ -847,11 +848,15 @@ class Image:
 
     async def _push(self):
         # If push_to_cloud, tag the local image and push it
-        await self._exec(
-            "docker", "tag", self.name_local_extended, self.name_cloud_extended
-        )
-        out, err = await self._exec("docker", "push", self.name_cloud_extended)
+        cloud_tag = self.name_cloud_extended
+        if self._cloud_tag_convert and self.is_cloud_building():
+            cloud_tag = self._cloud_tag_convert(cloud_tag)
+        await self._exec("docker", "tag", self.name_local_extended, cloud_tag)
+        out, err = await self._exec("docker", "push", cloud_tag)
         return out, err
+
+    def is_cloud_building(self):
+        return not self.copy_dir and not self.dockerfile
 
     def needs_building(self):
         return self.dockerfile is not None

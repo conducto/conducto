@@ -102,6 +102,14 @@ class Node:
     DEFAULT_CPU = 1
     DEFAULT_GPU = 0
 
+    sys_default = {
+        "cpu": DEFAULT_CPU,
+        "gpu": DEFAULT_GPU,
+        "mem": DEFAULT_MEM,
+        "container_id": -1,
+        "requires_docker": False,
+    }
+
     _CONTEXT_STACK = []
 
     _NUM_FILE_AND_LINE_CALLS = 0
@@ -544,6 +552,8 @@ class Node:
                 return v
             else:
                 node = node.parent
+        if attr in self.sys_default:
+            return self.sys_default[attr]
         return None
 
     def launch_local(

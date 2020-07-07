@@ -102,6 +102,21 @@ class WindowsMapError(Exception):
     pass
 
 
+def windows_host_path_from_docker(path):
+    if "A" <= path[0] <= "Z" and path[1] == ":":
+        # already a windows path
+        return path
+
+    if path[0] != "/" or path[2] != "/":
+        raise NotImplementedError(
+            "This is only for paths converted to the docker format with front slashes and the first segment being a drive letter."
+        )
+
+    drive = path[1].upper()
+    tail = path[3:].replace("/", "\\")
+    return f"{drive}:\\{tail}"
+
+
 def windows_drive_path(path):
     """
     Returns the windows path with forward slashes.  This is the format docker

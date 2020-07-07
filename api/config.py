@@ -1,7 +1,6 @@
 import configparser
 import os
 import sys
-import re
 import hashlib
 import shutil
 import secrets
@@ -514,25 +513,6 @@ commands:
             return Config.Location.AWS
         else:
             return Config.Location.LOCAL
-
-    def get_ecr_registry(self, default=None):
-        # this handles the test case well
-        if os.getenv("CONDUCTO_DEV_REGISTRY"):
-            return os.getenv("CONDUCTO_DEV_REGISTRY")
-
-        # this is injected into local daemon on dev boxes
-        if os.getenv("CONDUCTO_AWS_ECR"):
-            return os.getenv("CONDUCTO_AWS_ECR")
-
-        awsconfig = os.path.join(os.path.expanduser("~"), ".aws", "config")
-        if os.path.exists(awsconfig):
-            proc = subprocess.run(
-                ["aws", "ecr", "get-login"], stdout=subprocess.PIPE, check=True
-            )
-            match = re.search(r"https://[^ \n\t]+", proc.stdout.decode("utf8"))
-            return match.group(0)[8:]
-
-        raise NotImplementedError("maybe there is another way")
 
     def get_image_tag(self, default=None):
         return os.getenv("CONDUCTO_IMAGE_TAG") or self.get("dev", "who", default)

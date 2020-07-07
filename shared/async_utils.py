@@ -142,16 +142,20 @@ async def AsyncMakeInterruptible(fut, interrupt, tryToCancel=False):
 # TODO: too lazy?
 async def eval_in_thread(cb, *args, **kwargs):
     with concurrent.futures.ThreadPoolExecutor(1) as pool:
-        return await asyncio.get_running_loop().run_in_executor(
-            pool, functools.partial(cb, *args, **kwargs)
-        )
+        # NOTE: get_running_loop would be nice here, but this is python 3.6 compatible
+        loop = asyncio.get_event_loop()
+        assert loop.is_running()
+        return await loop.run_in_executor(pool, functools.partial(cb, *args, **kwargs))
 
 
 # Usage: @to_async(threadpool)
 def to_async(pool):
     def decorator(fxn):
         async def _inner(*args, **kwargs):
-            return await asyncio.get_running_loop().run_in_executor(
+            # NOTE: get_running_loop would be nice here, but this is python 3.6 compatible
+            loop = asyncio.get_event_loop()
+            assert loop.is_running()
+            return await loop.run_in_executor(
                 pool, functools.partial(fxn, *args, **kwargs)
             )
 

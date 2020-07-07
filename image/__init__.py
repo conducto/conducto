@@ -3,6 +3,7 @@ import collections
 import contextlib
 import concurrent.futures
 import functools
+import inspect
 import hashlib
 import json
 import os
@@ -19,6 +20,13 @@ from conducto.shared import async_utils, log, constants, path_utils
 import conducto
 from .. import pipeline
 from . import dockerfile as dockerfile_mod, names
+
+if sys.version_info >= (3, 7):
+    asynccontextmanager = contextlib.asynccontextmanager
+else:
+    from conducto.shared import async_backport
+
+    asynccontextmanager = async_backport.asynccontextmanager
 
 
 def relpath(path):
@@ -368,6 +376,7 @@ class Image:
 
         self._cloud_tag_convert = None
         self._remote_exec_fn: typing.Optional[typing.Callable] = None
+        self._push_results: typing.Optional[typing.Callable] = None
         self._pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID")
 
     def __eq__(self, other):
@@ -637,12 +646,16 @@ class Image:
         """
         if self.history and self.history[-1].end is None:
             self.history[-1].finish()
+            if self._push_results:
+                await self._push_results(Status.PENDING, Status.DONE, self.history[-1])
 
         # Pull the image if needed
         if self.image and "/" in self.image:
-            with self._new_status(Status.PULLING) as st:
+            async with self._new_status(Status.PULLING) as st:
                 if force_rebuild or not await self._image_exists(self.image):
-                    callback()
+                    cb = callback()
+                    if inspect.isawaitable(cb):
+                        await cb
                     out, err = await self._exec("docker", "pull", self.image)
                     st.finish(out, err)
                 else:
@@ -651,9 +664,11 @@ class Image:
 
         # Build the image if needed
         if self.needs_building():
-            with self._new_status(Status.BUILDING) as st:
+            async with self._new_status(Status.BUILDING) as st:
                 if force_rebuild or not await self._image_exists(self.name_built):
-                    callback()
+                    cb = callback()
+                    if inspect.isawaitable(cb):
+                        await cb
                     out, err = await self._build()
                     st.finish(out, err)
                 else:
@@ -662,18 +677,22 @@ class Image:
 
         # If needed, copy files into the image and install packages
         if self.needs_completing():
-            with self._new_status(Status.COMPLETING) as st:
+            async with self._new_status(Status.COMPLETING) as st:
                 if force_rebuild or not await self._image_exists(self.name_complete):
-                    callback()
+                    cb = callback()
+                    if inspect.isawaitable(cb):
+                        await cb
                     out, err = await self._complete()
                     st.finish(out, err)
                 else:
                     st.finish("Code and/or Python libraries already installed.")
         yield
 
-        with self._new_status(Status.EXTENDING) as st:
+        async with self._new_status(Status.EXTENDING) as st:
             if force_rebuild or not await self._image_exists(self.name_local_extended):
-                callback()
+                cb = callback()
+                if inspect.isawaitable(cb):
+                    await cb
                 out, err = await self._extend()
                 st.finish(out, err)
             else:
@@ -681,12 +700,16 @@ class Image:
         yield
 
         if push_to_cloud:
-            with self._new_status(Status.PUSHING) as st:
-                callback()
+            async with self._new_status(Status.PUSHING) as st:
+                cb = callback()
+                if inspect.isawaitable(cb):
+                    await cb
                 out, err = await self._push()
                 st.finish(out, err)
 
         self.history.append(HistoryEntry(Status.DONE, finish=True))
+        if self._push_results:
+            await self._push_results(Status.DONE, Status.DONE, self.history[-1])
 
     async def _image_exists(self, image):
         try:
@@ -696,29 +719,39 @@ class Image:
         else:
             return True
 
-    @contextlib.contextmanager
-    def _new_status(self, status):
+    @asynccontextmanager
+    async def _new_status(self, status):
         entry = HistoryEntry(status)
         self.history.append(entry)
         try:
             yield entry
         except subprocess.CalledProcessError as e:
             entry.finish(e.stdout, e.stderr)
+            if self._push_results:
+                await self._push_results(status, Status.ERROR, entry)
             x = HistoryEntry(Status.ERROR, finish=True)
             x.finish(e.stdout, e.stderr)
             self.history.append(x)
+            if self._push_results:
+                await self._push_results(Status.ERROR, Status.ERROR, x)
             raise
         except (asyncio.CancelledError, concurrent.futures.CancelledError):
             entry.finish(None, None)
+            if self._push_results:
+                await self._push_results(status, Status.CANCELLED, entry)
             self.history.append(HistoryEntry(Status.CANCELLED, finish=True))
             raise
         except Exception:
             entry.finish(None, traceback.format_exc())
+            if self._push_results:
+                await self._push_results(status, Status.ERROR, entry)
             self.history.append(HistoryEntry(Status.ERROR, finish=True))
             raise
         else:
             if not entry.end:
                 entry.finish()
+            if self._push_results:
+                await self._push_results(status, None, entry)
 
     async def _build(self):
         """
@@ -828,7 +861,7 @@ class Image:
                 Image._PULLED_IMAGES.add(worker_image)
 
         profile = conducto.api.Config().default_profile
-        pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID")
+        pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID", self._pipeline_id)
 
         out, err = await self._exec(
             "docker",
@@ -908,6 +941,13 @@ class HistoryEntry:
         self.stderr = None
         if finish:
             self.finish()
+
+    @classmethod
+    def from_json(cls, values: dict):
+        self = cls(values["status"])
+        for k, v in values.items():
+            setattr(self, k, v)
+        return self
 
     def finish(self, stdout=None, stderr=None):
         self.end = time.time()

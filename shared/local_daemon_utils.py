@@ -1,4 +1,5 @@
 import os
+import re
 import pipes
 import socket
 import conducto as co
@@ -68,12 +69,9 @@ def launch_local_daemon(token, inside_container=False):
         f"CONDUCTO_OS={hostdet.os_name()}",
     ]
 
-    for env_var in "CONDUCTO_URL", "CONDUCTO_IMAGE_TAG":
+    for env_var in "CONDUCTO_URL", "CONDUCTO_DEV_REGISTRY", "CONDUCTO_IMAGE_TAG":
         if os.environ.get(env_var):
             flags.extend(["-e", f"{env_var}={os.environ[env_var]}"])
-
-    if config.get("dev", "who", None):
-        flags.extend(["-e", f"CONDUCTO_AWS_ECR={config.get_ecr_registry()}"])
 
     flags += container_utils.get_whole_host_mounting_flags()
 
@@ -110,8 +108,22 @@ def launch_local_daemon(token, inside_container=False):
     # Run local_daemon container.
     docker_parts = ["docker", "run"] + flags + [daemon_image] + cmd_parts
     log.debug(" ".join(pipes.quote(s) for s in docker_parts))
-    client_utils.subprocess_run(
-        docker_parts,
-        msg="Error starting Conducto daemon container",
-        capture_output=capture_output,
-    )
+
+    # check once more if the daemon is running to avoid even trying to start a
+    # second
+    running = container_utils.get_running_containers()
+    if container_name in running or f"{container_name}-old" in running:
+        return
+
+    try:
+        client_utils.subprocess_run(
+            docker_parts,
+            msg="Error starting Conducto daemon container",
+            capture_output=capture_output,
+        )
+    except client_utils.CalledProcessError as e:
+        msg = str(e)
+        if re.search("The container name .* is already in use by container", msg):
+            pass
+        else:
+            raise

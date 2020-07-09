@@ -269,3 +269,8 @@ class SameContainer:
     NEW = "new"
     ESCAPE = "escape"
     INHERIT = "inherit"
+
+
+# TODO: https://app.clickup.com/t/8jcxwd
+class ErrorCodes:
+    NODE_MAX_TIME_EXCEEDED = "Node max time exceeded"

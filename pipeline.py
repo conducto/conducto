@@ -68,6 +68,12 @@ class Node:
     :param suppress_errors: bool, default `False`, If True the Node will go to
         the Done state when finished, even if some children have failed. If False,
         any failed children will cause it to go to the Error state.
+    :param max_time: Union[int, float, str], default `'4h'`, An int or float value of
+        seconds, or a duration string, representing the maximum time a Node may take
+        to complete successfully. If a Node exceeds this time, it will be killed. The
+        duration string must be a positive decimal with a suffix of 's, 'm', 'h', or 'd',
+        indicating seconds, minutes, hours, or days respectively.
+
     :param name: If creating Node inside a context manager, you may pass
         `name=...` instead of using normal dict assignment. 
 
@@ -108,6 +114,7 @@ class Node:
         "mem": DEFAULT_MEM,
         "container_id": -1,
         "requires_docker": False,
+        "max_time": None,
     }
 
     _CONTEXT_STACK = []
@@ -133,6 +140,7 @@ class Node:
         "children",
         "_callbacks",
         "suppress_errors",
+        "max_time",
         "same_container",
         "env",
         "doc",
@@ -156,6 +164,7 @@ class Node:
         mem=None,
         requires_docker=None,
         suppress_errors=False,
+        max_time: typing.Union[int, float, str] = None,
         same_container=constants.SameContainer.INHERIT,
         image: typing.Union[str, image_mod.Image] = None,
         image_name=None,
@@ -212,6 +221,7 @@ class Node:
             self._name = "/"
 
         self.suppress_errors = suppress_errors
+        self.max_time = max_time
         self.same_container = same_container
 
         # These are only to be set on the root node, and only by co.main().
@@ -438,6 +448,8 @@ class Node:
             output["same_container"] = self.same_container
         if self.suppress_errors:
             output["suppress_errors"] = self.suppress_errors
+        if self.max_time:
+            output["max_time"] = self.max_time
         if isinstance(self, Serial):
             output["stop_on_error"] = self.stop_on_error
         if isinstance(self, Exec):
@@ -885,6 +897,7 @@ class Serial(Node):
         requires_docker=None,
         stop_on_error=True,
         suppress_errors=False,
+        max_time=None,
         same_container=constants.SameContainer.INHERIT,
         image: typing.Union[str, image_mod.Image] = None,
         image_name=None,
@@ -900,6 +913,7 @@ class Serial(Node):
             mem=mem,
             requires_docker=requires_docker,
             suppress_errors=suppress_errors,
+            max_time=max_time,
             same_container=same_container,
             image=image,
             image_name=image_name,

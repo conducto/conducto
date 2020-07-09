@@ -1,5 +1,8 @@
+import re
 import bisect
 import functools
+
+from conducto.shared import parse_utils
 
 
 # Fargate supports different configurations of cpu/mem.
@@ -79,7 +82,8 @@ def mem(arg):
 
 
 def image(arg):
-    # TODO: check against container registry
+    # check against container registry
+    # TODO: https://app.clickup.com/t/8wgzqd
     return arg
 
 
@@ -87,6 +91,24 @@ def requires_docker(arg):
     if not isinstance(arg, (bool)):
         raise ValueError(f"Invalid value for requires_docker: {repr(arg)}")
     return arg
+
+
+def seconds_from_max_time(max_time):
+    if max_time is None:
+        return None
+    if isinstance(max_time, (float, int)):
+        return float(max_time)
+    return parse_utils.duration_string(str(max_time))
+
+
+def max_time(arg):
+    try:
+        seconds = seconds_from_max_time(arg)
+    except ValueError as err:
+        raise ValueError(f"Invalid value for max_time: {repr(arg)}: {err}")
+    if seconds is None or seconds > 0:
+        return arg
+    raise ValueError(f"Invalid value for max_time: {repr(arg)}")
 
 
 def exectime(arg):

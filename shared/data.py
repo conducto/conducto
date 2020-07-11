@@ -161,7 +161,7 @@ class _Data:
         """
         ctx = cls._ctx()
         if not ctx.local:
-            return ctx.get_function("download_file", name)(file)
+            return ctx.get_function("download_file", name)(Filename=file)
         else:
             import shutil
 
@@ -280,6 +280,9 @@ class _Data:
             )
             res = []
             for page in page_iterator:
+                if "Contents" not in page:
+                    # no Contents key -> empty list
+                    break
                 for obj in page["Contents"]:
                     res.append(obj["Key"][prefix_size:])
             return res

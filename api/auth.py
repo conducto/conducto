@@ -131,7 +131,7 @@ class Auth:
                 # makes a mockery to say successful when this is required too
                 dir_api = api.dir.Dir()
                 dir_api.url = self.url
-                dir_api.user(token, post_login=True)
+                dir_api.user(token)
 
                 # All good
                 print("Login Successful...")

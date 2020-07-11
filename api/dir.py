@@ -2,7 +2,7 @@ import typing
 import json
 import time
 from .. import api
-from conducto.shared import types as t, request_utils
+from conducto.shared import types as t, request_utils, exceptions
 from http import HTTPStatus as hs
 from . import api_utils
 
@@ -49,37 +49,17 @@ class Dir:
         )
         return api_utils.get_data(response)
 
-    def user(self, token: t.Token, post_login=False) -> dict:
+    def user(self, token: t.Token) -> dict:
         user_id = api.Auth().get_user_id(token)
 
         headers = api_utils.get_auth_headers(token)
 
-        i = 0
-        while True:
-            response = request_utils.get(
-                self.url + f"/dir/user/{user_id}", headers=headers
-            )
-
-            if not post_login:
-                # only invoke the loop logic when requested
-                break
-
-            # There can be a race condition before the directory entry is ready
-            # after a cognito bounce.  Try up to 8 times before erroring.
-            # Assigning a profile_id requires an org_id, so we need this
-            # directory data before we can complete a login.
-            if response.status_code != 404:
-                break
-
-            if i == 7:
-                raise
-
-            i += 1
-            time.sleep(1)
+        response = request_utils.get(self.url + f"/dir/user/{user_id}", headers=headers)
 
         if response.status_code == 404:
-            raise Exception(
-                f"No user information found.  Please complete registration at {self.url}/app"
+            raise exceptions.ClientError(
+                status_code=404,
+                message=f"No user information found.  Please complete registration at {self.url}/app",
             )
         return api_utils.get_data(response)
 

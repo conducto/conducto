@@ -1,8 +1,6 @@
 import configparser
 import os
-import sys
 import hashlib
-import shutil
 import secrets
 import subprocess
 import urllib.parse
@@ -88,17 +86,6 @@ def dirconfig_write(dirname, url, org_id, name=None):
         dirconfig.write(dirfile)
 
 
-DOTCONDUCTO_FORMAT = None
-
-
-def format_update():
-    global DOTCONDUCTO_FORMAT
-    if DOTCONDUCTO_FORMAT is None:
-        DOTCONDUCTO_FORMAT = "checked"
-        return True
-    return False
-
-
 class Config:
     class Location:
         LOCAL = "local"
@@ -115,135 +102,10 @@ class Config:
         self.config = configparser.ConfigParser()
         self.config.read(configFile)
 
-        if format_update():
-            # TODO: delete this convert chunk in June 2020
-            inline_sections = list(self.legacy_profile_sections())
-            basedir = constants.ConductoPaths.get_local_base_dir()
-            if len(inline_sections) or os.path.exists(os.path.join(basedir, "data")):
-                print(
-                    "Moving profile data & configuration to ~/.conducto/<profile>",
-                    file=sys.stderr,
-                )
-                # convert old profile with inline profiles
-                self._convert2()
-                # re-read
-                self.config = configparser.ConfigParser()
-                self.config.read(configFile)
-
-            # TODO: delete this convert chunk in June 2020
-            if self._has_pipelines_in_profile_root():
-                print(
-                    "Moving pipelines to ~/.conducto/<profile>/pipelines",
-                    file=sys.stderr,
-                )
-                # move pipelines to subdir
-                self._convert3()
-                # re-read
-                self.config = configparser.ConfigParser()
-                self.config.read(configFile)
-
         if os.environ.get("CONDUCTO_PROFILE", "") != "":
             self.default_profile = os.environ["CONDUCTO_PROFILE"]
         else:
             self.default_profile = self.get("general", "default")
-
-    def _convert2(self):
-        inline_sections = list(self.legacy_profile_sections())
-        profile_map = {pk: pk for pk in inline_sections}
-        basedir = constants.ConductoPaths.get_local_base_dir()
-        for profile_key in inline_sections:
-            # remove the section and put it in the profile dir
-            profdir = constants.ConductoPaths.get_profile_base_dir(profile=profile_key)
-            if os.path.exists(profdir):
-                # write the profile data to profdir
-                url = self.config.get(profile_key, "url")
-                org_id = self.config.get(profile_key, "org_id")
-                token = self.config.get(profile_key, "token")
-                newprof = self.get_profile_id(url, org_id)
-
-                # set up with canonical profile dir
-                newprofdir = constants.ConductoPaths.get_profile_base_dir(
-                    profile=newprof
-                )
-
-                profile_map[profile_key] = newprof
-
-                print(f"Moving profile {profile_key} to {newprof}", file=sys.stderr)
-                if profdir != newprofdir and not os.path.exists(newprofdir):
-                    shutil.move(profdir, newprofdir)
-
-                from . import auth
-
-                auth = auth.Auth()
-                auth.url = url
-                token = auth.get_refreshed_token(token)
-                self.write_profile(url, token, force_profile=newprof)
-                if self.config.get("general", "default", fallback=None) == profile_key:
-                    self.config.set("general", "default", newprof)
-
-                # delete the inline profile
-                self.config.remove_section(profile_key)
-
-        if os.path.exists(os.path.join(basedir, "data")):
-            orig = os.path.join(basedir, "data")
-            if len(inline_sections) == 1:
-                newprof = profile_map[inline_sections[0]]
-                dest = os.path.join(basedir, newprof, "data")
-                os.makedirs(os.path.join(basedir, newprof), exist_ok=True)
-                if not os.path.exists(dest):
-                    # essentially:
-                    # mv ~/.conducto/data to ~/.conducto/<profile>/data
-                    #  (but this dir is likely owned by root due to being created from a docker mount)
-                    dotconducto = constants.ConductoPaths.get_local_base_dir()
-                    cmd = [
-                        "docker",
-                        "run",
-                        "--rm",
-                        "-v",
-                        f"{dotconducto}:/root/.conducto",
-                        "alpine",
-                        "mv",
-                        f"/root/.conducto/data",
-                        f"/root/.conducto/{newprof}/data",
-                    ]
-                    subprocess.run(cmd, check=True)
-            else:
-                dest = os.path.join(basedir, "<profile>", "data")
-                print(
-                    f"WARNING:  directory {orig} is the old location for user data, but it has moved to the profile specific location.  Please remove or move this this directory to the new location {dest}.",
-                    file=sys.stderr,
-                )
-
-        if len(inline_sections) > 0:
-            self.write()
-
-    def _has_pipelines_in_profile_root(self):
-        for profile in self.profile_sections():
-            profdir = constants.ConductoPaths.get_profile_base_dir(profile=profile)
-
-            import re
-
-            for candidate in os.listdir(profdir):
-                if None != re.match("[a-z]{3}-[a-z]{3}", candidate):
-                    return True
-        return False
-
-    def _convert3(self):
-        for profile in self.profile_sections():
-            profdir = constants.ConductoPaths.get_profile_base_dir(profile=profile)
-
-            pipedir = os.path.join(profdir, "pipelines")
-            os.makedirs(pipedir, exist_ok=True)
-
-            import re
-
-            for pipe_id in os.listdir(profdir):
-                if None != re.match("[a-z]{3}-[a-z]{3}", pipe_id):
-                    old_pipedir = os.path.join(profdir, pipe_id)
-                    new_pipedir = os.path.join(profdir, "pipelines", pipe_id)
-
-                    if not os.path.exists(new_pipedir):
-                        shutil.move(old_pipedir, new_pipedir)
 
     def get(self, section, key, default=None):
         return self.config.get(section, key, fallback=default)
@@ -265,16 +127,6 @@ class Config:
             profconf = os.path.join(configdir, fname, "config")
             if os.path.isdir(profdir) and os.path.isfile(profconf):
                 yield fname
-
-    def legacy_profile_sections(self):
-        # TODO:  this is legacy to be deleted in June 2020
-        for section in self.config.sections():
-            if len(section) != 8:
-                # profiles are always 8 chars, specifically exclude general
-                continue
-            required = ["url", "org_id", "email"]
-            if all(self.config.has_option(section, rq) for rq in required):
-                yield section
 
     def delete_profile(self, profile):
         import conducto.internal.host_detection as hostdet
@@ -540,7 +392,7 @@ commands:
 
         dir_api = api.dir.Dir()
         dir_api.url = url
-        userdata = dir_api.user(token, post_login=True)
+        userdata = dir_api.user(token)
 
         # search for url & org matching
         is_first = True

@@ -5,6 +5,33 @@ from .. import api
 from ..shared import log
 
 
+async def connect_to_ns(token):
+    import websockets
+
+    url = api.Config().get_url()
+    ns_url = re.sub("^http", "ws", url) + "/ns/"
+    log.debug("[run] Connecting to", ns_url)
+    header = {"Authorization": f"bearer {token}"}
+
+    # we retry connection for roughly 2 minutes
+    for i in range(45):
+        try:
+            websocket = await websockets.connect(ns_url, extra_headers=header)
+            break
+        except (
+            websockets.ConnectionClosedError,
+            websockets.InvalidStatusCode,
+            socket.gaierror,
+        ):
+            log.debug(f"cannot connect to ns ... waiting {i}")
+            await asyncio.sleep(min(3.0, (2 ** i) / 8))
+    else:
+        raise ConnectionError(f"Failed to connect to {ns_url}")
+
+    log.debug("[run] ns Connected")
+    return websocket
+
+
 async def connect_to_pipeline(token, pipeline_id):
     import websockets
 
@@ -47,5 +74,5 @@ async def connect_to_pipeline(token, pipeline_id):
             await asyncio.sleep(min(3.0, (2 ** i) / 8))
             continue
     else:
-        raise ConnectionError()
+        raise ConnectionError(f"Failed to connect to {uri}")
     return websocket

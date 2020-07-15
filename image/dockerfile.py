@@ -15,36 +15,50 @@ async def text_for_build_dockerfile(
 ):
     lines = [f"FROM {image}"]
 
-    if reqs_py:
-        py_binary, _py_version, pip_binary = await get_python_version(image, exec_)
+    linux_flavor, linux_version, linux_name = None, None, None
 
-        if reqs_py and not pip_binary:
-            # install pip as per distro
+    async def _ensure_linux_flavor():
+        nonlocal linux_flavor, linux_version, linux_name
+
+        if linux_flavor == None:
             (
                 linux_flavor,
                 linux_version,
                 linux_name,
             ) = await _get_linux_flavor_and_version(image, exec_)
 
+    def lines_append_once(cmd):
+        nonlocal lines
+
+        if cmd not in lines:
+            lines.append(cmd)
+
+    if reqs_py:
+        py_binary, _py_version, pip_binary = await get_python_version(image, exec_)
+
+        if reqs_py and not pip_binary:
+            # install pip as per distro
+            await _ensure_linux_flavor()
+
             uid = await _get_uid(image, exec_)
 
             lines.append("USER 0")
             if _is_debian(linux_flavor):
-                lines.append("RUN apt-get update")
+                lines_append_once("RUN apt-get update")
                 # this will install python too
-                lines.append(f"RUN apt-get install -y python3-pip")
+                lines.append("RUN apt-get install -y python3-pip")
                 py_binary = "python3"
             elif _is_alpine(linux_flavor):
-                lines.append("RUN apk update")
+                lines_append_once("RUN apk update")
                 # this will install pip3 as well
-                lines.append(f"RUN apk add --update python3")
+                lines.append("RUN apk add --update python3 py3-pip")
                 py_binary = "python3"
             elif _is_centos(linux_flavor):
-                lines.append("RUN yum update -y")
+                lines_append_once("RUN yum update -y")
                 lines.append("RUN yum install -y python36")
                 py_binary = "python3"
             elif _is_fedora(linux_flavor):
-                lines.append("RUN dnf update -y")
+                lines_append_once("RUN dnf update -y")
                 lines.append("RUN dnf install -y python38")
                 py_binary = "python3"
             lines.append(f"USER {uid}")
@@ -63,15 +77,45 @@ async def text_for_build_dockerfile(
         if "conducto" in reqs_py:
             tag = api.Config().get_image_tag()
             if tag:
-                image = "conducto"
+                conducto_image = "conducto"
                 registry = os.environ.get("CONDUCTO_DEV_REGISTRY")
                 if registry:
-                    image = f"{registry}/{image}"
-                image = f"{image}:{tag}"
-                lines.append(f"COPY --from={image} /tmp/conducto /tmp/conducto")
+                    conducto_image = f"{registry}/{conducto_image}"
+                conducto_image = f"{conducto_image}:{tag}"
+                lines.append(
+                    f"COPY --from={conducto_image} /tmp/conducto /tmp/conducto"
+                )
                 lines.append(f"RUN {py_binary} -m pip install -e /tmp/conducto")
             else:
                 lines.append(f"RUN {py_binary} -m pip install conducto=={__version__}")
+
+    if copy_url:
+        # install git as per distro
+        await _ensure_linux_flavor()
+        try:
+            git_version = await _get_git_version(image, exec_)
+        except subprocess.CalledProcessError:
+            git_version = None
+
+        if not git_version:
+            uid = await _get_uid(image, exec_)
+
+            lines.append("USER 0")
+            if _is_debian(linux_flavor):
+                lines_append_once("RUN apt-get update")
+                # this will install python too
+                lines.append("RUN apt-get install -y git")
+            elif _is_alpine(linux_flavor):
+                lines_append_once("RUN apk update")
+                # this will install pip3 as well
+                lines.append("RUN apk add --update git")
+            elif _is_centos(linux_flavor):
+                lines_append_once("RUN yum update -y")
+                lines.append("RUN yum install -y git")
+            elif _is_fedora(linux_flavor):
+                lines_append_once("RUN dnf update -y")
+                lines.append("RUN dnf install -y git")
+            lines.append(f"USER {uid}")
 
     if copy_dir or copy_url:
         if docker_auto_workdir:
@@ -79,7 +123,7 @@ async def text_for_build_dockerfile(
 
         if copy_url:
             lines.append("ARG CONDUCTO_CACHE_BUSTER")
-            lines.append(f"RUN echo $CONDUCTO_CACHE_BUSTER")
+            lines.append("RUN echo $CONDUCTO_CACHE_BUSTER")
             lines.append(
                 f"RUN git clone --single-branch --branch {copy_branch} {copy_url} {COPY_DIR}"
             )
@@ -258,7 +302,7 @@ async def _get_python_version(
     Returns:
         packaging.version.Version object
     Raises:
-        supprocess.CalledProcessError if binary doesn't exist
+        subprocess.CalledProcessError if binary doesn't exist
         LowPException if version is too low
     """
 
@@ -291,7 +335,7 @@ async def _get_pip_version(user_image, pip_binary, exec_) -> packaging.version.V
     Returns:
         packaging.version.Version object
     Raises:
-        supprocess.CalledProcessError if binary doesn't exist
+        subprocess.CalledProcessError if binary doesn't exist
     """
 
     out, err = await exec_(
@@ -303,6 +347,31 @@ async def _get_pip_version(user_image, pip_binary, exec_) -> packaging.version.V
     pip_version = re.search(r"^pip ([0-9.]+)", out.decode("utf-8"))
     pip_version = packaging.version.Version(pip_version.group(1))
     return pip_version
+
+
+async def _get_git_version(user_image, exec_) -> packaging.version.Version:
+    """Gets git version within a Docker image.
+    Args:
+        user_image: image name
+    Returns:
+        packaging.version.Version object
+    Raises:
+        subprocess.CalledProcessError if binary doesn't exist
+    """
+
+    git_binary = "git"
+
+    out, err = await exec_(
+        "docker", "run", "--rm", user_image, git_binary, "--version",
+    )
+    out = out.decode("utf-8")
+
+    git_version = re.sub(r"^git version\s+", r"", out, re.IGNORECASE,).strip()
+    git_version = packaging.version.Version(git_version)
+    # Maybe we'll ascertain a minimum required git, but not for now.
+    # if git_version < packaging.version.Version("3.5"):
+    #    raise LowPException("")
+    return git_version
 
 
 async def _get_linux_flavor_and_version(user_image, exec_):

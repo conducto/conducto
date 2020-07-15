@@ -185,7 +185,10 @@ def loop(func, interval, ignore_errors=True):
         while True:
             try:
                 if asyncio.iscoroutinefunction(func):
-                    await func()
+                    # cancelling the loop should not interrupt the final call of func()
+                    # these tasks are eventually finished in _wait_tasks
+                    task = asyncio.create_task(func())
+                    await asyncio.shield(task)
                 else:
                     func()
             # Errors produced by `func` will be logged and will terminate the

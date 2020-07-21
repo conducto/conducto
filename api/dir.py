@@ -94,17 +94,11 @@ class Dir:
         )
         api_utils.get_data(response)
 
-    def invite_exists(self, email: str, invite_id: str):
+    def invite_recipient(self, email: str, invite_id: str):
         response = request_utils.get(
-            self.url + f"/dir/invite/{invite_id}/exists/{email}"
+            self.url + f"/dir/invite/{invite_id}/recipient/{email}"
         )
-        if response.status_code == hs.OK:
-            return True
-        elif response.status_code == hs.NOT_FOUND:
-            return False
-        else:
-            # let normal channels handle the unexpected error
-            api_utils.get_data(response)
+        return api_utils.get_data(response)
 
     def accept_invite(self, email: str, invite_id: str, user_id: str):
         data = json.dumps({"email": email, "user_id": user_id})

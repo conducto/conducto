@@ -326,6 +326,28 @@ async def _debug(id, node, live, timestamp):
     for key, value in {**env_dict, **secret_dict, **autogen_dict}.items():
         env_list += ["-e", f"{key}={value}"]
 
+    if status in pl.cloud:
+        docker_domain = api.Config().get_docker_domain()
+
+        cmd = [
+            "docker",
+            "login",
+            "-u",
+            "conducto",
+            "--password-stdin",
+            f"https://{docker_domain}",
+        ]
+        proc = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        _, stderr = proc.communicate(input=token.encode("utf8"))
+        if proc.wait():
+            print(
+                f"error logging into https://{docker_domain}; unable to debug\n{stderr}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     container_name = start_container(payload, live)
     if not live:
         print_editor_commands(container_name)

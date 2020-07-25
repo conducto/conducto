@@ -379,6 +379,9 @@ commands:
             self.set("general", "host_id", host_id)
         return host_id
 
+    def get_default_profile(self):
+        return self.default_profile
+
     @staticmethod
     def get_profile_id(url, org_id):
         return hashlib.md5(f"{url}|{org_id}".encode()).hexdigest()[:8]

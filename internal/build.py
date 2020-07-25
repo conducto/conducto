@@ -36,6 +36,15 @@ def build(
     # Force in case of cognito change
     node.token = token = api.Auth().get_token_from_shell(force=True)
 
+    if prebuild_images and build_mode == constants.BuildMode.DEPLOY_TO_CLOUD:
+        import subprocess
+
+        url = api.Config().get_url()
+        subprocess.run(
+            f"docker login -u conducto -p {node.token} {url.replace('.conducto', '-docker.conducto')}",
+            shell=True,
+        )
+
     command = " ".join(pipes.quote(a) for a in sys.argv)
 
     # Register pipeline, get <pipeline_id>
@@ -84,9 +93,7 @@ def launch_from_serialization(
         # Get a token, serialize, and then deploy to AWS. Once that
         # returns, connect to it using the shell_ui.
         api.Pipeline().save_serialization(token, pipeline_id, serialization)
-        api.Manager().launch(
-            token, pipeline_id, env=inject_env, is_migration=is_migration
-        )
+        api.Manager().launch(token, pipeline_id, env=inject_env)
         log.debug(f"Connecting to pipeline_id={pipeline_id}")
 
     def local_deploy():

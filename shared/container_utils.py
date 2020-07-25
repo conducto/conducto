@@ -115,7 +115,10 @@ async def does_newer_version_exist():
 
     # Pull the latest version of image_name, if needed
     if "/" in image_name:
-        await async_utils.run_and_check("docker", "image", "pull", image_name)
+        try:
+            await async_utils.run_and_check("docker", "image", "pull", image_name)
+        except client_utils.CalledProcessError as e:
+            log.warn(e.stderr.decode().strip())
 
     # Get the current SHA of the image
     out, _err = await async_utils.run_and_check(

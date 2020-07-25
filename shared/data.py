@@ -13,6 +13,10 @@ from . import constants, types as t, path_utils
 import threading
 
 
+class ContextError(Exception):
+    pass
+
+
 client_creation_lock = threading.Lock()
 
 
@@ -439,7 +443,9 @@ class superuser(_Data):
         return cls.get(name, file)
 
     @classmethod
-    def _gets_cli(cls, name, *, byte_range: int = None, id=None, local: bool = None):
+    def _gets_cli(
+        cls, name, *, byte_range: typing.List[int] = None, id=None, local: bool = None
+    ):
         """
         Read object stored at `name` and write it to stdout. Use `byte_range=start,end`
         to optionally specify a [start, end) range within the object to read.
@@ -538,14 +544,22 @@ class superuser(_Data):
 class pipeline(superuser):
     @staticmethod
     def _get_uri():
-        if _Data._local:
-            return (
-                constants.ConductoPaths.get_local_path(_Data._pipeline_id, expand=False)
-                + "/data/"
-            )
+        if _Data._pipeline_id:
+            if _Data._local:
+                return (
+                    constants.ConductoPaths.get_local_path(
+                        _Data._pipeline_id, expand=False
+                    )
+                    + "/data/"
+                )
+            else:
+                credentials = Credentials.creds()
+                return f"s3://{_Data._s3_bucket}/{credentials['IdentityId']}/pipelines/{_Data._pipeline_id}/data/"
         else:
-            credentials = Credentials.creds()
-            return f"s3://{_Data._s3_bucket}/{credentials['IdentityId']}/pipelines/{_Data._pipeline_id}/data/"
+            raise ContextError(
+                "Pipeline-scoped data requires an initialized pipeline. "
+                "Try using conducto.data.pipeline from a child node."
+            )
 
 
 class user(superuser):

@@ -1,4 +1,5 @@
 import json
+import os
 from .. import api
 from ..shared import constants, request_utils, types as t
 from . import api_utils
@@ -12,11 +13,14 @@ class Manager:
     ############################################################
     # public methods
     ############################################################
-    def launch(
-        self, token: t.Token, pipeline_id: t.PipelineId, env=None, is_migration=False
-    ):
+    def launch(self, token: t.Token, pipeline_id: t.PipelineId, env=None):
         if env is None:
             env = {}
+
+        # Unfortunate hack for testing.
+        test = os.environ.get("CONDUCTO_TEST")
+        if test:
+            env["CONDUCTO_TEST"] = test
 
         # Make sure this user has access to launch this pipeline
         perms = api.Pipeline().perms(token, pipeline_id)
@@ -27,9 +31,7 @@ class Manager:
 
         # send request for manager service to launch this
         headers = api_utils.get_auth_headers(token)
-        data = json.dumps(
-            {"pipeline_id": pipeline_id, "env": env, "is_migration": is_migration}
-        )
+        data = json.dumps({"pipeline_id": pipeline_id, "env": env})
         response = request_utils.post(
             self.url + f"/manager/run", headers=headers, data=data
         )

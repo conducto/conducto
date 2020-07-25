@@ -8,8 +8,10 @@ from ..internal import host_detection as hostdet
 
 
 def name():
-    profile_id = co.api.Config().default_profile
-    return f"conducto_daemon_{profile_id}"
+    config = co.api.Config()
+    host_id = config.get_host_id()
+    profile_id = config.get_default_profile()
+    return f"conducto_daemon_{host_id}_{profile_id}"
 
 
 def launch_local_daemon(token, inside_container=False):
@@ -24,7 +26,7 @@ def launch_local_daemon(token, inside_container=False):
     external_profile_dir = container_utils.get_external_conducto_dir(inside_container)
     internal_base_dir = "/root/.conducto"
     config = co.api.Config()
-    profile = config.default_profile
+    profile = config.get_default_profile()
     internal_profile_dir = "/".join([internal_base_dir, profile])
 
     external_profile_dir = external_profile_dir.replace(profile, "")
@@ -91,7 +93,7 @@ def launch_local_daemon(token, inside_container=False):
         "--token",
         token,
         "--profile",
-        config.default_profile,
+        config.get_default_profile(),
     ]
 
     tag = config.get_image_tag()

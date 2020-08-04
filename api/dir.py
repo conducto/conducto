@@ -17,11 +17,11 @@ class Dir:
     ############################################################
     def org_create(
         self,
-        token: t.Token,
         name: str,
         icon: typing.Optional[str],
         user_name: str,
         user_email: str,
+        token: t.Token = None,
     ) -> dict:
         data = json.dumps(
             {
@@ -37,19 +37,19 @@ class Dir:
         )
         return api_utils.get_data(response)
 
-    def org(self, token: t.Token, org_id: t.OrgId) -> dict:
+    def org(self, org_id: t.OrgId, token: t.Token = None) -> dict:
         headers = api_utils.get_auth_headers(token)
         response = request_utils.get(self.url + f"/dir/org/{org_id}", headers=headers)
         return api_utils.get_data(response)
 
-    def org_users(self, token: t.Token, org_id: t.OrgId) -> typing.List[dict]:
+    def org_users(self, org_id: t.OrgId, token: t.Token = None) -> typing.List[dict]:
         headers = api_utils.get_auth_headers(token)
         response = request_utils.get(
             self.url + f"/dir/org/{org_id}/users", headers=headers
         )
         return api_utils.get_data(response)
 
-    def user(self, token: t.Token) -> dict:
+    def user(self, token: t.Token = None) -> dict:
         user_id = api.Auth().get_user_id(token)
 
         headers = api_utils.get_auth_headers(token)
@@ -63,7 +63,7 @@ class Dir:
             )
         return api_utils.get_data(response)
 
-    def nuke_org(self, token: t.Token, org_id: t.OrgId):
+    def nuke_org(self, org_id: t.OrgId, token: t.Token = None):
         headers = api_utils.get_auth_headers(token)
 
         # get teams and users in org

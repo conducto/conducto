@@ -8,6 +8,21 @@ import typing
 from conducto.shared import types as t, request_utils
 
 
+class UserInputValidation(Exception):
+    # Any exception derived from this should be given a message that is
+    # understandable to an end-user with no further traceback.  They are
+    # assumed to be expected errors with clear resolution.
+    pass
+
+
+class UserPermissionError(UserInputValidation):
+    pass
+
+
+class UserPathError(UserInputValidation):
+    pass
+
+
 class InvalidResponse(Exception):
     def __init__(self, *args, status_code=None, url=None):
         super().__init__(*args)
@@ -69,7 +84,15 @@ def is_conducto_url(url):
         return False
 
 
-def get_auth_headers(token: t.Token):
+def get_auth_headers(token: t.Token = None, refresh=True):
+    if token is None:
+        from . import config
+
+        token = config.Config().get_token(refresh=refresh)
+        if token is None:
+            raise ValueError(
+                "Cannot authenticate to Conducto services because no token is available."
+            )
     return {
         "content-type": "application/json",
         "Authorization": "Bearer {}".format(token),

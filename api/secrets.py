@@ -17,7 +17,10 @@ class Secrets:
     # public methods
     ############################################################
     def get_user_secrets(
-        self, token: types.Token, include_org_secrets=False, obfuscate: bool = False,
+        self,
+        token: types.Token = None,
+        include_org_secrets=False,
+        obfuscate: bool = False,
     ) -> dict:
         params = None
         if obfuscate:
@@ -31,7 +34,9 @@ class Secrets:
         )
         return api_utils.get_data(response)["secrets"]
 
-    def get_org_secrets(self, token: types.Token, obfuscate: bool = False) -> dict:
+    def get_org_secrets(
+        self, token: types.Token = None, obfuscate: bool = False
+    ) -> dict:
         params = None
         if obfuscate:
             params = {"obfuscate": None}
@@ -43,7 +48,7 @@ class Secrets:
         return api_utils.get_data(response)["secrets"]
 
     def put_user_secrets(
-        self, token: types.Token, secrets: dict, replace: bool = False
+        self, secrets: dict, token: types.Token = None, replace: bool = False
     ):
         data = {"secrets": {k: str(v) for k, v in secrets.items()}}
         (request_utils.put if replace else request_utils.patch)(
@@ -52,7 +57,9 @@ class Secrets:
             headers=api_utils.get_auth_headers(token),
         )
 
-    def put_org_secrets(self, token: types.Token, secrets: dict, replace: bool = False):
+    def put_org_secrets(
+        self, secrets: dict, token: types.Token = None, replace: bool = False
+    ):
         data = {"secrets": {k: str(v) for k, v in secrets.items()}}
         (request_utils.put if replace else request_utils.patch)(
             f"{self.url}/secrets/org",

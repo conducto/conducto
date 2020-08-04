@@ -13,7 +13,7 @@ class Pipeline:
     # public methods
     ############################################################
     def create(
-        self, token: t.Token, command: str, cloud: bool, **kwargs
+        self, command: str, cloud: bool, token: t.Token = None, **kwargs
     ) -> t.PipelineId:
         from ..pipeline import Node
 
@@ -38,27 +38,27 @@ class Pipeline:
         out_data = api_utils.get_data(response)
         return t.PipelineId(out_data["pipeline_id"])
 
-    def archive(self, token: t.Token, pipeline_id: t.PipelineId):
+    def archive(self, pipeline_id: t.PipelineId, token: t.Token = None):
         headers = api_utils.get_auth_headers(token)
         url = f"{self.url}/program/program/{pipeline_id}"
         response = request_utils.delete(url, headers=headers)
         api_utils.get_data(response)
 
-    def get(self, token: t.Token, pipeline_id: t.PipelineId) -> dict:
+    def get(self, pipeline_id: t.PipelineId, token: t.Token = None) -> dict:
         headers = api_utils.get_auth_headers(token)
         response = request_utils.get(
             self.url + f"/program/program/{pipeline_id}", headers=headers
         )
         return api_utils.get_data(response)
 
-    def list(self, token: t.Token) -> list:
+    def list(self, token: t.Token = None) -> list:
         headers = api_utils.get_auth_headers(token)
         response = request_utils.get(
             self.url + "/program/program/list", headers=headers
         )
         return api_utils.get_data(response)
 
-    def perms(self, token: t.Token, pipeline_id: t.PipelineId) -> set:
+    def perms(self, pipeline_id: t.PipelineId, token: t.Token = None) -> set:
         headers = api_utils.get_auth_headers(token)
         response = request_utils.get(
             self.url + f"/program/program/{pipeline_id}/perms", headers=headers
@@ -67,7 +67,12 @@ class Pipeline:
         return data["perms"] if "perms" in data else []
 
     def update(
-        self, token: t.Token, pipeline_id: t.PipelineId, params: dict, *args, **kwargs
+        self,
+        pipeline_id: t.PipelineId,
+        params: dict,
+        *args,
+        token: t.Token = None,
+        **kwargs,
     ):
         headers = api_utils.get_auth_headers(token)
         keys = args if args else params.keys()
@@ -86,12 +91,12 @@ class Pipeline:
         api_utils.get_data(response)
 
     def save_serialization(
-        self, token: t.Token, pipeline_id: t.PipelineId, serialization: str
+        self, pipeline_id: t.PipelineId, serialization: str, token: t.Token = None
     ):
-        pipeline = self.get(token, pipeline_id)
-        put_serialization_s3(token, pipeline["program_path"], serialization)
+        pipeline = self.get(pipeline_id, token=token)
+        put_serialization_s3(pipeline["program_path"], serialization, token=token)
 
-    def touch(self, token: t.Token, pipeline_id: t.PipelineId, **kwargs):
+    def touch(self, pipeline_id: t.PipelineId, token: t.Token = None, **kwargs):
         headers = api_utils.get_auth_headers(token)
         response = request_utils.put(
             self.url + f"/program/program/{pipeline_id}/touch",
@@ -100,17 +105,19 @@ class Pipeline:
         )
         api_utils.get_data(response)
 
-    def sleep_standby(self, token: t.Token, pipeline_id: t.PipelineId):
-        pipeline = self.get(token, pipeline_id)
+    def sleep_standby(self, pipeline_id: t.PipelineId, token: t.Token = None):
+        pipeline = self.get(pipeline_id, token=token)
 
         pl = constants.PipelineLifecycle
         if pipeline["status"] == pl.STANDBY_CLOUD:
-            self.update(token, pipeline_id, {"status": pl.SLEEPING_CLOUD}, "status")
+            self.update(
+                pipeline_id, {"status": pl.SLEEPING_CLOUD}, "status", token=token
+            )
         else:
             # TODO: think about error
             pass
 
-    def get_history(self, token: t.Token, params: dict):
+    def get_history(self, params: dict, token: t.Token = None):
         headers = api_utils.get_auth_headers(token)
         response = request_utils.get(
             self.url + "/program/program/history", headers=headers, params=params
@@ -125,7 +132,7 @@ def _get_s3_split(path):
     return bucket, key
 
 
-def put_serialization_s3(token, s3path, serialization):
+def put_serialization_s3(s3path, serialization, token: t.Token = None):
     bucket, key = _get_s3_split(s3path)
     # log.log("S3 bucket={}, key={}".format(bucket, key))
 
@@ -142,7 +149,7 @@ def put_serialization_s3(token, s3path, serialization):
     s3.put_object(Body=serialization.encode("utf-8"), Bucket=bucket, Key=key)
 
 
-def get_serialization_s3(token, s3path):
+def get_serialization_s3(s3path, token: t.Token = None):
     bucket, key = _get_s3_split(s3path)
     # log.log("S3 bucket={}, key={}".format(bucket, key))
 

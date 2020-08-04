@@ -10,7 +10,7 @@ from conducto.shared import (
     client_utils,
     constants,
     container_utils,
-    local_daemon_utils,
+    agent_utils,
     log,
     resource_validation,
     types as t,
@@ -50,8 +50,8 @@ def build(
     # Register pipeline, get <pipeline_id>
     cloud = build_mode == constants.BuildMode.DEPLOY_TO_CLOUD
     pipeline_id = api.Pipeline().create(
-        token,
         command,
+        token=token,
         cloud=cloud,
         retention=retention,
         tags=node.tags or [],
@@ -89,11 +89,19 @@ def launch_from_serialization(
     if not token:
         token = api.Auth().get_token_from_shell(force=True)
 
+    if inject_env is None:
+        inject_env = {}
+
     def cloud_deploy():
+        if t.Bool(os.getenv("CONDUCTO_INHERIT_GIT_VARS")):
+            for k, v in os.environ.items():
+                if k.startswith("CONDUCTO_GIT_"):
+                    inject_env[k] = v
+
         # Get a token, serialize, and then deploy to AWS. Once that
         # returns, connect to it using the shell_ui.
-        api.Pipeline().save_serialization(token, pipeline_id, serialization)
-        api.Manager().launch(token, pipeline_id, env=inject_env)
+        api.Pipeline().save_serialization(pipeline_id, serialization, token=token)
+        api.Manager().launch(pipeline_id, token=token, env=inject_env)
         log.debug(f"Connecting to pipeline_id={pipeline_id}")
 
     def local_deploy():
@@ -109,7 +117,9 @@ def launch_from_serialization(
         with open(serialization_path, "w") as f:
             f.write(serialization)
 
-        api.Pipeline().update(token, pipeline_id, {"program_path": serialization_path})
+        api.Pipeline().update(
+            pipeline_id, {"program_path": serialization_path}, token=token
+        )
 
         run_in_local_container(
             token, pipeline_id, inject_env=inject_env, is_migration=is_migration
@@ -122,9 +132,9 @@ def launch_from_serialization(
         func = local_deploy
         starting = True
 
-    # Make sure that a local daemon is running before we launch. A local manager will
+    # Make sure that an agent is running before we launch. A local manager will
     # start it if none are running, but cloud has no way to do that.
-    local_daemon_utils.launch_local_daemon(token, inside_container=False)
+    agent_utils.launch_agent(inside_container=False, token=token)
 
     run(token, pipeline_id, func, use_app, use_shell, "Starting", starting)
 
@@ -167,7 +177,7 @@ def run(token, pipeline_id, func, use_app, use_shell, msg, starting):
     else:
         print(f"View at {u_url}")
 
-    data = api.Pipeline().get(token, pipeline_id)
+    data = api.Pipeline().get(pipeline_id, token=token)
     if data.get("is_public"):
         unauth_password = data["unauth_password"]
         url = config.get_url()
@@ -184,6 +194,10 @@ def run_in_local_container(
 ):
     if inject_env is None:
         inject_env = {}
+    if t.Bool(os.getenv("CONDUCTO_INHERIT_GIT_VARS")):
+        for k, v in os.environ.items():
+            if k.startswith("CONDUCTO_GIT_"):
+                inject_env[k] = v
 
     # The homedir inside the manager is /root. Mapping will be verified by manager,
     # internal to the container.
@@ -348,7 +362,7 @@ def run_in_local_container(
         ):
             time.sleep(constants.ManagerAppParams.POLL_INTERVAL_SECS)
             log.debug(f"awaiting program {pipeline_id} active")
-            data = api.Pipeline().get(token, pipeline_id)
+            data = api.Pipeline().get(pipeline_id, token=token)
             if data["status"] in target:
                 break
 

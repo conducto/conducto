@@ -1,13 +1,17 @@
+import argparse
 import asyncio
+import configparser
 import functools
 import inspect
 import os
 import re
 import pipes
 import pprint
+import shlex
 import sys
 import types
 import typing
+import pathlib
 
 from ..shared import client_utils, constants, log, types as t
 from .._version import __version__, __sha1__
@@ -16,7 +20,16 @@ from .. import api, callback, image as image_mod, pipeline
 from . import arg
 
 _UNSET = object()
-CONDUCTO_ARGS = []
+CONDUCTO_ARGS = [
+    "cloud",
+    "local",
+    "run",
+    "shell",
+    "app",
+    "prebuild_images",
+    "sleep_when_done",
+    "public",
+]
 
 
 def lazy_shell(command, node_type, env=None, **exec_args) -> pipeline.Node:
@@ -408,11 +421,20 @@ def _get_calling_filename():
 
 
 def _get_default_title(specifiedFuncName, default_was_used):
-    # Construct a default title from the command line arguments.  Start
-    # from a copy of sys.argv to not modify in-place!
-    args = sys.argv[:]
-    args = [a for a in args if a not in CONDUCTO_ARGS]
+    """
+    Construct a default title from the command line arguments.
+    """
 
+    # Ignore arguments that are parsed by Conducto, those aren't useful as a title
+    args = []
+    for a in sys.argv:
+        if a.startswith("--"):
+            rest = a[2:]
+            if rest in CONDUCTO_ARGS or rest.replace("-", "_") in CONDUCTO_ARGS:
+                continue
+        args.append(a)
+
+    # Strip off the executable if it's uninteresting.
     executable = os.path.basename(args[0])
     if (
         executable.startswith("python")
@@ -428,10 +450,10 @@ def _get_default_title(specifiedFuncName, default_was_used):
     return " ".join(pipes.quote(a) for a in args)
 
 
-def _get_call_func(argv, default, methods, accepts_cloud):
+def _get_call_func(argv, default, methods):
     prog = _get_calling_filename()
 
-    usage_message = _make_usage_message(methods, accepts_cloud)
+    usage_message = _make_usage_message(methods)
 
     if argv and argv[0] == "--version":
         print(f"{__version__} (sha1={__sha1__})")
@@ -468,7 +490,7 @@ def _get_call_func(argv, default, methods, accepts_cloud):
     return callFunc, remainder, default_was_used
 
 
-def _make_usage_message(methods, accepts_cloud):
+def _make_usage_message(methods):
     returns_node = []
     doesnt_return_node = []
     for name, fxn in methods.items():
@@ -508,7 +530,7 @@ def _make_usage_message(methods, accepts_cloud):
 
     if returns_node:
         commands = "[--run] [--sleep-when-done]"
-        if accepts_cloud:
+        if _accepts_cloud():
             commands = "[--local | --cloud] " + commands
         else:
             commands = "[--local] " + commands
@@ -533,9 +555,11 @@ def _bool_mutex_group(parser, base, default=None):
         parser.set_defaults(**{base: default})
 
 
-def _get_state(callFunc, remainder, accepts_cloud):
-    import argparse
+def _accepts_cloud():
+    return api.Config().get("dev", "who") is not None
 
+
+def _get_state(callFunc, remainder):
     prog = _get_calling_filename()
     parser = argparse.ArgumentParser(prog=prog)
 
@@ -571,37 +595,18 @@ def _get_state(callFunc, remainder, accepts_cloud):
             parser.add_argument(*args, default=empty)
 
     return_type = typing.get_type_hints(callFunc).get("return")
-    if isinstance(return_type, type) and issubclass(return_type, pipeline.Node):
+    if isinstance(return_type, pipeline.Node):
+        raise TypeError(
+            f"'{callFunc.__name__}' returns an instance of Node, but it should return a Node type"
+        )
+    elif isinstance(return_type, type) and issubclass(return_type, pipeline.Node):
         called_func_returns_node = True
     else:
         called_func_returns_node = False
 
     parser.add_argument("--profile")
     if called_func_returns_node:
-        config = api.Config()
-        default_shell = t.Bool(config.get("general", "show_shell", default=False))
-        default_app = t.Bool(config.get("general", "show_app", default=True))
-
-        if accepts_cloud:
-            parser.add_argument("--cloud", action="store_true")
-        parser.add_argument("--local", action="store_true")
-        parser.add_argument("--run", action="store_true")
-        _bool_mutex_group(parser, "shell", default=default_shell)
-        _bool_mutex_group(parser, "app", default=default_app)
-        parser.add_argument("--prebuild-images", action="store_true")
-        parser.add_argument("--sleep-when-done", action="store_true")
-        parser.add_argument("--public", action="store_true")
-        global CONDUCTO_ARGS
-        CONDUCTO_ARGS = [
-            "cloud",
-            "local",
-            "run",
-            "shell",
-            "app",
-            "prebuild_images",
-            "sleep_when_done",
-            "public",
-        ]
+        _add_argparse_options_for_node(parser)
 
     args, kwargs = _parse_args(parser, remainder)
 
@@ -638,14 +643,28 @@ def _get_state(callFunc, remainder, accepts_cloud):
     return call_state, conducto_state, called_func_returns_node
 
 
+def _add_argparse_options_for_node(parser):
+    config = api.Config()
+    default_shell = t.Bool(config.get("general", "show_shell", default=False))
+    default_app = t.Bool(config.get("general", "show_app", default=True))
+
+    if _accepts_cloud():
+        parser.add_argument("--cloud", action="store_true")
+    parser.add_argument("--local", action="store_true")
+    parser.add_argument("--run", action="store_true")
+    _bool_mutex_group(parser, "shell", default=default_shell)
+    _bool_mutex_group(parser, "app", default=default_app)
+    parser.add_argument("--prebuild-images", action="store_true")
+    parser.add_argument("--sleep-when-done", action="store_true")
+    parser.add_argument("--public", action="store_true")
+
+
 def _parse_args(parser, argv):
     """
     Mimic argparse except we allow options to come after positional args. This feels
     more Pythonic - kwargs come after args. Only handle the subset of argparse that is
     relevant for _get_state().
     """
-    import argparse
-
     i = 0
     args = []
     kwargs = {}
@@ -653,6 +672,20 @@ def _parse_args(parser, argv):
     for action in parser._option_string_actions.values():
         if action.dest != "help":
             kwargs[action.dest] = action.default
+
+    positionals = parser._get_positional_actions()
+    if len(positionals) == 0:
+        wildcard = None
+    elif len(positionals) == 1:
+        action = positionals[0]
+        if action.nargs != argparse.REMAINDER:
+            raise Exception(
+                f"Cannot parse position argument: {action} with nargs={action.nargs}"
+            )
+        wildcard = action.dest
+        kwargs[wildcard] = []
+    else:
+        raise Exception(f"Cannot handle multiple positional arguments: {positionals}")
 
     while i < len(argv):
         arg = argv[i]
@@ -665,7 +698,14 @@ def _parse_args(parser, argv):
             try:
                 action = parser._option_string_actions[key]
             except KeyError:
-                raise ValueError(f"Unknown argument: {arg}")
+                if wildcard is None:
+                    raise ValueError(f"Unknown argument: {arg}")
+                kwargs[wildcard].append(arg)
+                if i + 1 < len(argv) and not argv[i + 1].startswith("--"):
+                    kwargs[wildcard].append(argv[i + 1])
+                    i += 1
+                i += 1
+                continue
 
             if isinstance(action, argparse._StoreAction):
                 if value is None:
@@ -681,10 +721,113 @@ def _parse_args(parser, argv):
                 raise Exception(f"Cannot handle argparse action: {action}")
             kwargs[action.dest] = value
         else:
-            args.append(arg)
+            if wildcard is not None:
+                kwargs[wildcard].append(arg)
+            else:
+                args.append(arg)
         i += 1
 
+    if wildcard is not None:
+        kwargs[wildcard] = " ".join(shlex.quote(a) for a in kwargs[wildcard])
+
     return args, kwargs
+
+
+def run_cfg(file: typing.IO, argv, copy_repo=True, copy_branch=None):
+    # Read the config file
+    cp = configparser.ConfigParser()
+    cp.read_file(file)
+
+    if not argv:
+        # TODO: Make better exception for invalid command
+        raise NotImplementedError(
+            "Make better exception for when no command is specified"
+        )
+    if argv[0] not in cp:
+        if "*" in cp:
+            action = cp["*"]
+            remainder = argv
+        else:
+            raise NotImplementedError("Make better exception for invalid command")
+    else:
+        method, *remainder = argv
+        action = cp[method]
+
+    # Parse the command template. Find which variables need to be passed.
+    command_template = action["command"]
+
+    variables = set(re.findall("{([a-zA-Z]\w*|\*)}", command_template))
+    optional = {"branch"}  # TODO: find better way to handle this
+
+    # Extract those variables from the argv
+    parser = argparse.ArgumentParser()
+    for var in sorted(variables | optional):
+        if var == "*":
+            parser.add_argument("*", nargs=argparse.REMAINDER)
+        else:
+            parser.add_argument(f"--{var.replace('_', '-')}", metavar=var)
+
+    _add_argparse_options_for_node(parser)
+
+    args, kwargs = _parse_args(parser, remainder)
+
+    conducto_state = {k: kwargs.pop(k, None) for k in CONDUCTO_ARGS}
+
+    missing = sorted(v for v in variables if kwargs[v] is None)
+    if missing:
+        try:
+            basename = os.path.basename(file.name)
+        except AttributeError:
+            basename = "<???>"
+        print(f"{basename}: missing arguments: {', '.join(missing)}", file=sys.stderr)
+        sys.exit(1)
+    if len(args) > 0:
+        raise Exception(f"Somehow args is non-empty: {args}")
+
+    # Build the output node
+    import conducto as co
+
+    repl = lambda match: kwargs[match.group(1)]
+    command = re.sub("{(a-zA-Z]\w*|\*)}", repl, command_template)
+    output = co.Lazy(command, node_type=co.Serial)
+    output.title = _get_default_title(None, default_was_used=False)
+
+    branchCmd = kwargs.get("branch")
+    branchEnv = os.environ.get("CONDUCTO_GIT_BRANCH")
+    if branchCmd is not None and branchEnv is not None and branchCmd != branchEnv:
+        raise ValueError(
+            f"Conflicting definitions for branch: --branch={branchCmd} and CONDUCTO_GIT_BRANCH={branchEnv}"
+        )
+    elif branchEnv is not None:
+        output.title += f" --branch={os.environ['CONDUCTO_GIT_BRANCH']}"
+    elif branchCmd is not None:
+        os.environ["CONDUCTO_GIT_BRANCH"] = branchCmd
+
+    # Normally `co.Image` looks through the stack to infer the repo, but the stack
+    # doesn't go through the CFG file. Specify `_CONTEXT` as a workaround.
+    co.Image._CONTEXT = file.name
+    try:
+        output.image = co.Image(copy_repo=copy_repo, copy_branch=copy_branch)
+    finally:
+        co.Image._CONTEXT = None
+
+    # Run the node or print it. This code is duplicated from main() down below.
+    is_cloud = conducto_state.pop("cloud")
+    is_local = conducto_state.pop("local")
+    will_build = is_cloud or is_local
+
+    if will_build:
+        BM = constants.BuildMode
+        output._build(
+            build_mode=BM.LOCAL if is_local else BM.DEPLOY_TO_CLOUD, **conducto_state
+        )
+    else:
+        if t.Bool(os.getenv("__RUN_BY_WORKER__")):
+            # Variable is set in conducto_worker/__main__.py to avoid
+            # printing ugly serialization when not needed.
+            s = output.serialize()
+            print(f"<__conducto_serialization>{s}</__conducto_serialization>\n")
+        print(output.pretty(strict=False))
 
 
 def main(
@@ -740,7 +883,11 @@ def main(
         if not name.startswith("_") and not inspect.isclass(obj) and callable(obj)
     }
 
-    if filename and constants.ExecutionEnv.value() in constants.ExecutionEnv.external:
+    if constants.ExecutionEnv.value() in constants.ExecutionEnv.external:
+        # default filename to current working directory
+        # allows python -m conducto debug to respect local .conducto/profile
+        if filename is None:
+            filename = str(pathlib.Path().absolute()) + "/dummy"
         api.dirconfig_select(filename)
 
     if "__all__" in variables:
@@ -754,25 +901,25 @@ def main(
         if obj.__module__ == "__main__":
             obj.name = name
 
-    accepts_cloud = api.Config().get("dev", "who") is not None
-
     # Parse argv to figure out which method is requested
-    callFunc, remainder, default_was_used = _get_call_func(
-        argv, default, methods, accepts_cloud
-    )
+    callFunc, remainder, default_was_used = _get_call_func(argv, default, methods)
 
     # Parse the remainder to get the request for the callFunc and for conducto
     call_state, conducto_state, called_func_returns_node = _get_state(
-        callFunc, remainder, accepts_cloud
+        callFunc, remainder
     )
 
     wrapper = Wrapper.get_or_create(callFunc)
-    output = callFunc(**wrapper.getCallArgs(**call_state))
+    try:
+        output = callFunc(**wrapper.getCallArgs(**call_state))
 
-    # Support async methods. There's not necessarily a strong need to do so. but
-    # it's so trivial that there's no real reason not to.
-    if inspect.isawaitable(output):
-        output = asyncio.get_event_loop().run_until_complete(output)
+        # Support async methods. There's not necessarily a strong need to do so. but
+        # it's so trivial that there's no real reason not to.
+        if inspect.isawaitable(output):
+            output = asyncio.get_event_loop().run_until_complete(output)
+    except api.UserInputValidation as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
 
     # There are two possibilities with buildable methods (ones returning a Node):
     # - If user requested --build, then call build()
@@ -806,14 +953,8 @@ def main(
             output.doc = log.unindent(callFunc.__doc__)
 
         # Read command-line args
-        is_cloud = conducto_state["cloud"]
-        is_local = conducto_state["local"]
-        use_app = conducto_state["app"]
-        use_shell = conducto_state["shell"]
-        run = conducto_state["run"]
-        sleep_when_done = conducto_state["sleep_when_done"]
-        prebuild_images = conducto_state["prebuild_images"]
-        is_public = conducto_state["public"]
+        is_cloud = conducto_state.pop("cloud")
+        is_local = conducto_state.pop("local")
         will_build = is_cloud or is_local
 
         simplify_attributes(output)
@@ -823,13 +964,8 @@ def main(
                 output.title = _get_default_title(callFunc.__name__, default_was_used)
             BM = constants.BuildMode
             output._build(
-                use_shell=use_shell,
-                use_app=use_app,
-                prebuild_images=prebuild_images,
                 build_mode=BM.LOCAL if is_local else BM.DEPLOY_TO_CLOUD,
-                run=run,
-                sleep_when_done=sleep_when_done,
-                is_public=is_public,
+                **conducto_state,
             )
         else:
             if t.Bool(os.getenv("__RUN_BY_WORKER__")):

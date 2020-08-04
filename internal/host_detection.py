@@ -2,6 +2,7 @@ import os
 import sys
 import platform
 import subprocess
+import conducto.api as co_api
 
 
 def is_windows():
@@ -94,11 +95,11 @@ def system_open(url):
             os.system(f'xdg-open "{sanitized}" > /dev/null 2>&1')
 
 
-class WSLMapError(Exception):
+class WSLMapError(co_api.UserPathError):
     pass
 
 
-class WindowsMapError(Exception):
+class WindowsMapError(co_api.UserPathError):
     pass
 
 

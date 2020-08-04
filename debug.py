@@ -41,7 +41,7 @@ async def get_exec_node_queue_stats(token, id, node, timestamp=None):
         from . import api
         import json
 
-        conn = await api.connect_to_pipeline(token, id)
+        conn = await api.connect_to_pipeline(id, token=token)
         try:
             await conn.send(
                 json.dumps(
@@ -266,7 +266,7 @@ async def _debug(id, node, live, timestamp):
     pipeline_id = id
     token = api.Auth().get_token_from_shell(force=True)
     try:
-        pipeline = api.Pipeline().get(token, pipeline_id)
+        pipeline = api.Pipeline().get(pipeline_id, token=token)
     except api.InvalidResponse as e:
         if "not found" in str(e):
             print(str(e), file=sys.stderr)
@@ -284,8 +284,8 @@ async def _debug(id, node, live, timestamp):
         sys.exit(1)
 
     if status in pl.standby:
-        api.Manager().launch(token, pipeline_id)
-        pipeline = api.Pipeline().get(token, pipeline_id)
+        api.Manager().launch(pipeline_id, token=token)
+        pipeline = api.Pipeline().get(pipeline_id, token=token)
 
     payload = await get_exec_node_queue_stats(token, pipeline_id, node, timestamp)
 
@@ -309,7 +309,7 @@ async def _debug(id, node, live, timestamp):
     secret_dict = get_param(payload, "Secrets", default={})
     autogen_dict = get_param(payload, "AutogenEnv", default={})
 
-    autogen_dict["CONDUCTO_DATA_TOKEN"] = token
+    autogen_dict["CONDUCTO_TOKEN"] = token
     autogen_dict["CONDUCTO_PROFILE"] = api.Config().default_profile
 
     ee = constants.ExecutionEnv

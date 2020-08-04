@@ -5,13 +5,13 @@ from .. import api
 from ..shared import log
 
 
-async def connect_to_ns(token):
+async def connect_to_ns(token=None):
     import websockets
 
     url = api.Config().get_url()
     ns_url = re.sub("^http", "ws", url) + "/ns/"
     log.debug("[run] Connecting to", ns_url)
-    header = {"Authorization": f"bearer {token}"}
+    header = api.get_auth_headers(token)
 
     # we retry connection for roughly 2 minutes
     for i in range(45):
@@ -32,15 +32,15 @@ async def connect_to_ns(token):
     return websocket
 
 
-async def connect_to_pipeline(token, pipeline_id):
+async def connect_to_pipeline(pipeline_id, token=None):
     import websockets
 
     gw_url = api.Config().get_url()
-    gw_url = re.sub("^http", "ws", gw_url) + "/pgw"
+    gw_url = re.sub("^http", "ws", gw_url) + "/gw"
 
-    uri = f"{gw_url}/from_browser/{pipeline_id}"
+    uri = f"{gw_url}/manager/{pipeline_id}"
     log.debug("[run] Connecting to", uri)
-    header = {"Authorization": f"bearer {token}"}
+    header = api.get_auth_headers(token)
 
     async def poor_mans_anext(ws):
         async for payload in ws:

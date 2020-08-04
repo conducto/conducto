@@ -59,7 +59,7 @@ class Listener(object):
 
 
 def connect(token: t.Token, pipeline_id: t.PipelineId, starthelp: str):
-    pipeline = api.Pipeline().get(token, pipeline_id)
+    pipeline = api.Pipeline().get(pipeline_id, token=token)
 
     ui = ShellUI(token, pipeline, starthelp)
     if sys.platform == "win32":
@@ -73,7 +73,6 @@ def connect(token: t.Token, pipeline_id: t.PipelineId, starthelp: str):
 
 class ShellUI(object):
     def __init__(self, token, pipeline: dict, starthelp: str):
-        self.token = token
         self.pipeline = pipeline
         self.quitting = False
         self.loop = asyncio.get_event_loop()
@@ -101,14 +100,6 @@ class ShellUI(object):
             for listener in self.listeners:
                 listener.render()
 
-    def get_token(self):
-        auth = api.Auth()
-        token = auth.get_refreshed_token(self.token)
-        if token != self.token:
-            self.token = token
-            log.debug(f"Just refreshed auth token: {token}")
-        return self.token
-
     def set_gw(self, gw_socket):
         self.gw_socket = gw_socket
 
@@ -119,7 +110,7 @@ class ShellUI(object):
     async def start_pipeline(self):
         if self.gw_socket is None:
             pipeline_id = self.pipeline["pipeline_id"]
-            api.Manager().launch(self.get_token(), pipeline_id)
+            api.Manager().launch(pipeline_id)
             await self.wait_gw()
 
         payload = {"type": "SET_AUTORUN", "payload": {"value": True}}
@@ -128,7 +119,7 @@ class ShellUI(object):
     async def sleep_pipeline(self):
         if self.gw_socket is None:
             pipeline_id = self.pipeline["pipeline_id"]
-            api.Pipeline().sleep_standby(self.get_token(), pipeline_id)
+            api.Pipeline().sleep_standby(pipeline_id)
         else:
             payload = {"type": "CLOSE_PROGRAM", "payload": None}
             await self.gw_socket.send(json.dumps(payload))
@@ -136,7 +127,7 @@ class ShellUI(object):
     async def reset(self):
         if self.gw_socket is None:
             pipeline_id = self.pipeline["pipeline_id"]
-            api.Manager().launch(self.get_token(), pipeline_id)
+            api.Manager().launch(pipeline_id)
             await self.wait_gw()
 
         payload = {"type": "RESET", "payload": ["/"]}
@@ -168,9 +159,7 @@ class ShellUI(object):
                 tasks = [asyncio.create_task(task) for task in pretasks]
 
             try:
-                websocket = await api.connect_to_pipeline(
-                    self.get_token(), self.pipeline["pipeline_id"]
-                )
+                websocket = await api.connect_to_pipeline(self.pipeline["pipeline_id"])
             except PermissionError:
                 print()
                 print("You are not permitted to connect to this pipeline.")

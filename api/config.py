@@ -3,8 +3,13 @@ import os
 import hashlib
 import secrets
 import subprocess
+import sys
+import time
+import typing
 import urllib.parse
-from conducto.shared import constants, log
+from conducto.shared import constants, log, types as t
+from . import api_utils
+from .. import api
 
 
 def dirconfig_detect(dirname, auth_new=False):
@@ -87,6 +92,8 @@ def dirconfig_write(dirname, url, org_id, name=None):
 
 
 class Config:
+    TOKEN: typing.Optional[t.Token] = None
+
     class Location:
         LOCAL = "local"
         AWS = "aws"
@@ -209,7 +216,7 @@ commands:
         with open(config_file, "w") as config_fh:
             self.config.write(config_fh)
 
-    def _profile_general(self, profile):
+    def _profile_general(self, profile) -> dict:
         profdir = constants.ConductoPaths.get_profile_base_dir(profile=profile)
         conffile = os.path.join(profdir, "config")
 
@@ -245,14 +252,67 @@ commands:
             netloc = urllib.parse.urlparse(docker_url).netloc
             return netloc
 
-    def get_token(self):
+    def get_token(self, refresh: bool, force_refresh=False) -> typing.Optional[t.Token]:
+        # First priority is the class variable
+        if Config.TOKEN is not None:
+            if refresh or force_refresh:
+                auth = api.Auth()
+                new_token = auth.get_refreshed_token(Config.TOKEN, force=force_refresh)
+                if new_token is None:
+                    raise PermissionError("Expired token in Config.TOKEN")
+                if Config.TOKEN != new_token:
+                    claims = auth.get_unverified_claims(new_token)
+                    print(
+                        f'Just refreshed token from Config.TOKEN with new expiration time of {time.ctime(claims["exp"])}',
+                        file=sys.stderr,
+                    )
+                    Config.TOKEN = new_token
+            return Config.TOKEN
+
+        # If that's absent, look at the environment variable
+        if "CONDUCTO_TOKEN" in os.environ:
+            if refresh or force_refresh:
+                auth = api.Auth()
+                new_token = auth.get_refreshed_token(
+                    os.environ["CONDUCTO_TOKEN"], force=force_refresh
+                )
+                if new_token is None:
+                    raise PermissionError("Expired token in CONDUCTO_TOKEN")
+                if os.environ["CONDUCTO_TOKEN"] != new_token:
+                    claims = auth.get_unverified_claims(new_token)
+                    print(
+                        f'Just refreshed token from CONDUCTO_TOKEN with new expiration time of {time.ctime(claims["exp"])}',
+                        file=sys.stderr,
+                    )
+                    os.environ["CONDUCTO_TOKEN"] = new_token
+            return os.environ["CONDUCTO_TOKEN"]
+
+        # If neither the environment variable nor the class variable are set then read
+        # the token in from the .conducto profile config.
         if self.default_profile and os.path.exists(
             self.__get_profile_config_file(self.default_profile)
         ):
-            return self._profile_general(self.default_profile).get("token", None)
+            token = self._profile_general(self.default_profile).get("token", None)
+            if refresh or force_refresh:
+                auth = api.Auth()
+                new_token = auth.get_refreshed_token(
+                    t.Token(token), force=force_refresh
+                )
+                if new_token is None:
+                    raise PermissionError(f"Expired token in config")
+                if token != new_token:
+                    claims = auth.get_unverified_claims(new_token)
+                    print(
+                        f'Just refreshed token from config with new expiration time of {time.ctime(claims["exp"])}',
+                        file=sys.stderr,
+                    )
+                    self.set_profile_general(self.default_profile, "token", new_token)
+                return new_token
+            return token
         return None
 
-    def get_profile_config(self, profile):
+    @staticmethod
+    def get_profile_config(profile):
         profdir = constants.ConductoPaths.get_profile_base_dir(profile=profile)
         conffile = os.path.join(profdir, "config")
 
@@ -260,7 +320,8 @@ commands:
         profconfig.read(conffile)
         return profconfig
 
-    def write_profile_config(self, profile, profconfig):
+    @staticmethod
+    def write_profile_config(profile, profconfig):
         profdir = constants.ConductoPaths.get_profile_base_dir(profile=profile)
         conffile = os.path.join(profdir, "config")
 
@@ -288,7 +349,9 @@ commands:
             # pretend to be windows because we are going to creating this as a
             # windows path.
             sep = ";"
-            dirname = hostdet.windows_drive_path(dirname).replace("/", "\\")
+            is_windows = dirname[1] == ":" and "\\" in dirname
+            if not is_windows:
+                dirname = hostdet.windows_drive_path(dirname).replace("/", "\\")
 
         profconfig = self.get_profile_config(profile)
 
@@ -446,3 +509,6 @@ commands:
     def __get_profile_config_file(profile):
         base_dir = constants.ConductoPaths.get_profile_base_dir(profile)
         return os.path.join(os.path.expanduser(base_dir), "config")
+
+
+AsyncConfig = api_utils.async_helper(Config)

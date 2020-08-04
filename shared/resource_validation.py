@@ -106,7 +106,7 @@ def max_time(arg):
         seconds = seconds_from_max_time(arg)
     except ValueError as err:
         raise ValueError(f"Invalid value for max_time: {repr(arg)}: {err}")
-    if seconds is None or seconds > 0:
+    if seconds > 0:
         return arg
     raise ValueError(f"Invalid value for max_time: {repr(arg)}")
 

@@ -7,7 +7,7 @@ import subprocess
 import urllib.error
 import conducto as co
 import conducto.api.config as config
-from conducto.shared import constants, log, local_daemon_utils, container_utils
+from conducto.shared import constants, log, agent_utils, container_utils
 from . import api
 
 
@@ -16,10 +16,12 @@ def _enrich_profile(profile, data):
     auth_api = api.Auth()
     auth_api.url = data["url"]
 
-    token = data["token"]
+    dir_api = api.Dir()
+    dir_api.url = data["url"]
 
     try:
-        token = auth_api.get_refreshed_token(token)
+        token = auth_api.get_refreshed_token(data["token"])
+        org = dir_api.org(data["org_id"], token=token)
     except api.UnauthorizedResponse:
         data["org_name"] = log.format(
             "Unauthorized token, cannot fetch org details", color="red", bold=False
@@ -28,15 +30,11 @@ def _enrich_profile(profile, data):
         data["org_name"] = log.format(
             "Invalid URL, cannot fetch org details", color="red", bold=False
         )
-    except api.InvalidResponse:
+    except (api.InvalidResponse, api.UnauthorizedResponse, PermissionError):
         data["org_name"] = log.format(
             "Invalid token, cannot fetch org details", color="red", bold=False
         )
     else:
-        dir_api = api.Dir()
-        dir_api.url = data["url"]
-
-        org = dir_api.org(token, data["org_id"])
         data["org_name"] = org["name"]
 
 
@@ -176,7 +174,7 @@ def profile_delete(id=None, url=None, email=None, force=False):
 
             managers = []
             # should be 0 or 1
-            daemons = []
+            agents = []
 
             for json_line in output.split("\n"):
                 if json_line.strip() == "":
@@ -185,12 +183,12 @@ def profile_delete(id=None, url=None, email=None, force=False):
 
                 if container["Names"].startswith("conducto_manager_"):
                     managers.append(container)
-                elif container["Names"].startswith("conducto_daemon_"):
-                    daemons.append(container)
+                elif container["Names"].startswith("conducto_agent_"):
+                    agents.append(container)
 
-            return managers, daemons
+            return managers, agents
 
-        managers, daemons = containers_by_profile(state["profile"])
+        managers, agents = containers_by_profile(state["profile"])
 
         count_running = len(managers)
 
@@ -236,16 +234,16 @@ def profile_delete(id=None, url=None, email=None, force=False):
                 else:
                     break
 
-            # stop daemon (should be at most one, but the loop is safe and
+            # stop agent (should be at most one, but the loop is safe and
             # easy)
-            for daemon in daemons:
-                docker_stop = ["docker", "stop", daemon["ID"]]
+            for agent in agents:
+                docker_stop = ["docker", "stop", agent["ID"]]
                 subprocess.run(docker_stop, check=True, stdout=subprocess.PIPE)
 
             # iterate until stopped
             for _ in range(20):
-                _, daemons = containers_by_profile(state["profile"])
-                if len(daemons) > 0:
+                _, agents = containers_by_profile(state["profile"])
+                if len(agents) > 0:
                     time.sleep(1)
                 else:
                     break
@@ -258,35 +256,32 @@ def profile_delete(id=None, url=None, email=None, force=False):
             # (for instance).
 
             # allow default of empty list
-            org_pipelines = []
             try:
-                token = api.Config().get_token()
-                token = api.Auth().get_refreshed_token(token)
                 pipe_api = api.Pipeline()
-                org_pipelines = pipe_api.list(token)
+                org_pipelines = pipe_api.list()
             except urllib.error.URLError:
                 print(
                     "Warning: could not connect to Conducto servers to delete programs; they will be deleted after their retention period expires.",
                     file=sys.stderr,
                 )
-            except api.InvalidResponse:
+            except (api.InvalidResponse, api.UnauthorizedResponse, PermissionError):
                 print(
                     "Warning: unauthorized connecting to Conducto servers to delete programs; they will be deleted after their retention period expires.",
                     file=sys.stderr,
                 )
-
-            hostname = socket.gethostname()
-            pl = constants.PipelineLifecycle
-            for pipedata in org_pipelines:
-                meta_host = pipedata.get("meta", {}).get("hostname", None)
-                is_my_local = (
-                    pipedata["status"] in pl.local
-                    and pipedata["pipeline_id"] in local_pipelines
-                    and meta_host == hostname
-                )
-                if is_my_local:
-                    log.debug(f"archiving {pipedata['pipeline_id']}")
-                    pipe_api.archive(token, pipedata["pipeline_id"])
+            else:
+                hostname = socket.gethostname()
+                pl = constants.PipelineLifecycle
+                for pipedata in org_pipelines:
+                    meta_host = pipedata.get("meta", {}).get("hostname", None)
+                    is_my_local = (
+                        pipedata["status"] in pl.local
+                        and pipedata["pipeline_id"] in local_pipelines
+                        and meta_host == hostname
+                    )
+                    if is_my_local:
+                        log.debug(f"archiving {pipedata['pipeline_id']}")
+                        pipe_api.archive(pipedata["pipeline_id"])
 
             # delete data
             conf.delete_profile(state["profile"])
@@ -340,26 +335,26 @@ def dir_init(dir: str = ".", url: str = None, name: str = None):
         config.register_named_mount(profile, name, dir)
 
 
-def profile_start_daemon(id=None):
+def profile_start_agent(id=None):
     """
-    Start the local daemon for the default or specified profile.
-    """
-    if id is not None:
-        os.environ["CONDUCTO_PROFILE"] = id
-
-    config = api.Config()
-
-    local_daemon_utils.launch_local_daemon(config.get_token())
-
-
-def profile_stop_daemon(id=None):
-    """
-    Stop the local daemon for the default or specified profile.
+    Start the local agent for the default or specified profile.
     """
     if id is not None:
         os.environ["CONDUCTO_PROFILE"] = id
 
-    container_name = local_daemon_utils.name()
+    token = api.Auth().get_token_from_shell()
+
+    agent_utils.launch_agent(token=token)
+
+
+def profile_stop_agent(id=None):
+    """
+    Stop the local agent for the default or specified profile.
+    """
+    if id is not None:
+        os.environ["CONDUCTO_PROFILE"] = id
+
+    container_name = agent_utils.name()
 
     running = container_utils.get_running_containers()
     if f"{container_name}-old" in running:
@@ -370,7 +365,7 @@ def profile_stop_daemon(id=None):
         subprocess.run(cmd, stdout=subprocess.PIPE)
     else:
         config = api.Config()
-        print(f"No daemon running for profile {config.default_profile}")
+        print(f"No agent running for profile {config.default_profile}")
 
 
 def main():
@@ -379,7 +374,7 @@ def main():
         "set-default": profile_set_default,
         "add": profile_add,
         "delete": profile_delete,
-        "start-daemon": profile_start_daemon,
-        "stop-daemon": profile_stop_daemon,
+        "start-agent": profile_start_agent,
+        "stop-agent": profile_stop_agent,
     }
     co.main(variables=variables)

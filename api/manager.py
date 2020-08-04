@@ -13,7 +13,7 @@ class Manager:
     ############################################################
     # public methods
     ############################################################
-    def launch(self, token: t.Token, pipeline_id: t.PipelineId, env=None):
+    def launch(self, pipeline_id: t.PipelineId, token: t.Token = None, env=None):
         if env is None:
             env = {}
 
@@ -23,7 +23,7 @@ class Manager:
             env["CONDUCTO_TEST"] = test
 
         # Make sure this user has access to launch this pipeline
-        perms = api.Pipeline().perms(token, pipeline_id)
+        perms = api.Pipeline().perms(pipeline_id, token=token)
         if constants.Perms.LAUNCH not in perms:
             raise PermissionError(
                 f"User is not authorized to launch pipeline {pipeline_id}"

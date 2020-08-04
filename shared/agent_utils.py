@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 import pipes
@@ -8,18 +9,25 @@ from ..internal import host_detection as hostdet
 
 
 def name():
-    config = co.api.Config()
-    host_id = config.get_host_id()
-    profile_id = config.get_default_profile()
-    return f"conducto_daemon_{host_id}_{profile_id}"
+    auth = co.api.Auth()
+    token = auth.get_token_from_shell()
+    user_id = auth.get_unverified_claims(token)["sub"]
+    user_hash = hashlib.sha1(user_id.encode()).hexdigest()[:8]
+    profile_id = co.api.Config().get_default_profile()
+    return f"conducto_agent_{user_hash}_{profile_id}"
 
 
-def launch_local_daemon(token, inside_container=False):
+def launch_agent(inside_container=False, check_for_old=True, token=None):
     container_name = name()
 
     running = container_utils.get_running_containers()
-    if container_name in running or f"{container_name}-old" in running:
+    if container_name in running:
         return
+    if check_for_old and f"{container_name}-old" in running:
+        return
+
+    if token is None:
+        token = co.api.Config().get_token(refresh=True)
 
     # The homedir inside the manager is /root. Mapping will be verified by manager,
     # internal to the container.
@@ -36,7 +44,7 @@ def launch_local_daemon(token, inside_container=False):
     # so that the innermost layers can always know the outermost name.
     hostname = os.environ.get("CONDUCTO_LOCAL_HOSTNAME", socket.gethostname())
 
-    eedaemon = constants.ExecutionEnv.DAEMON_LOCAL
+    eeagent = constants.ExecutionEnv.AGENT_LOCAL
 
     flags = [
         # Detached mode.
@@ -60,7 +68,7 @@ def launch_local_daemon(token, inside_container=False):
         "/var/run/docker.sock:/var/run/docker.sock",
         # Specify expected base dir for container to verify.
         "-e",
-        f"CONDUCTO_EXECUTION_ENV={eedaemon}",
+        f"CONDUCTO_EXECUTION_ENV={eeagent}",
         "-e",
         f"CONDUCTO_BASE_DIR_VERIFY={internal_base_dir}",
         "-e",
@@ -77,7 +85,7 @@ def launch_local_daemon(token, inside_container=False):
 
     flags += container_utils.get_whole_host_mounting_flags()
 
-    if co.env_bool("CONDUCTO_DAEMON_DEBUG"):
+    if co.env_bool("CONDUCTO_AGENT_DEBUG"):
         flags[0] = "-it"
         flags += ["-e", "CONDUCTO_LOG_LEVEL=0"]
         capture_output = False
@@ -89,7 +97,7 @@ def launch_local_daemon(token, inside_container=False):
     cmd_parts = [
         "python",
         "-m",
-        "local_daemon.src",
+        "agent.src",
         "--token",
         token,
         "--profile",
@@ -98,29 +106,31 @@ def launch_local_daemon(token, inside_container=False):
 
     tag = config.get_image_tag()
     is_test = os.environ.get("CONDUCTO_USE_TEST_IMAGES")
-    daemon_image = constants.ImageUtil.get_local_daemon_image(tag, is_test)
-    if daemon_image.startswith("conducto/"):
-        docker_parts = ["docker", "pull", daemon_image]
+    agent_image = constants.ImageUtil.get_agent_image(tag, is_test)
+    if agent_image.startswith("conducto/"):
+        docker_parts = ["docker", "pull", agent_image]
         log.debug(" ".join(pipes.quote(s) for s in docker_parts))
         client_utils.subprocess_run(
             docker_parts,
             capture_output=capture_output,
-            msg="Error pulling daemon container",
+            msg="Error pulling agent container",
         )
-    # Run local_daemon container.
-    docker_parts = ["docker", "run"] + flags + [daemon_image] + cmd_parts
+    # Run agent container.
+    docker_parts = ["docker", "run"] + flags + [agent_image] + cmd_parts
     log.debug(" ".join(pipes.quote(s) for s in docker_parts))
 
-    # check once more if the daemon is running to avoid even trying to start a
+    # check once more if the agent is running to avoid even trying to start a
     # second
     running = container_utils.get_running_containers()
-    if container_name in running or f"{container_name}-old" in running:
+    if container_name in running:
+        return
+    if check_for_old and f"{container_name}-old" in running:
         return
 
     try:
         client_utils.subprocess_run(
             docker_parts,
-            msg="Error starting Conducto daemon container",
+            msg="Error starting Conducto agent container",
             capture_output=capture_output,
         )
     except client_utils.CalledProcessError as e:

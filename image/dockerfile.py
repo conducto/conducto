@@ -6,12 +6,20 @@ import os
 
 from .. import api
 from .._version import __version__
+from ..shared import async_utils
 
 COPY_DIR = "/mnt/conducto"
 
 
 async def text_for_build_dockerfile(
-    image, reqs_py, copy_dir, copy_url, copy_branch, docker_auto_workdir, exec_
+    image,
+    reqs_py,
+    copy_dir,
+    copy_repo,
+    copy_url,
+    copy_branch,
+    docker_auto_workdir,
+    env_vars,
 ):
     lines = [f"FROM {image}"]
 
@@ -20,12 +28,12 @@ async def text_for_build_dockerfile(
     async def _ensure_linux_flavor():
         nonlocal linux_flavor, linux_version, linux_name
 
-        if linux_flavor == None:
+        if linux_flavor is None:
             (
                 linux_flavor,
                 linux_version,
                 linux_name,
-            ) = await _get_linux_flavor_and_version(image, exec_)
+            ) = await _get_linux_flavor_and_version(image)
 
     def lines_append_once(cmd):
         nonlocal lines
@@ -33,14 +41,42 @@ async def text_for_build_dockerfile(
         if cmd not in lines:
             lines.append(cmd)
 
+    if copy_url or (copy_repo and not copy_dir):
+        # Install git as per distro
+        await _ensure_linux_flavor()
+        try:
+            git_version = await _get_git_version(image)
+        except subprocess.CalledProcessError:
+            git_version = None
+
+        if not git_version:
+            uid = await _get_uid(image)
+
+            lines.append("USER 0")
+            if _is_debian(linux_flavor):
+                lines_append_once("RUN apt-get update")
+                # this will install python too
+                lines.append("RUN apt-get install -y git")
+            elif _is_alpine(linux_flavor):
+                lines_append_once("RUN apk update")
+                # this will install pip3 as well
+                lines.append("RUN apk add --update git")
+            elif _is_centos(linux_flavor):
+                lines_append_once("RUN yum update -y")
+                lines.append("RUN yum install -y git")
+            elif _is_fedora(linux_flavor):
+                lines_append_once("RUN dnf update -y")
+                lines.append("RUN dnf install -y git")
+            lines.append(f"USER {uid}")
+
     if reqs_py:
-        py_binary, _py_version, pip_binary = await get_python_version(image, exec_)
+        py_binary, _py_version, pip_binary = await get_python_version(image)
 
         if reqs_py and not pip_binary:
             # install pip as per distro
             await _ensure_linux_flavor()
 
-            uid = await _get_uid(image, exec_)
+            uid = await _get_uid(image)
 
             lines.append("USER 0")
             if _is_debian(linux_flavor):
@@ -89,66 +125,44 @@ async def text_for_build_dockerfile(
             else:
                 lines.append(f"RUN {py_binary} -m pip install conducto=={__version__}")
 
-    if copy_url:
-        # install git as per distro
-        await _ensure_linux_flavor()
-        try:
-            git_version = await _get_git_version(image, exec_)
-        except subprocess.CalledProcessError:
-            git_version = None
-
-        if not git_version:
-            uid = await _get_uid(image, exec_)
-
-            lines.append("USER 0")
-            if _is_debian(linux_flavor):
-                lines_append_once("RUN apt-get update")
-                # this will install python too
-                lines.append("RUN apt-get install -y git")
-            elif _is_alpine(linux_flavor):
-                lines_append_once("RUN apk update")
-                # this will install pip3 as well
-                lines.append("RUN apk add --update git")
-            elif _is_centos(linux_flavor):
-                lines_append_once("RUN yum update -y")
-                lines.append("RUN yum install -y git")
-            elif _is_fedora(linux_flavor):
-                lines_append_once("RUN dnf update -y")
-                lines.append("RUN dnf install -y git")
-            lines.append(f"USER {uid}")
-
-    if copy_dir or copy_url:
+    if copy_dir or copy_repo or copy_url:
         if docker_auto_workdir:
             lines.append(f"WORKDIR {COPY_DIR}")
 
-        if copy_url:
+        if copy_dir:
+            lines.append(f"COPY . {COPY_DIR}")
+        else:
+            if copy_repo and not copy_url:
+                copy_url = await api.AsyncGit().url(copy_repo)
             lines.append("ARG CONDUCTO_CACHE_BUSTER")
             lines.append("RUN echo $CONDUCTO_CACHE_BUSTER")
             lines.append(
                 f"RUN git clone --single-branch --branch {copy_branch} {copy_url} {COPY_DIR}"
             )
-        else:
-            lines.append(f"COPY . {COPY_DIR}")
+
+    if env_vars:
+        env_str = " ".join(_escape(f"{k}={v}") for k, v in env_vars.items())
+        lines.append(f"ENV {env_str}")
 
     return "\n".join(lines)
 
 
-async def text_for_extend_dockerfile(user_image, exec_):
+async def text_for_extend_dockerfile(user_image):
     lines = [f"FROM {user_image}"]
 
     linux_flavor, linux_version, linux_name = await _get_linux_flavor_and_version(
-        user_image, exec_
+        user_image
     )
 
     # Determine python version and binary.
-    acceptable_binary, pyvers, _pip_binary = await get_python_version(user_image, exec_)
+    acceptable_binary, pyvers, _pip_binary = await get_python_version(user_image)
 
     default_python = None
     if pyvers is not None:
         if _is_fedora(linux_flavor) or _is_centos(linux_flavor):
             # The base Fedora and CentOS images don't have 'which' for some reason. A
             # workaround is to use python to print sys.executable.
-            which_python, _ = await exec_(
+            which_python, _ = await async_utils.run_and_check(
                 "docker",
                 "run",
                 "--rm",
@@ -159,13 +173,14 @@ async def text_for_extend_dockerfile(user_image, exec_):
             )
             default_python = which_python.decode("utf8").strip()
         else:
-            which_python, _ = await exec_(
+            which_python, _ = await async_utils.run_and_check(
                 "docker", "run", "--rm", user_image, "which", acceptable_binary
             )
             default_python = which_python.decode("utf8").strip()
 
-    uid = await _get_uid(user_image, exec_)
-    lines.append("USER 0")
+    uid = await _get_uid(user_image)
+    if uid != 0:
+        lines.append("USER 0")
 
     if _is_debian(linux_flavor):
         if linux_version == "10" or "buster" in linux_name:  # buster
@@ -174,6 +189,7 @@ async def text_for_extend_dockerfile(user_image, exec_):
             suffix = "slim-stretch"
         else:
             raise UnsupportedPythonException(
+                "Cannot figure out how to install Conducto toolchain. "
                 f"Unsupported Python version {pyvers} for "
                 f"linux_flavor={linux_flavor}, "
                 f"linux_version={linux_version}, "
@@ -226,7 +242,12 @@ async def text_for_extend_dockerfile(user_image, exec_):
     # container, /tmp is usually still writable whereas /opt may not be.
     lines.append(f"COPY --from={worker_image} /opt/conducto_venv /tmp/conducto_venv")
     lines.append(f"RUN ln -sf {default_python} /tmp/conducto_venv/bin/python3")
-    lines.append(f"USER {uid}")
+    lines.append(
+        "RUN /tmp/conducto_venv/bin/python3 -m conducto_worker --version  "
+        "# Image building should fail if conducto_worker can't be imported"
+    )
+    if uid != 0:
+        lines.append(f"USER {uid}")
     return "\n".join(lines), worker_image
 
 
@@ -248,7 +269,7 @@ class UnsupportedPythonException(Exception):
 # is called just once per name_complete
 
 
-async def get_python_version(user_image, exec_):
+async def get_python_version(user_image):
     cache = get_python_version._cache = getattr(get_python_version, "cache", {})
     if user_image in cache:
         return cache[user_image]
@@ -264,7 +285,7 @@ async def get_python_version(user_image, exec_):
         "python3.8",
     ]:
         try:
-            version = await _get_python_version(user_image, binary, exec_)
+            version = await _get_python_version(user_image, binary)
             pyresults = [binary, version.release[0:2]]
             break
         except (
@@ -281,7 +302,7 @@ async def get_python_version(user_image, exec_):
             try:
                 # we are only interested here in known the binary
                 # name that responds with-out shell error
-                await _get_pip_version(user_image, binary, exec_)
+                await _get_pip_version(user_image, binary)
                 pipresults = binary
                 break
             except subprocess.CalledProcessError:
@@ -292,9 +313,7 @@ async def get_python_version(user_image, exec_):
     return result
 
 
-async def _get_python_version(
-    user_image, python_binary, exec_
-) -> packaging.version.Version:
+async def _get_python_version(user_image, python_binary) -> packaging.version.Version:
     """Gets python version within a Docker image.
     Args:
         user_image: image name
@@ -306,7 +325,7 @@ async def _get_python_version(
         LowPException if version is too low
     """
 
-    out, err = await exec_(
+    out, err = await async_utils.run_and_check(
         "docker",
         "run",
         "--rm",
@@ -327,7 +346,7 @@ async def _get_python_version(
     return python_version
 
 
-async def _get_pip_version(user_image, pip_binary, exec_) -> packaging.version.Version:
+async def _get_pip_version(user_image, pip_binary) -> packaging.version.Version:
     """Gets pip version within a Docker image.
     Args:
         user_image: image name
@@ -338,7 +357,7 @@ async def _get_pip_version(user_image, pip_binary, exec_) -> packaging.version.V
         subprocess.CalledProcessError if binary doesn't exist
     """
 
-    out, err = await exec_(
+    out, err = await async_utils.run_and_check(
         "docker", "run", "--rm", user_image, pip_binary, "--version",
     )
 
@@ -349,7 +368,7 @@ async def _get_pip_version(user_image, pip_binary, exec_) -> packaging.version.V
     return pip_version
 
 
-async def _get_git_version(user_image, exec_) -> packaging.version.Version:
+async def _get_git_version(user_image) -> packaging.version.Version:
     """Gets git version within a Docker image.
     Args:
         user_image: image name
@@ -361,7 +380,7 @@ async def _get_git_version(user_image, exec_) -> packaging.version.Version:
 
     git_binary = "git"
 
-    out, err = await exec_(
+    out, err = await async_utils.run_and_check(
         "docker", "run", "--rm", user_image, git_binary, "--version",
     )
     out = out.decode("utf-8")
@@ -374,8 +393,8 @@ async def _get_git_version(user_image, exec_) -> packaging.version.Version:
     return git_version
 
 
-async def _get_linux_flavor_and_version(user_image, exec_):
-    out, err = await exec_(
+async def _get_linux_flavor_and_version(user_image):
+    out, err = await async_utils.run_and_check(
         "docker", "run", "--rm", user_image, "sh", "-c", "cat /etc/*-release",
     )
     out = out.decode("utf-8").strip()
@@ -398,8 +417,10 @@ async def _get_linux_flavor_and_version(user_image, exec_):
     return flavor, version, pretty_name
 
 
-async def _get_uid(image_name, exec_):
-    out, _err = await exec_("docker", "inspect", "--format", "{{json .}}", image_name)
+async def _get_uid(image_name):
+    out, _err = await async_utils.run_and_check(
+        "docker", "inspect", "--format", "{{json .}}", image_name
+    )
     d = json.loads(out)
     uid_str = d["Config"]["User"]
     if uid_str == "":
@@ -407,6 +428,14 @@ async def _get_uid(image_name, exec_):
     else:
         uid = int(uid_str)
     return uid
+
+
+def _escape(s):
+    """
+    Return an escaped version of the string *s* for a Dockerfile ENV statement.
+    """
+
+    return re.sub(r"([^\w@%+=:,./-])", r"\\\1", s, re.ASCII)
 
 
 def _is_debian(linux_flavor):

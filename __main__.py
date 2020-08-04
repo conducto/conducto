@@ -11,7 +11,7 @@ import asyncio
 
 def _get_pipeline_validated(token, pipeline_id):
     try:
-        pipeline = co.api.Pipeline().get(token, pipeline_id)
+        pipeline = co.api.Pipeline().get(pipeline_id, token=token)
     except co.api.InvalidResponse as e:
         if "not found" in str(e):
             print(str(e), file=sys.stderr)
@@ -33,7 +33,7 @@ def show(id, app=True, shell=False):
     pipeline_id = id
     token = co.api.Auth().get_token_from_shell(force=True)
     pipeline = _get_pipeline_validated(token, pipeline_id)
-    perms = co.api.Pipeline().perms(token, pipeline_id)
+    perms = co.api.Pipeline().perms(pipeline_id, token=token)
 
     status = pipeline["status"]
     if status not in pl.active | pl.standby and status in pl.local:
@@ -55,7 +55,7 @@ def show(id, app=True, shell=False):
             sys.exit(1)
 
     def cloud_wakeup():
-        co.api.Manager().launch(token, pipeline_id)
+        co.api.Manager().launch(pipeline_id, token=token)
 
     def local_wakeup():
         build.run_in_local_container(token, pipeline_id, update_token=True)
@@ -93,7 +93,7 @@ def show(id, app=True, shell=False):
 
 async def migrate(pipeline_id):
     token = co.api.Auth().get_token_from_shell(force=True)
-    conn = await co.api.connect_to_pipeline(token, pipeline_id)
+    conn = await co.api.connect_to_pipeline(pipeline_id, token=token)
     try:
         await conn.send(json.dumps({"type": "MIGRATE"}))
         # sleep, if I don't do this sometimes the command doesn't go through ¯\_(ツ)_/¯
@@ -110,7 +110,7 @@ async def sleep(id):
     status = pipeline["status"]
     pl = constants.PipelineLifecycle
     if status in pl.active:
-        conn = await co.api.connect_to_pipeline(token, pipeline_id)
+        conn = await co.api.connect_to_pipeline(pipeline_id, token=token)
         try:
             await conn.send(json.dumps({"type": "CLOSE_PROGRAM"}))
 
@@ -133,7 +133,7 @@ async def sleep(id):
         finally:
             await conn.close()
     else:
-        co.api.Pipeline().sleep_standby(token, pipeline_id)
+        co.api.Pipeline().sleep_standby(pipeline_id, token=token)
 
 
 def dump_serialization(id, outfile=None):
@@ -215,9 +215,13 @@ def main():
             print(f"No such file or directory: '{file_to_execute}'", file=sys.stderr)
             sys.exit(1)
 
-        module = _load_file_module(file_to_execute)
-        variables = {k: getattr(module, k) for k in dir(module)}
-        co.main(variables=variables, argv=arguments, filename=file_to_execute)
+        if file_to_execute.endswith(".cfg"):
+            with open(file_to_execute) as f:
+                co.glue.run_cfg(f, arguments)
+        else:
+            module = _load_file_module(file_to_execute)
+            variables = {k: getattr(module, k) for k in dir(module)}
+            co.main(variables=variables, argv=arguments, filename=file_to_execute)
 
 
 if __name__ == "__main__":

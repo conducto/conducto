@@ -26,7 +26,7 @@ units = {
     "y": _year_size,
 }
 
-
+# NOTE: THIS MUST STAY IN SYNC WITH private/services/app/src/utils/duration.js
 def duration_string(duration) -> float:
     """Parse a duration string to number of seconds, as a float"""
 
@@ -39,7 +39,6 @@ def duration_string(duration) -> float:
         raise ValueError("Invalid duration {}".format(duration))
 
     total = 0
-    sign = -1 if duration[0] == "-" else 1
 
     for (value, unit) in matches:
         if unit not in units:
@@ -49,4 +48,4 @@ def duration_string(duration) -> float:
         except Exception:
             raise ValueError("Invalid value {} in duration {}".format(value, duration))
 
-    return sign * total / _second_size
+    return total / _second_size

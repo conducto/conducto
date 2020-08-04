@@ -69,7 +69,7 @@ def getOnly(values, msg=None):
 
     """
     if msg is None:
-        msg = "Expected exactly one value. Got {values}."
+        msg = f"Expected exactly one value, but got {repr(values)}."
         msg = msg.format(values=repr(values))
     elif callable(msg):
         msg = msg(values)

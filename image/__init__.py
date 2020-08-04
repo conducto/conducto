@@ -251,6 +251,16 @@ class Repository:
             self.add(img)
 
 
+class ContextualizedStr(str):
+    """
+    ContextualizedStr is a subclass of str and is str-like in all ways. It is used to
+    make Image.get_contextual_path idempotent by denoting something that's already been
+    handled by that method.
+    """
+
+    pass
+
+
 class Image:
     """
     :param image:  Specify the base image to start from. Code can be added with
@@ -265,6 +275,22 @@ class Image:
         destination of `copy_dir`
     :param context:  Use this to specify a custom docker build context when
         using `dockerfile`.
+    :param copy_repo:  Set to `True` to automatically copy the entire current Git repo
+        into the Docker image. Use this so that a single Image definition can either use
+        local code or can fetch from a remote repo.
+
+        Normal use of this parameter uses local code, so it sets `copy_dir` to point to
+        the repo root. Specify the `CONDUCTO_GIT_BRANCH` environment variable to use a remote
+        repository. This is commonly done for CI/CD. When specified, parameters will be
+        auto-populated based on environment variables:
+
+        `copy_url` is set to `CONDUCTO_GIT_URL` if specified, otherwise the user's Org must have
+        a Git integration installed which provides the URL.
+
+        `copy_branch` is set to `CONDUCTO_GIT_BRANCH` which must be specified in a CI/CD context.
+
+        `copy_repo` is set to `CONDUCTO_GIT_REPO` if specified, otherwise it is auto-detected.
+
     :param copy_dir:  Path to a directory. All files in that directory (and its
         subdirectories) will be copied into the generated Docker image.
     :param copy_url:  URL to a Git repo. Conducto will clone it and copy its
@@ -285,6 +311,7 @@ class Image:
 
     PATH_PREFIX = ""
     _PULLED_IMAGES = set()
+    _CONTEXT = None
 
     def __init__(
         self,
@@ -293,6 +320,7 @@ class Image:
         dockerfile=None,
         docker_build_args=None,
         context=None,
+        copy_repo=None,
         copy_dir=None,
         copy_url=None,
         copy_branch=None,
@@ -301,6 +329,7 @@ class Image:
         path_map=None,
         name=None,
         pre_built=False,
+        git_sha=None,
     ):
 
         if name is None:
@@ -317,10 +346,10 @@ class Image:
             image = f"python:{sys.version_info[0]}.{sys.version_info[1]}-slim"
             if not reqs_py:
                 reqs_py = ["conducto"]
-        if copy_dir is not None and copy_url is not None:
+        if (copy_dir is not None) + (copy_url is not None) > 1:
             raise ValueError(
-                f"Cannot specify both copy_dir ({copy_dir}) "
-                f"and copy_url ({copy_url})"
+                f"Must not specify more than 1 of copy_dir ({copy_dir}) and copy_url "
+                f"({copy_url})."
             )
         if copy_url is not None and copy_branch is None:
             raise ValueError(
@@ -332,40 +361,88 @@ class Image:
         self.dockerfile = dockerfile
         self.docker_build_args = docker_build_args
         self.context = context
+        self.copy_repo = copy_repo
         self.copy_dir = copy_dir
         self.copy_url = copy_url
         self.copy_branch = copy_branch
         self.docker_auto_workdir = docker_auto_workdir
         self.reqs_py = reqs_py
         self.path_map = path_map
+        self.git_sha = git_sha or os.getenv("CONDUCTO_GIT_SHA")
 
         self.pre_built = pre_built
 
-        if not self.pre_built:
-            if dockerfile is not None:
-                if context is None:
-                    # NOTE:  get_contextual_path is not idempotent (as below)
-                    context = os.path.dirname(self.dockerfile)
-                self.dockerfile = self.get_contextual_path(dockerfile)
-                self.context = self.get_contextual_path(context)
+        self._env_vars = {}
 
-            if copy_dir is not None:
-                self.copy_dir = self.get_contextual_path(copy_dir)
-                # NOTE:  get_contextual_path is not idempotent (although
-                # perhaps it should be).  This is the reason why I assign the
-                # key as copy_dir here and the keys are transformed with
-                # get_contextual_path below.
-                self.path_map = {copy_dir: dockerfile_mod.COPY_DIR}
+        if self.copy_repo:
+            # `copy_repo` automatically copies the whole repo. If environment
+            # variables are set it will use them; otherwise it copies the local
+            # contents of the repo.
+            if self.copy_branch or "CONDUCTO_GIT_BRANCH" in os.environ:
+                self.copy_branch = self.copy_branch or os.environ["CONDUCTO_GIT_BRANCH"]
+                self.copy_url = self.copy_url or os.getenv("CONDUCTO_GIT_URL")
+                if self.copy_repo is True:
+                    # The value `True` means "auto-detect", so go ahead and auto-detect.
+                    if "CONDUCTO_GIT_REPO" in os.environ:
+                        self.copy_repo = os.environ["CONDUCTO_GIT_REPO"]
+                        # TODO: Is there a way to set `path_map` here? If run in PR mode
+                        # then we'd have to use named mounts. Get help setting this up.
+                    else:
+                        self.copy_repo = self._get_git_repo(_non_conducto_dir())
+
+                    if "CONDUCTO_GIT_REPO_ROOT" in os.environ:
+                        repo_root = os.environ["CONDUCTO_GIT_REPO_ROOT"]
+                    else:
+                        # Set the path_map to show that this repo is at COPY_DIR
+                        repo_root = self._get_git_root(_non_conducto_dir())
+
+                    repo_root = self.get_contextual_path(repo_root)
+                    repo_root = repo_root.rstrip("/")
+
+                    if not self.path_map:
+                        self.path_map = {}
+                    self.path_map.setdefault(repo_root, dockerfile_mod.COPY_DIR)
+                    self.context = repo_root
+            else:
+                # In normal mode, `copy_repo` resolves to `copy_dir`. Record the repo
+                # location here.
+                if self.copy_dir is None:
+                    if "CONDUCTO_GIT_REPO_ROOT" in os.environ:
+                        self.copy_dir = self.get_contextual_path(
+                            os.environ["CONDUCTO_GIT_REPO_ROOT"]
+                        )
+                    else:
+                        outside_dir = _non_conducto_dir()
+                        contextual_path = self.get_contextual_path(outside_dir)
+                        if "//" not in contextual_path:
+                            raise ValueError(
+                                f"Could not find Git root for {outside_dir}."
+                            )
+                        self.copy_dir = contextual_path.split("//", 1)[0]
+                self.context = self.copy_dir
+
+            # Set CONDUCTO_GIT_SHA later because we have to run a command to do it
+            self._env_vars["CONDUCTO_GIT_REPO_ROOT"] = dockerfile_mod.COPY_DIR
+            self._env_vars["CONDUCTO_GIT_REPO"] = self.copy_repo
+            if self.copy_branch:
+                self._env_vars["CONDUCTO_GIT_BRANCH"] = self.copy_branch
+
+        if not self.pre_built:
+            if self.dockerfile is not None:
+                if self.context is None:
+                    self.context = os.path.dirname(self.dockerfile)
+                self.dockerfile = self.get_contextual_path(self.dockerfile)
+                self.context = self.get_contextual_path(self.context)
+
+            if self.copy_dir is not None:
+                self.copy_dir = self.get_contextual_path(self.copy_dir)
+                self.path_map = {self.copy_dir: dockerfile_mod.COPY_DIR}
 
         if self.path_map:
-            # Don't use a dict comprehension here - get_contextual_path looks back a
-            # specific number of frames in the stack to determine context, but a dict
-            # comprehension adds an extra layer that messes it up.
-            tmp_path_map = {}
-            for external, internal in self.path_map.items():
-                external = self.get_contextual_path(external)
-                tmp_path_map[external] = internal
-            self.path_map = tmp_path_map
+            self.path_map = {
+                self.get_contextual_path(external): internal
+                for external, internal in self.path_map.items()
+            }
 
         self.history = [HistoryEntry(Status.PENDING)]
 
@@ -375,7 +452,6 @@ class Image:
         self._make_fut: typing.Optional[asyncio.Future] = None
 
         self._cloud_tag_convert = None
-        self._remote_exec_fn: typing.Optional[typing.Callable] = None
         self._push_results: typing.Optional[typing.Callable] = None
         self._pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID")
 
@@ -395,12 +471,14 @@ class Image:
             "docker_build_args": self.docker_build_args,
             "docker_auto_workdir": self.docker_auto_workdir,
             "context": self.context,
+            "copy_repo": self.copy_repo,
             "copy_dir": self.copy_dir,
             "copy_url": self.copy_url,
             "copy_branch": self.copy_branch,
             "reqs_py": self.reqs_py,
             "path_map": self.path_map,
             "pre_built": self.pre_built,
+            "git_sha": self.git_sha,
         }
 
     def to_raw_image(self):
@@ -410,6 +488,7 @@ class Image:
             "docker_build_args": self.docker_build_args,
             "docker_auto_workdir": self.docker_auto_workdir,
             "context": self.context,
+            "copy_repo": self.copy_repo,
             "copy_dir": self.copy_dir,
             "copy_url": self.copy_url,
             "copy_branch": self.copy_branch,
@@ -418,10 +497,16 @@ class Image:
         }
 
     @staticmethod
-    def get_contextual_path(p):
+    def get_contextual_path(p, named_mounts=True):
+        # Make this idempotent: ContextualizedStr is a subclass of str and is str-like
+        # in all ways, so we use it here to denote something that's already been handled
+        # by this method.
+        if isinstance(p, ContextualizedStr):
+            return p
+
         if constants.ExecutionEnv.value() in constants.ExecutionEnv.manager_all:
             # Note:  This can run in the worker in Lazy nodes.
-            return p
+            return ContextualizedStr(p)
 
         op = os.path
 
@@ -430,19 +515,11 @@ class Image:
         # possible recursive path map resolution.
         regparse = parse_registered_path(p)
         if regparse is not None:
-            return p
+            return ContextualizedStr(p)
 
         # Translate relative paths as starting from the file where they were defined.
         if not op.isabs(p):
-            # Walk the stack. The first file that's not in the Conducto dir is the one
-            # the user called this from. Evaluate `p` relative to that file.
-
-            for frame, _lineno in traceback.walk_stack(None):
-                filename = frame.f_code.co_filename
-                if not filename.startswith(_conducto_dir):
-                    from_dir = op.dirname(filename)
-                    p = op.realpath(op.join(from_dir, p))
-                    break
+            p = op.realpath(op.join(_non_conducto_dir(), p))
 
         # Apply context specified from outside this container. Needed for recursive
         # co.Lazy calls inside an Image with ".path_map".
@@ -456,7 +533,7 @@ class Image:
             # test again, now with path_resolution
             regparse = parse_registered_path(p)
             if regparse is not None:
-                return p
+                return ContextualizedStr(p)
 
         # If ".copy_dir" wasn't set, find the git root so that we could possibly use this
         # inside an Image with ".copy_url" set.
@@ -467,7 +544,9 @@ class Image:
                 dirname = p
             git_root = Image._get_git_root(dirname)
             if git_root:
-                p = p.replace(git_root, git_root + "/", 1)
+                # Put a '//' after the git_root in `p`
+                before, after = p.split(git_root, 1)
+                p = before + git_root.rstrip("/") + "//" + after.lstrip("/")
 
         if hostdet.is_wsl():
             # The point is largely that we state paths in terms of the docker
@@ -479,33 +558,37 @@ class Image:
 
         auto_reg_path = None
         auto_reg_name = None
-        dirsettings = conducto.api.dirconfig_detect(p)
-        if dirsettings and "registered" in dirsettings:
-            auto_reg_name = dirsettings["registered"]
-            auto_reg_path = dirsettings["dir-path"]
+        if named_mounts:
+            dirsettings = conducto.api.dirconfig_detect(p)
+            if dirsettings and "registered" in dirsettings:
+                auto_reg_name = dirsettings["registered"]
+                auto_reg_path = dirsettings["dir-path"]
 
-        # iterate through named mounts looking for a match in this org
-        if auto_reg_path is None:
-            conf = conducto.api.Config()
-            mounts = conf.get_named_mount_mapping(conf.default_profile)
+            # iterate through named mounts looking for a match in this org
+            if auto_reg_path is None:
+                conf = conducto.api.Config()
+                mounts = conf.get_named_mount_mapping(conf.default_profile)
 
-            def enum():
-                for name, paths in mounts.items():
-                    for path in paths:
-                        yield name, path
+                def enum():
+                    for name, paths in mounts.items():
+                        for path in paths:
+                            yield name, path
 
-            for name, path in enum():
-                if path_utils.is_parent_subdir(path, p_host):
-                    # bingo, we have recognized this as a mount for your org
-                    auto_reg_name = name
-                    auto_reg_path = path
-                    break
+                for name, path in enum():
+                    reg = parse_registered_path(path)
+                    if reg is not None:
+                        path = reg.hint
+                    if path_utils.is_parent_subdir(path, p_host):
+                        # bingo, we have recognized this as a mount for your org
+                        auto_reg_name = name
+                        auto_reg_path = path
+                        break
 
         if auto_reg_path:
             # convert to registered path and return
             unix_tail = p_host[len(auto_reg_path) :].replace("\\", "/")
             p = f"${{{auto_reg_name.upper()}={auto_reg_path}}}" + unix_tail
-            return p
+            return ContextualizedStr(p)
         else:
             # convert to windows now
             if hostdet.is_wsl():
@@ -513,7 +596,7 @@ class Image:
             elif hostdet.is_windows():
                 p = hostdet.windows_docker_path(p)
 
-        return p
+        return ContextualizedStr(p)
 
     @staticmethod
     @functools.lru_cache(maxsize=None)
@@ -534,23 +617,63 @@ class Image:
         return result
 
     @staticmethod
+    @functools.lru_cache(maxsize=None)
+    def _get_git_repo(dirpath):
+        result = None
+
+        try:
+            PIPE = subprocess.PIPE
+            args = ["git", "-C", dirpath, "remote", "-v"]
+            out, err = subprocess.Popen(args, stdout=PIPE, stderr=PIPE).communicate()
+
+            nongit = "fatal: not a git repository"
+            if not err.decode("utf-8").rstrip().startswith(nongit):
+                m = re.search("([\w\-_]+)\.git", out.decode("utf-8"))
+                if m:
+                    result = m.group(1)
+        except FileNotFoundError:
+            # log, but essentially pass
+            log.debug("no git installation found, skipping directory indication")
+        return result
+
+    @staticmethod
     def register_directory(name, relative):
-        op = os.path
-
-        # Translate relative paths as starting from the file where they were defined.
-        if not op.isabs(relative):
-            # Walk the stack. The first file that's not in the Conducto dir is the one
-            # the user called this from. Evaluate `p` relative to that file.
-
-            for frame, _lineno in traceback.walk_stack(None):
-                filename = frame.f_code.co_filename
-                if not filename.startswith(_conducto_dir):
-                    from_dir = op.dirname(filename)
-                    relative = op.realpath(op.join(from_dir, relative))
-                    break
-
+        path = Image.get_contextual_path(relative, named_mounts=False).rstrip(
+            os.path.sep
+        )
         config = conducto.api.Config()
-        config.register_named_mount(config.default_profile, name, relative)
+        config.register_named_mount(config.default_profile, name, path)
+
+    async def sha1(self):
+        if self.git_sha is not None:
+            return self.git_sha
+
+        if self.copy_branch:
+            branch = self.copy_branch
+            url = self.copy_url
+            if url is None:
+                if self.copy_repo is None:
+                    raise ValueError(
+                        f"Specified copy_branch={self.copy_branch} but did "
+                        f"not specify copy_url or copy_repo.\nImage: {self.to_dict()}"
+                    )
+                url = await conducto.api.AsyncGit().url(self.copy_repo)
+            out, _err = await async_utils.run_and_check(
+                "git", "ls-remote", url, f"refs/heads/{branch}"
+            )
+            sha1 = out.decode().strip().split("\t")[0]
+            if not sha1:
+                raise ValueError(
+                    f"Cannot find branch named {branch}.\nImage: {self.to_dict()}"
+                )
+            self.git_sha = sha1
+        else:
+            root = serialization_path_interpretation(self.copy_dir)
+            out, err = await async_utils.run_and_check(
+                "git", "-C", root, "rev-parse", "HEAD"
+            )
+            self.git_sha = out.decode().strip()
+        return self.git_sha
 
     @property
     def name_built(self):
@@ -599,28 +722,6 @@ class Image:
                 return h.stdout
         return None
 
-    def _set_remote_exec_fn(self, func):
-        """
-        Support remote building. `func` must behave like `async_utils.run_and_check`.
-        """
-        self._remote_exec_fn = func
-
-    async def _exec(self, *args, **kwargs):
-        # Docker steps may run in the cloud if they don't rely on anything from a user's
-        # machine. This is only 'dockerfile' and 'copy_dir'. Other inputs, like 'image',
-        # 'copy_url', or 'reqs_*' can all be done from anywhere, so those images can be
-        # built in the cloud.
-        may_run_in_cloud = self.dockerfile is None and self.copy_dir is None
-        may_run_in_cloud = False  # Until we have RD working, nothing is cloud-buildable
-
-        # If it may not run in the cloud, and if a remote executor is installed, then
-        # use that runner.
-        if not may_run_in_cloud and self._remote_exec_fn is not None:
-            return await self._remote_exec_fn(*args, **kwargs)
-        else:
-            # Otherwise, just build it here using `run_and_check`.
-            return await async_utils.run_and_check(*args, **kwargs)
-
     async def make(self, push_to_cloud, callback=lambda: None):
         # Only call _make() once, and all other calls should just return the
         # same result.
@@ -656,7 +757,9 @@ class Image:
                     cb = callback()
                     if inspect.isawaitable(cb):
                         await cb
-                    out, err = await self._exec("docker", "pull", self.image)
+                    out, err = await async_utils.run_and_check(
+                        "docker", "pull", self.image
+                    )
                     st.finish(out, err)
                 else:
                     st.finish("Image already pulled")
@@ -713,7 +816,7 @@ class Image:
 
     async def _image_exists(self, image):
         try:
-            await self._exec("docker", "image", "inspect", image)
+            await async_utils.run_and_check("docker", "image", "inspect", image)
         except subprocess.CalledProcessError:
             return False
         else:
@@ -771,7 +874,7 @@ class Image:
             serialization_path_interpretation(self.context),
         ]
 
-        out, err = await self._exec(
+        out, err = await async_utils.run_and_check(
             "docker",
             "build",
             "-t",
@@ -783,6 +886,13 @@ class Image:
         return out, err
 
     async def _complete(self):
+        # If copying a whole repo, or if getting a remote Git repo, get the commit SHA.
+        if self.copy_repo or self.copy_branch or self.copy_url:
+            # Set CONDUCTO_GIT_SHA now that it's needed. We couldn't do it before
+            # because it could be expensive to compute (could involve a URL fetch), so
+            # we want to make sure it is only done once per Image.
+            self._env_vars["CONDUCTO_GIT_SHA"] = await self.sha1()
+
         # Create dockerfile from stdin. Replace "-f <dockerfile> <copy_dir>"
         # with "-"
         if self.copy_dir:
@@ -798,10 +908,11 @@ class Image:
             self.name_built,
             self.reqs_py,
             self.copy_dir,
+            self.copy_repo,
             self.copy_url,
             self.copy_branch,
             self.docker_auto_workdir,
-            self._exec,
+            self._env_vars,
         )
 
         # Only in test setting, if the conducto image is used, pull it!
@@ -810,7 +921,6 @@ class Image:
             and "conducto" in self.reqs_py
             and os.environ.get("CONDUCTO_DEV_REGISTRY")
         ):
-            conducto_image = "conducto"
             pull_image = True
 
             tag = conducto.api.Config().get_image_tag()
@@ -820,16 +930,16 @@ class Image:
             # If this is dev/test, we may or may not have the image
             # locally, decline the pull accordingly.
             try:
-                await self._exec("docker", "inspect", conducto_image)
+                await async_utils.run_and_check("docker", "inspect", conducto_image)
                 pull_image = False
             except:
                 pass
 
             if pull_image and conducto_image not in Image._PULLED_IMAGES:
-                await self._exec("docker", "pull", conducto_image)
+                await async_utils.run_and_check("docker", "pull", conducto_image)
                 Image._PULLED_IMAGES.add(conducto_image)
 
-        out, err = await self._exec(
+        out, err = await async_utils.run_and_check(
             "docker",
             "build",
             "-t",
@@ -844,7 +954,7 @@ class Image:
     async def _extend(self):
         # Writes Dockerfile that extends user-provided image.
         text, worker_image = await dockerfile_mod.text_for_extend_dockerfile(
-            self.name_complete, self._exec
+            self.name_complete
         )
         if "/" in worker_image:
             pull_worker = True
@@ -852,18 +962,18 @@ class Image:
                 # If this is dev/test, we may or may not have the image
                 # locally, decline the pull accordingly.
                 try:
-                    await self._exec("docker", "inspect", worker_image)
+                    await async_utils.run_and_check("docker", "inspect", worker_image)
                     pull_worker = False
                 except:
                     pass
             if pull_worker and worker_image not in Image._PULLED_IMAGES:
-                await self._exec("docker", "pull", worker_image)
+                await async_utils.run_and_check("docker", "pull", worker_image)
                 Image._PULLED_IMAGES.add(worker_image)
 
         profile = conducto.api.Config().default_profile
         pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID", self._pipeline_id)
 
-        out, err = await self._exec(
+        out, err = await async_utils.run_and_check(
             "docker",
             "build",
             "-t",
@@ -884,8 +994,10 @@ class Image:
         cloud_tag = self.name_cloud_extended
         if self._cloud_tag_convert and self.is_cloud_building():
             cloud_tag = self._cloud_tag_convert(cloud_tag)
-        await self._exec("docker", "tag", self.name_local_extended, cloud_tag)
-        out, err = await self._exec("docker", "push", cloud_tag)
+        await async_utils.run_and_check(
+            "docker", "tag", self.name_local_extended, cloud_tag
+        )
+        out, err = await async_utils.run_and_check("docker", "push", cloud_tag)
         return out, err
 
     def is_cloud_building(self):
@@ -897,6 +1009,7 @@ class Image:
     def needs_completing(self):
         return (
             self.copy_dir is not None
+            or self.copy_repo is not None
             or self.copy_url is not None
             or self.reqs_py is not None
         )
@@ -986,6 +1099,20 @@ def _to_str(s):
     if isinstance(s, str):
         return s
     raise TypeError(f"Cannot convert {repr(s)} to str.")
+
+
+def _non_conducto_dir():
+    """
+    Walk the stack. The first file that's not in the Conducto dir is the one the user
+    called this from.
+    """
+    op = os.path
+    if Image._CONTEXT is not None:
+        return op.dirname(op.abspath(Image._CONTEXT))
+    for frame, _lineno in traceback.walk_stack(None):
+        filename = frame.f_code.co_filename
+        if not filename.startswith(_conducto_dir):
+            return op.dirname(filename)
 
 
 _conducto_dir = os.path.dirname(os.path.dirname(__file__)) + os.path.sep

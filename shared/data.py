@@ -23,7 +23,6 @@ client_creation_lock = threading.Lock()
 class Credentials:
 
     _creds = None
-    _token = None
     _s3_client = None
     local = True
     refresh_time = None
@@ -33,13 +32,9 @@ class Credentials:
         if cls.refresh_time is None or time.time() - cls.refresh_time >= 3000:
             with client_creation_lock:
                 import boto3
-                from conducto.api import Auth
+                from conducto import api
 
-                auth = Auth()
-                if cls._token is None:
-                    cls._token = os.environ["CONDUCTO_DATA_TOKEN"]
-                cls._token = auth.get_refreshed_token(cls._token, force=True)
-                cls._creds = auth.get_credentials(cls._token)
+                cls._creds = api.Auth().get_credentials()
 
                 session = boto3.Session(
                     aws_access_key_id=cls._creds["AccessKeyId"],
@@ -53,11 +48,6 @@ class Credentials:
     def creds(cls):
         cls.refresh()
         return cls._creds
-
-    @classmethod
-    def token(cls):
-        cls.refresh()
-        return cls._token
 
     @classmethod
     def s3_client(cls):
@@ -93,9 +83,10 @@ class _Context:
         key = self.get_s3_key(key)
         # this method is invoked to clear out all but the latest version, or to delete all versions
         while True:
-            versions = self.s3_client.list_object_versions(
-                Bucket=self.bucket, Prefix=key
-            )["Versions"]
+            r = self.s3_client.list_object_versions(Bucket=self.bucket, Prefix=key)
+            versions = r.get("Versions")
+            if versions is None:
+                break
             to_delete = [
                 i["VersionId"]
                 for i in versions
@@ -113,7 +104,6 @@ class _Context:
 class _Data:
     _pipeline_id: t.PipelineId = None
     _local: bool = None
-    _token: t.Token = None
     _s3_bucket: str = None
 
     @staticmethod
@@ -129,11 +119,7 @@ class _Data:
 
     @staticmethod
     def _init(
-        *,
-        pipeline_id: t.PipelineId = None,
-        local: bool = None,
-        token: t.Token = None,
-        s3_bucket: str = None,
+        *, pipeline_id: t.PipelineId = None, local: bool = None,
     ):
         # Order of precedence for each param:
         #  - If it is specified, use it.
@@ -148,15 +134,7 @@ class _Data:
             or _Data._local
             or api.Config().get_location() == api.Config.Location.LOCAL
         )
-        _Data._s3_bucket = (
-            s3_bucket or _Data._s3_bucket or os.getenv("CONDUCTO_S3_BUCKET")
-        )
-        if not _Data._local:
-            _Data._token = token or _Data._token or os.getenv("CONDUCTO_DATA_TOKEN")
-            if _Data._token is None:
-                _Data._token = api.Auth().get_token_from_shell()
-            if os.getenv("CONDUCTO_DATA_TOKEN") is None and _Data._token is not None:
-                os.environ["CONDUCTO_DATA_TOKEN"] = _Data._token
+        _Data._s3_bucket = _Data._s3_bucket or os.getenv("CONDUCTO_S3_BUCKET")
 
     @classmethod
     def get(cls, name, file):
@@ -223,7 +201,7 @@ class _Data:
     @classmethod
     def puts(cls, name, obj: bytes):
         if not isinstance(obj, bytes):
-            raise ValueError(f"Expected 'obj' of type 'bytes', but got {type(bytes)}")
+            raise ValueError(f"Expected object of type bytes, but got {repr(obj)}")
         ctx = cls._ctx()
         if not ctx.local:
             ctx.get_function("put_object", name)(Body=obj)

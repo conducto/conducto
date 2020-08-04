@@ -95,6 +95,11 @@ class Node:
         as the path separator.
     """
 
+    # We define __iter__ as None, so that python will error early if Node is used in a
+    # loop and not fall back to using __getitem__, which cannot accept python 2.2 style
+    # iteration.
+    __iter__ = None
+
     # Enum regarding skip statuses. The naming is awkward but intentional:
     # 'skip' is the namespace, but we should phrase the terms in the positive,
     # i.e., how many are running.
@@ -114,13 +119,17 @@ class Node:
         "mem": DEFAULT_MEM,
         "container_id": -1,
         "requires_docker": False,
-        "max_time": None,
+        "max_time": "4h",
     }
 
     _CONTEXT_STACK = []
 
     _NUM_FILE_AND_LINE_CALLS = 0
     _MAX_FILE_AND_LINE_CALLS = 50000
+    _PATH_MAP = json.loads(os.getenv("CONDUCTO_PATH_MAP", "{}"))
+    _PATH_MAP = {
+        image_mod.serialization_path_interpretation(k): v for k, v in _PATH_MAP.items()
+    }
 
     if api.Config().get("config", "force_debug_info") or t.Bool(
         os.getenv("CONDUCTO_FORCE_DEBUG_INFO")
@@ -183,28 +192,103 @@ class Node:
         self._callbacks = []
         self.token = None
 
+        self._repo = image_mod.Repository()
+
+        # These are only to be set on the root node, and only by co.main().
+        self._autorun = None
+        self._sleep_when_done = None
+
+        # default all user-settable parameters
+        self.user_set = {
+            "skip": False,
+            "cpu": None,
+            "gpu": None,
+            "mem": None,
+            "requires_docker": None,
+        }
+        self.image = None
+        self.env = {}
+        self.doc = None
+        self.title = None
+        self.tags = None
+        self._name = "/"
+        self.suppress_errors = False
+        self.max_time = None
+        self.same_container = constants.SameContainer.INHERIT
+        self.file, self.line = self._get_file_and_line()
+
+        self.set(
+            env=env,
+            skip=skip,
+            name=name,
+            cpu=cpu,
+            gpu=gpu,
+            mem=mem,
+            requires_docker=requires_docker,
+            suppress_errors=suppress_errors,
+            max_time=max_time,
+            same_container=same_container,
+            image=image,
+            image_name=image_name,
+            doc=doc,
+            title=title,
+            tags=tags,
+            file=file,
+            line=line,
+        )
+
+    def set(
+        self,
+        *,
+        env=None,
+        skip=None,
+        name=None,
+        cpu=None,
+        gpu=None,
+        mem=None,
+        requires_docker=None,
+        suppress_errors=None,
+        max_time: typing.Union[int, float, str] = None,
+        same_container=None,
+        image: typing.Union[str, image_mod.Image] = None,
+        image_name=None,
+        doc=None,
+        title=None,
+        tags: typing.Iterable = None,
+        file=None,
+        line=None,
+    ):
+        """
+        Set params on an already created node with args that would typically go
+        in the constructor. This is relevant when a node has already been
+        constructed with a function and its args, and no node args have yet
+        been specified.
+        """
         assert image_name is None or image is None, "can only specify one image"
 
-        self._repo = image_mod.Repository()
-        # store actual values of each attribute
-        self.user_set = {
-            "skip": skip,
-            "cpu": cpu,
-            "gpu": gpu,
-            "mem": mem,
-            "requires_docker": requires_docker,
-        }
-
-        if image:
-            self.image = image
-        else:
+        if skip is not None:
+            self.user_set["skip"] = skip
+        if cpu is not None:
+            self.user_set["cpu"] = cpu
+        if gpu is not None:
+            self.user_set["gpu"] = gpu
+        if mem is not None:
+            self.user_set["mem"] = mem
+        if requires_docker is not None:
+            self.user_set["requires_docker"] = requires_docker
+        if image_name is not None:
             self.user_set["image_name"] = image_name
 
-        self.env = env or {}
-
-        self.doc = doc
-        self.title = title
-        self.tags = self.sanitize_tags(tags)
+        if image is not None:
+            self.image = image
+        if env is not None:
+            self.env = env
+        if doc is not None:
+            self.doc = doc
+        if title is not None:
+            self.title = title
+        if tags is not None:
+            self.tags = self.sanitize_tags(tags)
 
         if name is not None:
             if not Node._CONTEXT_STACK:
@@ -217,22 +301,17 @@ class Node:
                 )
             parent = Node._CONTEXT_STACK[-1]
             parent[name] = self
-        else:
-            self._name = "/"
 
-        self.suppress_errors = suppress_errors
-        self.max_time = max_time
-        self.same_container = same_container
-
-        # These are only to be set on the root node, and only by co.main().
-        self._autorun = None
-        self._sleep_when_done = None
+        if suppress_errors is not None:
+            self.suppress_errors = suppress_errors
+        if max_time is not None:
+            self.max_time = max_time
+        if same_container is not None:
+            self.same_container = same_container
 
         if file is not None:
             self.file = file
             self.line = line
-        else:
-            self.file, self.line = self._get_file_and_line()
 
     def __enter__(self):
         Node._CONTEXT_STACK.append(self)
@@ -405,7 +484,11 @@ class Node:
         node._root = self.root
         node._name = name
 
-    def __getitem__(self, item):
+    def __getitem__(self, item: str):
+        if not isinstance(item, str):
+            raise TypeError(
+                f"Node names must be strings. Expected object of type str, got {repr(item)}"
+            )
         # Absolute paths start with a '/' and begin at the root
         if item.startswith("/"):
             current = self.root
@@ -599,7 +682,7 @@ class Node:
 
         self._build(
             build_mode=constants.BuildMode.LOCAL,
-            use_shell=use_shell,
+            shell=use_shell,
             retention=retention,
             run=run,
             sleep_when_done=sleep_when_done,
@@ -609,13 +692,13 @@ class Node:
     def _build(
         self,
         build_mode=constants.BuildMode.LOCAL,
-        use_shell=False,
-        use_app=False,
+        shell=False,
+        app=False,
         prebuild_images=False,
         retention=7,
         run=False,
         sleep_when_done=False,
-        is_public=False,
+        public=False,
     ):
         if self.image is None:
             self.image = image_mod.Image(name="conducto-default")
@@ -630,10 +713,10 @@ class Node:
         return build.build(
             self,
             build_mode,
-            use_shell=use_shell,
-            use_app=use_app,
+            use_shell=shell,
+            use_app=app,
             retention=retention,
-            is_public=is_public,
+            is_public=public,
             prebuild_images=prebuild_images,
         )
 
@@ -691,7 +774,7 @@ class Node:
         elif isinstance(val, (list, tuple, set)):
             for v in val:
                 if not isinstance(v, (bytes, str)):
-                    raise TypeError(f"Expected list of strings, got: {repr(v)}")
+                    raise TypeError(f"Expected list of strings, but got {repr(v)}")
             return val
         else:
             raise TypeError(f"Cannot convert {repr(val)} to list of strings.")
@@ -707,6 +790,10 @@ class Node:
             if not filename.startswith(_conducto_dir):
                 if not _isabs(filename):
                     filename = _abspath(filename)
+
+                for external, internal in Node._PATH_MAP.items():
+                    if filename.startswith(internal):
+                        filename = filename.replace(internal, external, 1)
                 return filename, lineno
 
         return None, None
@@ -823,7 +910,7 @@ class Exec(Node):
                 # If a gitroot was detected, it was marked in the command with a "//".
                 # If copy_url was set then we can determine what the external portion
                 # of the path was. Together with COPY_DIR we can update path_map
-                if "//" in path and img.copy_url:
+                if "//" in path and (img.copy_url or img.copy_repo):
                     external = path.split("//", 1)[0]
                     path_map[external] = COPY_DIR
 
@@ -902,7 +989,10 @@ class Serial(Node):
         image: typing.Union[str, image_mod.Image] = None,
         image_name=None,
         doc=None,
+        title=None,
         tags: typing.Iterable = None,
+        file=None,
+        line=None,
     ):
         super().__init__(
             env=env,
@@ -918,7 +1008,10 @@ class Serial(Node):
             image=image,
             image_name=image_name,
             doc=doc,
+            title=title,
             tags=tags,
+            file=file,
+            line=line,
         )
         self.stop_on_error = stop_on_error
 

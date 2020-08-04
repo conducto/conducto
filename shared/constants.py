@@ -62,23 +62,20 @@ class Perms:
 
 QSUB_KWARGS = ["cpu", "mem", "gpu", "image", "requires_docker"]
 
-
 WORKER_VERSION = "v3.1.3"
 
 
 class ImageUtil:
     MANAGER_VERSION = "0.1"
-    LOCAL_DAEMON_VERSION = "0.1"
+    AGENT_VERSION = "0.1"
 
     @staticmethod
     def get_manager_image(tag, is_test):
         return ImageUtil._get_image("manager", ImageUtil.MANAGER_VERSION, tag, is_test)
 
     @staticmethod
-    def get_local_daemon_image(tag, is_test):
-        return ImageUtil._get_image(
-            "local-daemon", ImageUtil.LOCAL_DAEMON_VERSION, tag, is_test
-        )
+    def get_agent_image(tag, is_test):
+        return ImageUtil._get_image("agent", ImageUtil.AGENT_VERSION, tag, is_test)
 
     @staticmethod
     def _get_image(base, version, tag, is_test):
@@ -180,7 +177,7 @@ class ExecutionEnv:
     MANAGER_LOCAL = "manager_local"
     WORKER_LOCAL = "worker_local"
     DEBUG_LOCAL = "debug_local"
-    DAEMON_LOCAL = "daemon_local"
+    AGENT_LOCAL = "agent_local"
 
     # Cloud states
     MANAGER_CLOUD = "manager_cloud"
@@ -189,15 +186,15 @@ class ExecutionEnv:
 
     EXTERNAL = "external"
 
-    local = {MANAGER_LOCAL, WORKER_LOCAL, DEBUG_LOCAL, DAEMON_LOCAL}
+    local = {MANAGER_LOCAL, WORKER_LOCAL, DEBUG_LOCAL, AGENT_LOCAL}
     cloud = {MANAGER_CLOUD, WORKER_CLOUD, DEBUG_CLOUD}
 
     worker_all = {DEBUG_LOCAL, DEBUG_CLOUD, WORKER_LOCAL, WORKER_CLOUD}
     worker = {WORKER_LOCAL, WORKER_CLOUD}
     debug = {DEBUG_LOCAL, DEBUG_CLOUD}
-    manager_all = {MANAGER_LOCAL, MANAGER_CLOUD, DAEMON_LOCAL}
+    manager_all = {MANAGER_LOCAL, MANAGER_CLOUD, AGENT_LOCAL}
     manager = {MANAGER_LOCAL, MANAGER_CLOUD}
-    daemon = {DAEMON_LOCAL}
+    agent = {AGENT_LOCAL}
     external = {EXTERNAL}
 
     @staticmethod
@@ -274,3 +271,9 @@ class SameContainer:
 # TODO: https://app.clickup.com/t/8jcxwd
 class ErrorCodes:
     NODE_MAX_TIME_EXCEEDED = "Node max time exceeded"
+
+
+class Block:
+    SIZE = 3600
+    # how many seconds into block n + 1 do we start generating a snapshot for block n
+    DELAY = 900

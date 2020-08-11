@@ -3,6 +3,7 @@ import asyncio
 import configparser
 import functools
 import inspect
+import json
 import os
 import re
 import pipes
@@ -32,8 +33,8 @@ CONDUCTO_ARGS = [
 ]
 
 
-def lazy_shell(command, node_type, env=None, **exec_args) -> pipeline.Node:
-    output = Lazy(command, node_type=node_type, **exec_args)
+def lazy_shell(command, env=None, **exec_args) -> pipeline.Node:
+    output = Lazy(command, **exec_args)
     output.env = env
     return output
 
@@ -42,7 +43,7 @@ def lazy_py(func, *args, **kwargs) -> pipeline.Node:
     return Lazy(func, *args, **kwargs)
 
 
-def Lazy(command_or_func, *args, node_type=_UNSET, **kwargs) -> pipeline.Node:
+def Lazy(command_or_func, *args, **kwargs) -> pipeline.Node:
     """
     This node constructor returns a co.Serial containing a pair of nodes. The
     first, **`Generate`**, runs `func(*args, **kwargs)` and prints out the
@@ -56,25 +57,9 @@ def Lazy(command_or_func, *args, node_type=_UNSET, **kwargs) -> pipeline.Node:
     function for that node in the pipeline.
     """
 
-    if callable(command_or_func):
-        # If a function is passed, then `node_type` might be a valid argument. If it is
-        # passed to `Lazy` then pass it along to `command_or_func`.
-        if node_type is not _UNSET:
-            kwargs["node_type"] = node_type
-
-        # Infer the node_type from the return type of `command_or_func`.
-        hints = typing.get_type_hints(command_or_func)
-        node_type = hints.get("return")
-
-    if not issubclass(node_type, (pipeline.Parallel, pipeline.Serial)):
-        raise ValueError(
-            "Can only call co.Lazy() on a function that returns a Parallel or Serial "
-            f"node, but got: {node_type}"
-        )
-
     output = pipeline.Serial()
     output["Generate"] = pipeline.Exec(command_or_func, *args, **kwargs)
-    output["Execute"] = node_type()
+    output["Execute"] = pipeline.Parallel()
     output["Generate"].on_done(
         callback.base("deserialize_into_node", target=output["Execute"])
     )
@@ -733,7 +718,89 @@ def _parse_args(parser, argv):
     return args, kwargs
 
 
-def run_cfg(file: typing.IO, argv, copy_repo=True, copy_branch=None):
+def _parse_image_kwargs_from_config_section(section):
+    get_json = lambda key: json.loads(section.get(key, "null"))
+
+    if "copy_repo" in section:
+        raise ValueError(
+            "Not allowed to specify 'copy_repo' in config. It is set automatically."
+        )
+    if "copy_branch" in section:
+        raise ValueError(
+            "Not allowed to specify 'copy_branch' in config. It is set automatically."
+        )
+    if "copy_dir" in section:
+        raise ValueError(
+            "Not allowed to specify 'copy_dir' in config. It conflicts with 'copy_repo' which is set automatically."
+        )
+    if "copy_url" in section:
+        raise ValueError(
+            "Not allowed to specify 'copy_url' in config. It conflicts with 'copy_repo' which is set automatically."
+        )
+
+    return {
+        "image": section.get("image"),
+        "dockerfile": section.get("dockerfile"),
+        "docker_build_args": get_json("docker_build_args"),
+        "context": section.get("context"),
+        "docker_auto_workdir": section.getboolean("docker_auto_workdir", True),
+        "reqs_py": get_json("reqs_py"),
+        "path_map": get_json("path_map"),
+        "name": section.get("name"),
+    }
+
+
+def _parse_config_args_from_cmdline(argv):
+    # Parse the command,
+    conducto_kwargs = {
+        "shell": t.Bool(api.Config().get("general", "show_shell", default=False)),
+        "app": t.Bool(api.Config().get("general", "show_app", default=True)),
+    }
+    branch_cmd = None
+    wildcard_args = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg.startswith("--"):
+            if "=" in arg:
+                key, value = arg.split("=", 1)
+            else:
+                key = arg
+                value = None
+            basekey = key[2:].replace("-", "_")
+            if basekey in CONDUCTO_ARGS:
+                if value is not None:
+                    raise ValueError(
+                        f"Invalid argument '{arg}'. --{key} takes no argument."
+                    )
+                conducto_kwargs[basekey] = True
+                i += 1
+                continue
+            if basekey in ("no_shell", "no_app"):
+                if value is not None:
+                    raise ValueError(
+                        f"Invalid argument '{arg}'. --{key} takes no argument."
+                    )
+                conducto_kwargs[basekey.replace("no_", "")] = False
+                i += 1
+                continue
+            if basekey == "branch":
+                if value is None:
+                    value = argv[i + 1]
+                    i += 1
+                branch_cmd = value
+                i += 1
+                continue
+        wildcard_args.append(arg)
+        i += 1
+    return conducto_kwargs, wildcard_args, branch_cmd
+
+
+def run_cfg(
+    file: typing.IO, argv, copy_repo=True, copy_branch=None, headless=False, token=None
+):
+    import conducto as co
+
     # Read the config file
     cp = configparser.ConfigParser()
     cp.read_file(file)
@@ -745,81 +812,71 @@ def run_cfg(file: typing.IO, argv, copy_repo=True, copy_branch=None):
         )
     if argv[0] not in cp:
         if "*" in cp:
-            action = cp["*"]
+            section = cp["*"]
+            method = "*"
             remainder = argv
         else:
             raise NotImplementedError("Make better exception for invalid command")
     else:
         method, *remainder = argv
-        action = cp[method]
+        section = cp[method]
 
     # Parse the command template. Find which variables need to be passed.
-    command_template = action["command"]
-
-    variables = set(re.findall("{([a-zA-Z]\w*|\*)}", command_template))
-    optional = {"branch"}  # TODO: find better way to handle this
-
-    # Extract those variables from the argv
-    parser = argparse.ArgumentParser()
-    for var in sorted(variables | optional):
-        if var == "*":
-            parser.add_argument("*", nargs=argparse.REMAINDER)
-        else:
-            parser.add_argument(f"--{var.replace('_', '-')}", metavar=var)
-
-    _add_argparse_options_for_node(parser)
-
-    args, kwargs = _parse_args(parser, remainder)
-
-    conducto_state = {k: kwargs.pop(k, None) for k in CONDUCTO_ARGS}
-
-    missing = sorted(v for v in variables if kwargs[v] is None)
-    if missing:
-        try:
-            basename = os.path.basename(file.name)
-        except AttributeError:
-            basename = "<???>"
-        print(f"{basename}: missing arguments: {', '.join(missing)}", file=sys.stderr)
-        sys.exit(1)
-    if len(args) > 0:
-        raise Exception(f"Somehow args is non-empty: {args}")
+    command_template = section["command"]
+    image_kwargs = _parse_image_kwargs_from_config_section(section)
+    conducto_kwargs, wildcard_args, branch_cmd = _parse_config_args_from_cmdline(
+        remainder
+    )
 
     # Build the output node
-    import conducto as co
+    wildcard_str = " ".join(shlex.quote(arg) for arg in wildcard_args)
+    if "{*}" in command_template:
+        command = command_template.replace("{*}", wildcard_str)
+    else:
+        command = command_template
+        if wildcard_args:
+            raise ValueError(
+                f"Cannot specify additional arguments because command for [{method}] "
+                f"does not contain '{{*}}'.\n"
+                f"  Command: {command_template}\n"
+                f"  User specified: {wildcard_str}"
+            )
 
-    repl = lambda match: kwargs[match.group(1)]
-    command = re.sub("{(a-zA-Z]\w*|\*)}", repl, command_template)
-    output = co.Lazy(command, node_type=co.Serial)
+    output = co.Lazy(command)
     output.title = _get_default_title(None, default_was_used=False)
 
-    branchCmd = kwargs.get("branch")
-    branchEnv = os.environ.get("CONDUCTO_GIT_BRANCH")
-    if branchCmd is not None and branchEnv is not None and branchCmd != branchEnv:
+    branch_env = os.environ.get("CONDUCTO_GIT_BRANCH")
+    if branch_cmd is not None and branch_env is not None and branch_cmd != branch_env:
         raise ValueError(
-            f"Conflicting definitions for branch: --branch={branchCmd} and CONDUCTO_GIT_BRANCH={branchEnv}"
+            f"Conflicting definitions for branch: --branch={branch_cmd} and CONDUCTO_GIT_BRANCH={branch_env}"
         )
-    elif branchEnv is not None:
+    elif branch_env is not None:
         output.title += f" --branch={os.environ['CONDUCTO_GIT_BRANCH']}"
-    elif branchCmd is not None:
-        os.environ["CONDUCTO_GIT_BRANCH"] = branchCmd
+    elif branch_cmd is not None:
+        os.environ["CONDUCTO_GIT_BRANCH"] = branch_cmd
 
     # Normally `co.Image` looks through the stack to infer the repo, but the stack
     # doesn't go through the CFG file. Specify `_CONTEXT` as a workaround.
     co.Image._CONTEXT = file.name
     try:
-        output.image = co.Image(copy_repo=copy_repo, copy_branch=copy_branch)
+        output.image = co.Image(
+            copy_repo=copy_repo, copy_branch=copy_branch, **image_kwargs
+        )
     finally:
         co.Image._CONTEXT = None
 
     # Run the node or print it. This code is duplicated from main() down below.
-    is_cloud = conducto_state.pop("cloud")
-    is_local = conducto_state.pop("local")
+    is_cloud = conducto_kwargs.pop("cloud", False)
+    is_local = conducto_kwargs.pop("local", False)
     will_build = is_cloud or is_local
 
     if will_build:
         BM = constants.BuildMode
         output._build(
-            build_mode=BM.LOCAL if is_local else BM.DEPLOY_TO_CLOUD, **conducto_state
+            build_mode=BM.LOCAL if is_local else BM.DEPLOY_TO_CLOUD,
+            headless=headless,
+            token=token,
+            **conducto_kwargs,
         )
     else:
         if t.Bool(os.getenv("__RUN_BY_WORKER__")):

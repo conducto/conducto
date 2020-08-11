@@ -67,16 +67,8 @@ class Dir:
         headers = api_utils.get_auth_headers(token)
 
         # get teams and users in org
-        response = request_utils.get(
-            self.url + f"/dir/org/{org_id}/teams", headers=headers
-        )
-        data = api_utils.get_data(response)
-        teams = set()
-        users = set()
-        for team in teams:
-            teams.add(team["team_id"])
-            for u in team["members"]:
-                users.add(u["user_id"])
+        teams = {team["team_id"] for team in self.teams(org_id, token)}
+        users = self.users(org_id, token=token)
 
         # delete teams, users, and org
         for team in teams:
@@ -107,6 +99,37 @@ class Dir:
             self.url + f"/dir/invite/{invite_id}/accept", data=data, headers=headers
         )
         api_utils.get_data(response)
+
+    def teams(self, org_id: t.OrgId, token: t.Token = None):
+        headers = api_utils.get_auth_headers(token)
+
+        # get teams and users in org
+        response = request_utils.get(
+            self.url + f"/dir/org/{org_id}/teams", headers=headers
+        )
+        data = api_utils.get_data(response)
+        return data["teams"]
+
+    def users(self, org_id: t.OrgId, token: t.Token = None):
+        headers = api_utils.get_auth_headers(token)
+
+        # get teams and users in org
+        response = request_utils.get(
+            self.url + f"/dir/org/{org_id}/users", headers=headers
+        )
+        return api_utils.get_data(response)
+
+    def org_create_subscription(
+        self, token: t.Token, customer_id: str, subscription_data: dict
+    ) -> dict:
+        headers = api_utils.get_auth_headers(token)
+        data = json.dumps(subscription_data)
+        response = request_utils.put(
+            self.url + f"/dir/org/{customer_id}/subscription",
+            data=data,
+            headers=headers,
+        )
+        return api_utils.get_data(response)
 
 
 AsyncDir = api_utils.async_helper(Dir)

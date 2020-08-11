@@ -26,6 +26,8 @@ def build(
     retention=7,
     is_public=False,
     prebuild_images=False,
+    headless=False,
+    token=None,
 ):
     assert node.parent is None
     assert node.name == "/"
@@ -34,7 +36,9 @@ def build(
 
     # refresh the token for every pipeline launch
     # Force in case of cognito change
-    node.token = token = api.Auth().get_token_from_shell(force=True)
+    if token is None:
+        token = api.Auth().get_token_from_shell(force=True)
+    node.token = token
 
     if prebuild_images and build_mode == constants.BuildMode.DEPLOY_TO_CLOUD:
         import subprocess
@@ -72,7 +76,13 @@ def build(
     serialization = node.serialize()
 
     launch_from_serialization(
-        serialization, pipeline_id, build_mode, use_shell, use_app, token
+        serialization,
+        pipeline_id,
+        build_mode,
+        use_shell,
+        use_app,
+        token,
+        headless=headless,
     )
 
 
@@ -85,6 +95,7 @@ def launch_from_serialization(
     token=None,
     inject_env=None,
     is_migration=False,
+    headless=False,
 ):
     if not token:
         token = api.Auth().get_token_from_shell(force=True)
@@ -134,7 +145,8 @@ def launch_from_serialization(
 
     # Make sure that an agent is running before we launch. A local manager will
     # start it if none are running, but cloud has no way to do that.
-    agent_utils.launch_agent(inside_container=False, token=token)
+    if not headless:
+        agent_utils.launch_agent(inside_container=False, token=token)
 
     run(token, pipeline_id, func, use_app, use_shell, "Starting", starting)
 

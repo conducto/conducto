@@ -4,6 +4,7 @@ import os.path
 import importlib.util
 import conducto as co
 from conducto.shared import constants
+from conducto.contrib.discover.cli import discover_cli
 from conducto.debug import debug, livedebug
 from conducto.profile import dir_init
 import asyncio
@@ -197,6 +198,7 @@ def main():
         "migrate",
         "dump-serialization",
         "sleep",
+        "discover",
     ):
         variables = {
             "show": show,
@@ -206,6 +208,7 @@ def main():
             "migrate": migrate,
             "dump-serialization": dump_serialization,
             "sleep": sleep,
+            "discover": discover_cli,
         }
         co.main(variables=variables)
     else:

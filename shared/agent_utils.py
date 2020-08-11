@@ -46,6 +46,11 @@ def launch_agent(inside_container=False, check_for_old=True, token=None):
 
     eeagent = constants.ExecutionEnv.AGENT_LOCAL
 
+    if not (hostdet.is_windows() or hostdet.is_wsl()):
+        outer_xid = f"{os.getuid()}:{os.getgid()}"
+    else:
+        outer_xid = ""
+
     flags = [
         # Detached mode.
         "-d",
@@ -75,6 +80,8 @@ def launch_agent(inside_container=False, check_for_old=True, token=None):
         f"CONDUCTO_LOCAL_BASE_DIR={external_profile_dir}",
         "-e",
         f"CONDUCTO_LOCAL_HOSTNAME={hostname}",
+        "-e",
+        f"CONDUCTO_OUTER_OWNER={outer_xid}",
         "-e",
         f"CONDUCTO_OS={hostdet.os_name()}",
     ]

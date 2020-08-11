@@ -363,6 +363,7 @@ class Image:
         self.context = context
         self.copy_repo = copy_repo
         self.copy_dir = copy_dir
+        self.copy_dir_original = copy_dir
         self.copy_url = copy_url
         self.copy_branch = copy_branch
         self.docker_auto_workdir = docker_auto_workdir

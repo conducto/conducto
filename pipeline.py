@@ -160,6 +160,7 @@ class Node:
         "_repo",
         "_autorun",
         "_sleep_when_done",
+        "_headless",
     )
 
     def __init__(
@@ -197,6 +198,7 @@ class Node:
         # These are only to be set on the root node, and only by co.main().
         self._autorun = None
         self._sleep_when_done = None
+        self._headless = None
 
         # default all user-settable parameters
         self.user_set = {
@@ -558,6 +560,7 @@ class Node:
             "token": self.token,
             "autorun": self._autorun,
             "sleep_when_done": self._sleep_when_done,
+            "headless": self._headless,
         }
         queue = collections.deque([self])
         while queue:
@@ -610,6 +613,7 @@ class Node:
         root.token = data.get("token")
         root._autorun = data.get("autorun", False)
         root._sleep_when_done = data.get("sleep_when_done", False)
+        root._headless = data.get("headless", False)
         return root
 
     # returns a stream in topological order
@@ -699,6 +703,8 @@ class Node:
         run=False,
         sleep_when_done=False,
         public=False,
+        headless=False,
+        token=None,
     ):
         if self.image is None:
             self.image = image_mod.Image(name="conducto-default")
@@ -707,6 +713,7 @@ class Node:
 
         self._autorun = run
         self._sleep_when_done = sleep_when_done
+        self._headless = headless
 
         from conducto.internal import build
 
@@ -718,6 +725,8 @@ class Node:
             retention=retention,
             is_public=public,
             prebuild_images=prebuild_images,
+            headless=headless,
+            token=token,
         )
 
     def check_images(self):

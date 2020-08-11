@@ -6,8 +6,9 @@ import subprocess
 import sys
 import time
 import typing
+import tempfile
 import urllib.parse
-from conducto.shared import constants, log, types as t
+from conducto.shared import constants, log, types as t, path_utils
 from . import api_utils
 from .. import api
 
@@ -105,9 +106,8 @@ class Config:
     # generic methods
     ############################################################
     def reload(self):
-        configFile = self.__get_config_file()
-        self.config = configparser.ConfigParser()
-        self.config.read(configFile)
+        configFile = self._get_config_file()
+        self.config = self._atomic_read_config(configFile)
 
         if os.environ.get("CONDUCTO_PROFILE", "") != "":
             self.default_profile = os.environ["CONDUCTO_PROFILE"]
@@ -168,7 +168,7 @@ class Config:
             self.write()
 
     def write(self):
-        config_file = self.__get_config_file()
+        config_file = self._get_config_file()
         # Create config dir if doesn't exist.
         config_dir = os.path.dirname(config_file)
         if not os.path.isdir(config_dir):
@@ -213,15 +213,13 @@ commands:
                     raise RuntimeError(fallback_error)
             else:
                 os.mkdir(config_dir)
-        with open(config_file, "w") as config_fh:
-            self.config.write(config_fh)
+        self._atomic_write_config(self.config, config_file)
 
     def _profile_general(self, profile) -> dict:
         profdir = constants.ConductoPaths.get_profile_base_dir(profile=profile)
         conffile = os.path.join(profdir, "config")
 
-        profconfig = configparser.ConfigParser()
-        profconfig.read(conffile)
+        profconfig = self._atomic_read_config(conffile)
 
         try:
             results = dict(profconfig.items("general"))
@@ -237,7 +235,7 @@ commands:
         if "CONDUCTO_URL" in os.environ and os.environ["CONDUCTO_URL"]:
             return os.environ["CONDUCTO_URL"]
         elif self.default_profile and os.path.exists(
-            self.__get_profile_config_file(self.default_profile)
+            self._get_profile_config_file(self.default_profile)
         ):
             return self._profile_general(self.default_profile)["url"]
         else:
@@ -290,7 +288,7 @@ commands:
         # If neither the environment variable nor the class variable are set then read
         # the token in from the .conducto profile config.
         if self.default_profile and os.path.exists(
-            self.__get_profile_config_file(self.default_profile)
+            self._get_profile_config_file(self.default_profile)
         ):
             token = self._profile_general(self.default_profile).get("token", None)
             if refresh or force_refresh:
@@ -316,17 +314,14 @@ commands:
         profdir = constants.ConductoPaths.get_profile_base_dir(profile=profile)
         conffile = os.path.join(profdir, "config")
 
-        profconfig = configparser.ConfigParser()
-        profconfig.read(conffile)
+        profconfig = Config._atomic_read_config(conffile)
         return profconfig
 
     @staticmethod
     def write_profile_config(profile, profconfig):
         profdir = constants.ConductoPaths.get_profile_base_dir(profile=profile)
         conffile = os.path.join(profdir, "config")
-
-        with open(conffile, "w") as fconf:
-            profconfig.write(fconf)
+        Config._atomic_write_config(profconfig, conffile)
 
     def get_profile_general(self, profile, option, fallback=None):
         profconfig = self.get_profile_config(profile)
@@ -486,8 +481,7 @@ commands:
         profconfig.set("general", "email", userdata["email"])
         profconfig.set("general", "token", token)
         os.makedirs(profdir, exist_ok=True)
-        with open(conffile, "w") as fconf:
-            profconfig.write(fconf)
+        self._atomic_write_config(profconfig, conffile)
 
         assert default in (True, False, "first")
         if default is True or (default == "first" and is_first):
@@ -500,15 +494,31 @@ commands:
     # helper methods
     ############################################################
     @staticmethod
-    def __get_config_file():
+    def _get_config_file():
         base_dir = constants.ConductoPaths.get_local_base_dir()
         config_file = os.path.join(base_dir, "config")
         return os.path.expanduser(config_file)
 
     @staticmethod
-    def __get_profile_config_file(profile):
+    def _get_profile_config_file(profile):
         base_dir = constants.ConductoPaths.get_profile_base_dir(profile)
         return os.path.join(os.path.expanduser(base_dir), "config")
+
+    @staticmethod
+    def _atomic_write_config(config, filename):
+        cwd = os.path.dirname(filename)
+        with tempfile.NamedTemporaryFile(
+            mode="w", delete=False, prefix=".config.", dir=cwd
+        ) as temp_file:
+            config.write(temp_file)
+        path_utils.outer_chown(temp_file.name)
+        os.replace(temp_file.name, filename)
+
+    @staticmethod
+    def _atomic_read_config(filename):
+        config = configparser.ConfigParser()
+        config.read(filename)
+        return config
 
 
 AsyncConfig = api_utils.async_helper(Config)

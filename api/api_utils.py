@@ -23,6 +23,14 @@ class UserPathError(UserInputValidation):
     pass
 
 
+class WSLMapError(UserPathError):
+    pass
+
+
+class WindowsMapError(UserPathError):
+    pass
+
+
 class InvalidResponse(Exception):
     def __init__(self, *args, status_code=None, url=None):
         super().__init__(*args)

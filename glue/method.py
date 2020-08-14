@@ -5,8 +5,6 @@ import functools
 import inspect
 import json
 import os
-import re
-import pipes
 import pprint
 import shlex
 import sys
@@ -167,20 +165,8 @@ class Wrapper(object):
     def to_command(self, *args, **kwargs):
         abspath = os.path.realpath(inspect.getfile(self.callFunc))
         ctxpath = image_mod.Image.get_contextual_path(abspath)
-        # see also parse_registered_path
-        mm = re.match(r"^(\$\{([A-Z_][A-Z0-9_]*)(|=([^}]*))\})(.*)", ctxpath)
-        unique_string = "__CBIH5EX57NYHGC6YO69U__"
-        replacement = None
-        if mm:
-            # ctxpath became a named mount
-            replacement = mm.group(1)
-            ctxpath = ctxpath.replace(mm.group(1), unique_string)
 
-        parts = [
-            "conducto",
-            f"__conducto_path:{ctxpath}:endpath__",
-            self.callFunc.__name__,
-        ]
+        parts = [self.callFunc.__name__]
 
         sig = inspect.signature(self.callFunc)
         bound = sig.bind(*args, **kwargs)
@@ -195,10 +181,12 @@ class Wrapper(object):
                 parts += ["--{}={}".format(k, t.List.join(map(t.serialize, v)))]
             else:
                 parts += ["--{}={}".format(k, t.serialize(v))]
-        command = " ".join(pipes.quote(part) for part in parts)
-        if replacement:
-            command = command.replace(unique_string, replacement)
-        return command
+        quoted = [shlex.quote(part) for part in parts]
+
+        serialized = f"__conducto_path:{ctxpath.linear()}:endpath__"
+        command = ["conducto", serialized] + quoted
+
+        return " ".join(command)
 
     def pretty(self):
         myargs = self.getArguments()
@@ -432,7 +420,7 @@ def _get_default_title(specifiedFuncName, default_was_used):
         args.insert(1, specifiedFuncName)
 
     # here is the default title
-    return " ".join(pipes.quote(a) for a in args)
+    return " ".join(shlex.quote(a) for a in args)
 
 
 def _get_call_func(argv, default, methods):

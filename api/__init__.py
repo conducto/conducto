@@ -19,6 +19,8 @@ from .api_utils import (
     UserInputValidation,
     UserPermissionError,
     UserPathError,
+    WindowsMapError,
+    WSLMapError,
     get_auth_headers,
     is_conducto_url,
 )

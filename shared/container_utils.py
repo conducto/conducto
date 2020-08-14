@@ -4,11 +4,12 @@ to use the host's Docker socket in order to build images and run other container
 must also be able to access the external .conducto directory.
 """
 
-import functools
 import os
+import json
+import functools
 import subprocess
 
-from conducto.shared import async_utils, client_utils, constants, log
+from conducto.shared import async_utils, client_utils, constants, log, imagepath
 import conducto.internal.host_detection as hostdet
 
 
@@ -20,18 +21,48 @@ def docker_available_drives():
     return proc.stdout.decode("utf8").split()
 
 
-def get_whole_host_mounting_flags():
+@functools.lru_cache(None)
+def get_current_container_mounts():
+    subp = subprocess.Popen(
+        f"docker inspect -f '{{{{ json .Mounts }}}}' {get_current_container_id()}",
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    mount_data, err = subp.communicate()
+    log.log(f"Got {mount_data} {err}")
+    if subp.returncode == 0:
+        return json.loads(mount_data)
+    else:
+        raise RuntimeError(
+            r"error {subp.returncode} while getting current container mounts"
+        )
+
+
+def get_whole_host_mounting_flags(from_container):
     """
     Mount whole system read-only to enable rebuilding images as needed
     """
-    if hostdet.is_wsl() or hostdet.is_windows():
-        drives = docker_available_drives()
+    if hostdet.is_wsl() or hostdet.is_windows() or os.getenv("WINDOWS_HOST"):
+        if from_container:
+            mounts = get_current_container_mounts()
+
+            drives = []
+            for mount in mounts:
+                source = mount["Source"]
+                if os.getenv("WINDOWS_HOST") and source.startswith("/host_mnt"):
+                    source = source[len("/host_mnt") :]
+                firstseg = source.strip("/").split("/")[0]
+                if len(firstseg) == 1:
+                    drives.append(firstseg)
+        else:
+            drives = docker_available_drives()
 
         output = ["-e", "WINDOWS_HOST=plain"]
 
         for d in drives:
             # Mount whole system read-only to enable rebuilding images as needed
-            mount = f"type=bind,source={d}:/,target={constants.ConductoPaths.MOUNT_LOCATION}/{d.lower()},readonly"
+            mount = f"type=bind,source=/{d}/,target={constants.ConductoPaths.MOUNT_LOCATION}/{d.lower()},readonly"
             output += ["--mount", mount]
         return output
     else:
@@ -40,38 +71,25 @@ def get_whole_host_mounting_flags():
         return ["--mount", mount]
 
 
-def get_external_conducto_dir(is_migration):
+def get_external_conducto_dir(from_container):
     # Remote base dir will be verified by container.
     result = constants.ConductoPaths.get_profile_base_dir()
 
-    if hostdet.is_wsl():
-        result = os.path.realpath(result)
-        result = hostdet.wsl_host_docker_path(result)
-    elif hostdet.is_windows():
-        result = hostdet.windows_docker_path(result)
-    elif is_migration:
-        # we no longer support conducto in conducto
-        # instead of doing a general (and fragile) check if we are in a docker container
-        # we already know that we are doing a migration, so we can grab the mount info with the name
-
+    if from_container:
         # Mount to the ~/.conducto of the host machine and not of the container
-        import json
+        mounts = get_current_container_mounts()
 
-        subp = subprocess.Popen(
-            f"docker inspect -f '{{{{ json .Mounts }}}}' {get_current_container_id()}",
-            shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-        mount_data, err = subp.communicate()
-        log.log(f"Got {mount_data} {err}")
-        if subp.returncode == 0:
-            mounts = json.loads(mount_data)
-            for mount in mounts:
-                if result.startswith(mount["Destination"]):
-                    result = result.replace(mount["Destination"], mount["Source"], 1)
-                    log.log(f"Mounting to {result}")
-                    break
+        for mount in mounts:
+            source = mount["Source"]
+            if os.getenv("WINDOWS_HOST") and source.startswith("/host_mnt"):
+                source = source[len("/host_mnt") :]
+            if result.startswith(mount["Destination"]):
+                result = result.replace(mount["Destination"], source, 1)
+                log.log(f"Mounting to {result}")
+                break
+    else:
+        result = imagepath.Path.from_localhost(result)
+        result = result.to_docker_mount()
 
     return result
 

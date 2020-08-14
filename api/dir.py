@@ -63,6 +63,20 @@ class Dir:
             )
         return api_utils.get_data(response)
 
+    def org_by_user(self, token: t.Token = None) -> dict:
+        user_id = api.Auth().get_user_id(token)
+
+        headers = api_utils.get_auth_headers(token)
+
+        response = request_utils.get(self.url + f"/dir/org/by_user", headers=headers)
+
+        if response.status_code == 404:
+            raise exceptions.ClientError(
+                status_code=404,
+                message=f"No user information found.  Please complete registration at {self.url}/app",
+            )
+        return api_utils.get_data(response)
+
     def nuke_org(self, org_id: t.OrgId, token: t.Token = None):
         headers = api_utils.get_auth_headers(token)
 

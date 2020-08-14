@@ -2,6 +2,7 @@ import base64
 import collections
 import functools
 import gzip
+import shlex
 import inspect
 import itertools
 import json
@@ -10,7 +11,7 @@ import re
 import traceback
 import typing
 
-from .shared import constants, log, types as t
+from .shared import constants, log, types as t, imagepath
 from . import api, callback, image as image_mod
 
 State = constants.State
@@ -128,7 +129,7 @@ class Node:
     _MAX_FILE_AND_LINE_CALLS = 50000
     _PATH_MAP = json.loads(os.getenv("CONDUCTO_PATH_MAP", "{}"))
     _PATH_MAP = {
-        image_mod.serialization_path_interpretation(k): v for k, v in _PATH_MAP.items()
+        imagepath.Path.from_dockerhost_encoded(k): v for k, v in _PATH_MAP.items()
     }
 
     if api.Config().get("config", "force_debug_info") or t.Bool(
@@ -802,7 +803,9 @@ class Node:
 
                 for external, internal in Node._PATH_MAP.items():
                     if filename.startswith(internal):
-                        filename = filename.replace(internal, external, 1)
+                        filename = filename.replace(
+                            internal, external.to_docker_host(), 1
+                        )
                 return filename, lineno
 
         return None, None
@@ -916,24 +919,17 @@ class Exec(Node):
                 path = match.group(1)
                 path_map = dict(img.path_map) if img.path_map is not None else {}
 
-                # If a gitroot was detected, it was marked in the command with a "//".
-                # If copy_url was set then we can determine what the external portion
-                # of the path was. Together with COPY_DIR we can update path_map
-                if "//" in path and (img.copy_url or img.copy_repo):
-                    external = path.split("//", 1)[0]
-                    path_map[external] = COPY_DIR
-
-                # Normalize path to get rid of the //.
-                path = image_mod.serialization_path_interpretation(path)
-                path = os.path.normpath(path)
+                path = imagepath.Path.from_dockerhost_encoded(path)
 
                 for external, internal in path_map.items():
-                    external = image_mod.serialization_path_interpretation(external)
+                    # external is already an imagepath.Path
 
                     # For each element of path_map, see if the external path matches
-                    external = os.path.normpath(external.rstrip("/"))
-                    if not path.startswith(external):
+                    if not path.is_subdir_of(external):
                         continue
+
+                    path = path.to_docker_mount()
+                    external = external.to_docker_mount()
 
                     # If so, calculate the corresponding internal path
                     internal = os.path.normpath(internal.rstrip("/"))
@@ -943,10 +939,10 @@ class Exec(Node):
                     # As a convenience, if we `docker_auto_workdir` then we know the workdir and
                     # we can shorten the path
                     if img.docker_auto_workdir and new_path.startswith(COPY_DIR):
-                        return os.path.relpath(new_path, COPY_DIR)
+                        return shlex.quote(os.path.relpath(new_path, COPY_DIR))
                     else:
                         # Otherwise just return an absolute path.
-                        return new_path
+                        return shlex.quote(new_path)
 
                 raise ValueError(
                     f"Node references local code but the Image doesn't have enough information to infer the corresponding path inside the container.\n"

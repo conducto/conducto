@@ -1,13 +1,10 @@
 import asyncio
-import collections
 import contextlib
 import concurrent.futures
-import functools
 import inspect
 import hashlib
 import json
 import os
-import re
 import subprocess
 import sys
 import time
@@ -15,8 +12,7 @@ import traceback
 import typing
 import uuid
 
-import conducto.internal.host_detection as hostdet
-from conducto.shared import async_utils, log, constants, path_utils
+from conducto.shared import async_utils, log, constants, imagepath
 import conducto
 from .. import pipeline
 from . import dockerfile as dockerfile_mod, names
@@ -41,146 +37,7 @@ def relpath(path):
     """
 
     ctxpath = Image.get_contextual_path(path)
-    return f"__conducto_path:{ctxpath}:endpath__"
-
-
-def parse_registered_path(path):
-    """
-    This function takes a path which may include registered names for the
-    active profile and parses out the registered name, path hints and tail.
-    """
-
-    regpath = collections.namedtuple("regpath", ["name", "hint", "tail"])
-
-    mm = re.match(r"^\$\{([A-Z_][A-Z0-9_]*)(|=([^}]*))\}(.*)", path)
-    if mm is not None:
-        name = mm.group(1)
-        hint = mm.group(3)
-        tail = mm.group(4)
-        if tail is None:
-            tail = ""
-
-        return regpath(name, hint, tail)
-    return None
-
-
-def resolve_registered_path(path):
-    # This converts a path from a serialization to a host machine.  It may or
-    # may not the same host machine as the one that made the serialization and
-    # it may need to be interactive with the user.
-
-    if constants.ExecutionEnv.value() not in constants.ExecutionEnv.external:
-        raise RuntimeError(
-            "this is an interactive function and has no manager (or worker) implementation"
-        )
-
-    regparse = parse_registered_path(path)
-    if regparse is None:
-        result = path
-    else:
-        conf = conducto.api.Config()
-        mounts = conf.get_named_mount_paths(conf.default_profile, regparse.name)
-
-        if len(mounts) == 1:
-            result = "/".join([mounts[0], regparse.tail.lstrip("/")])
-        elif len(mounts) == 0:
-            # ask
-            print(
-                f"The named mount {regparse.name} is not known on this host. Enter a path for that mount (blank to abort)."
-            )
-            path = input("path:  ")
-            if path == "":
-                raise RuntimeError("error mounting directories")
-            result = "/".join([path, regparse.tail.lstrip("/")])
-            conf.register_named_mount(conf.default_profile, regparse.name, path)
-        elif regparse.hint in mounts:
-            result = "/".join([regparse.hint, regparse.tail.lstrip("/")])
-        else:
-            # disambiguate by asking which
-            print(
-                f"The named mount {regparse.name} is associated with multiple directories on this host. Select one or enter a new directory."
-            )
-            for index, mpath in enumerate(mounts):
-                print(f"\t[{index+1}] {mpath}")
-            print("\t[new] Enter a new path")
-
-            def safe_int(s):
-                try:
-                    return int(s)
-                except ValueError:
-                    return None
-
-            while True:
-                sel = input(f"path [1-{len(mounts)}, new]:  ")
-                if sel == "":
-                    raise RuntimeError("error mounting directories")
-                if sel == "new" or safe_int(sel) is not None:
-                    break
-
-            if sel == "new":
-                path = input("path:  ")
-                conf.register_named_mount(conf.default_profile, regparse.name, path)
-            else:
-                path = mounts[int(sel) - 1]
-            result = "/".join([path, regparse.tail.lstrip("/")])
-
-    if hostdet.is_windows() or hostdet.is_wsl():
-        # The profile is kept on windows and the mount path is kept as windows format
-        result = hostdet.windows_docker_path(result)
-
-    return result
-
-
-def serialization_path_interpretation(p):
-    # This converts a path from a serialization to the manager or the host
-    # machine which created this serialization.  It is will return a valid path
-    # supposing that the host machine's directory structure matches what was at
-    # the point of pipeline creation.  No information required from the user as
-    # in resolve_registered_path.
-
-    if constants.ExecutionEnv.value() in constants.ExecutionEnv.manager_all:
-        regparse = parse_registered_path(p)
-        baseseg = regparse.hint if regparse else p
-        if os.getenv("WINDOWS_HOST") and baseseg[1] == ":":
-            baseseg = hostdet.windows_docker_path(baseseg)
-        tail = regparse.tail if regparse else ""
-
-        # host `/` is mounted at `/mnt/external`
-        return Image.PATH_PREFIX + baseseg + tail
-    else:
-        regparse = parse_registered_path(p)
-        if regparse is not None:
-            unix_path = f"{regparse.hint}/{regparse.tail}"
-        else:
-            unix_path = p
-        # this results in a unix host path ...
-        if hostdet.is_wsl() or hostdet.is_windows():
-            # ... or a docker-friendly windows path
-            unix_path = hostdet.windows_docker_path(unix_path)
-        return unix_path
-
-
-@functools.lru_cache(None)
-def _split_windocker(path):
-    # TODO:  is this used?
-    chunks = path.split("//")
-    mangled = hostdet.wsl_host_docker_path(chunks[0])
-    if len(chunks) > 1:
-        newctx = f"{mangled}//{chunks[1]}"
-    else:
-        newctx = mangled
-    return newctx
-
-
-@functools.lru_cache(None)
-def _split_winpath(path):
-    chunks = path.split("//")
-    mangled = hostdet.windows_drive_path(chunks[0]).replace("\\", "/")
-    if len(chunks) > 1:
-        newctx = f"{mangled}//{chunks[1]}"
-    else:
-        newctx = mangled
-    return newctx
+    return f"__conducto_path:{ctxpath.linear()}:endpath__"
 
 
 class Status:
@@ -251,16 +108,6 @@ class Repository:
             self.add(img)
 
 
-class ContextualizedStr(str):
-    """
-    ContextualizedStr is a subclass of str and is str-like in all ways. It is used to
-    make Image.get_contextual_path idempotent by denoting something that's already been
-    handled by that method.
-    """
-
-    pass
-
-
 class Image:
     """
     :param image:  Specify the base image to start from. Code can be added with
@@ -309,7 +156,6 @@ class Image:
         our favorite Pokemon. I choose you, angry-bulbasaur!
     """
 
-    PATH_PREFIX = ""
     _PULLED_IMAGES = set()
     _CONTEXT = None
 
@@ -369,6 +215,19 @@ class Image:
         self.docker_auto_workdir = docker_auto_workdir
         self.reqs_py = reqs_py
         self.path_map = path_map
+        if self.path_map:
+            # on deserialize pathmaps are strings but they may also be strings when
+            # being passed from the user.
+            def auto_detect_deserialize(e):
+                # TODO: find a better way to discover this.
+                if e.find("pathsep") >= 0:
+                    return imagepath.Path.from_dockerhost_encoded(e)
+                return e
+
+            self.path_map = {
+                auto_detect_deserialize(external): internal
+                for external, internal in self.path_map.items()
+            }
         self.git_sha = git_sha or os.getenv("CONDUCTO_GIT_SHA")
 
         self.pre_built = pre_built
@@ -387,18 +246,25 @@ class Image:
                     if "CONDUCTO_GIT_REPO" in os.environ:
                         self.copy_repo = os.environ["CONDUCTO_GIT_REPO"]
                         # TODO: Is there a way to set `path_map` here? If run in PR mode
-                        # then we'd have to use named mounts. Get help setting this up.
+                        # then we'd have to use named shares. Get help setting this up.
                     else:
-                        self.copy_repo = self._get_git_repo(_non_conducto_dir())
+                        self.copy_repo = imagepath.Path._get_git_repo(
+                            _non_conducto_dir()
+                        )
 
                     if "CONDUCTO_GIT_REPO_ROOT" in os.environ:
                         repo_root = os.environ["CONDUCTO_GIT_REPO_ROOT"]
                     else:
                         # Set the path_map to show that this repo is at COPY_DIR
-                        repo_root = self._get_git_root(_non_conducto_dir())
+                        repo_root = imagepath.Path._get_git_root(_non_conducto_dir())
+
+                    const_ee = constants.ExecutionEnv
+                    if const_ee.value() in const_ee.external:
+                        origin = imagepath.Path._get_git_origin(repo_root)
+                        sharename = imagepath.Path._sanitize_git_origin(origin)
+                        Image.share_directory(sharename, repo_root)
 
                     repo_root = self.get_contextual_path(repo_root)
-                    repo_root = repo_root.rstrip("/")
 
                     if not self.path_map:
                         self.path_map = {}
@@ -415,11 +281,12 @@ class Image:
                     else:
                         outside_dir = _non_conducto_dir()
                         contextual_path = self.get_contextual_path(outside_dir)
-                        if "//" not in contextual_path:
+                        gitroot = contextual_path.get_git_root()
+                        if not gitroot:
                             raise ValueError(
                                 f"Could not find Git root for {outside_dir}."
                             )
-                        self.copy_dir = contextual_path.split("//", 1)[0]
+                        self.copy_dir = gitroot.as_docker_host_path()
                 self.context = self.copy_dir
 
             # Set CONDUCTO_GIT_SHA later because we have to run a command to do it
@@ -433,6 +300,8 @@ class Image:
                 if self.context is None:
                     self.context = os.path.dirname(self.dockerfile)
                 self.dockerfile = self.get_contextual_path(self.dockerfile)
+
+            if self.context is not None:
                 self.context = self.get_contextual_path(self.context)
 
             if self.copy_dir is not None:
@@ -459,25 +328,41 @@ class Image:
     def __eq__(self, other):
         return isinstance(other, Image) and self.to_dict() == other.to_dict()
 
+    @staticmethod
+    def _serialize_path(p):
+        return p._id() if isinstance(p, imagepath.Path) else p
+
+    @staticmethod
+    def _serialize_pathmap(pathmap):
+        if pathmap:
+            return {p.linear(): v for p, v in pathmap.items()}
+        return None
+
     # hack to get this to serialize
     @property
     def _id(self):
-        return self.to_dict()
+        try:
+            return self.to_dict()
+        except:
+            # NOTE:  when there is an error in to_dict, json.encode throws a
+            # really unhelpful "ValueError: Circular reference detected"
+            print(traceback.format_exc())
+            raise
 
     def to_dict(self):
         return {
             "name": self.name,
             "image": self.image,
-            "dockerfile": self.dockerfile,
+            "dockerfile": self._serialize_path(self.dockerfile),
             "docker_build_args": self.docker_build_args,
             "docker_auto_workdir": self.docker_auto_workdir,
-            "context": self.context,
+            "context": self._serialize_path(self.context),
             "copy_repo": self.copy_repo,
-            "copy_dir": self.copy_dir,
+            "copy_dir": self._serialize_path(self.copy_dir),
             "copy_url": self.copy_url,
             "copy_branch": self.copy_branch,
             "reqs_py": self.reqs_py,
-            "path_map": self.path_map,
+            "path_map": self._serialize_pathmap(self.path_map),
             "pre_built": self.pre_built,
             "git_sha": self.git_sha,
         }
@@ -485,42 +370,41 @@ class Image:
     def to_raw_image(self):
         return {
             "image": self.image,
-            "dockerfile": self.dockerfile,
+            "dockerfile": self._serialize_path(self.dockerfile),
             "docker_build_args": self.docker_build_args,
             "docker_auto_workdir": self.docker_auto_workdir,
-            "context": self.context,
+            "context": self._serialize_path(self.context),
             "copy_repo": self.copy_repo,
-            "copy_dir": self.copy_dir,
+            "copy_dir": self._serialize_path(self.copy_dir),
             "copy_url": self.copy_url,
             "copy_branch": self.copy_branch,
             "reqs_py": self.reqs_py,
-            "path_map": self.path_map,
+            "path_map": self._serialize_pathmap(self.path_map),
         }
 
     @staticmethod
-    def get_contextual_path(p, named_mounts=True):
-        # Make this idempotent: ContextualizedStr is a subclass of str and is str-like
-        # in all ways, so we use it here to denote something that's already been handled
-        # by this method.
-        if isinstance(p, ContextualizedStr):
+    def get_contextual_path(p, named_shares=True):
+        """
+        Take a path as a string and returns a `conducto.Path`.  Optionally
+        searches for named shares as recognized from the root.
+
+        :result: `conducto.Path`
+        """
+        if isinstance(p, imagepath.Path):
             return p
+        if isinstance(p, dict) and "pathsep" in p:
+            return imagepath.Path.from_dockerhost_encoded(p)
 
         if constants.ExecutionEnv.value() in constants.ExecutionEnv.manager_all:
             # Note:  This can run in the worker in Lazy nodes.
-            return ContextualizedStr(p)
+            return imagepath.Path.from_localhost(p)
 
         op = os.path
 
-        # First, we check if the path is fully qualified as a registered path
-        # and return immediately if so, we check this again later after
-        # possible recursive path map resolution.
-        regparse = parse_registered_path(p)
-        if regparse is not None:
-            return ContextualizedStr(p)
-
         # Translate relative paths as starting from the file where they were defined.
         if not op.isabs(p):
-            p = op.realpath(op.join(_non_conducto_dir(), p))
+            p = op.join(_non_conducto_dir(), p)
+        p = op.realpath(p)
 
         # Apply context specified from outside this container. Needed for recursive
         # co.Lazy calls inside an Image with ".path_map".
@@ -529,121 +413,62 @@ class Image:
             path_map = json.loads(path_map_text)
             for external, internal in path_map.items():
                 if p.startswith(internal):
-                    p = p.replace(internal, external, 1)
+                    external = imagepath.Path.from_dockerhost_encoded(external)
 
-            # test again, now with path_resolution
-            regparse = parse_registered_path(p)
-            if regparse is not None:
-                return ContextualizedStr(p)
+                    # we are in docker, so this append is always a unix path tail
+                    tail = p[len(internal) :].lstrip("/")
+                    return external.append(tail, sep="/")
 
         # If ".copy_dir" wasn't set, find the git root so that we could possibly use this
         # inside an Image with ".copy_url" set.
         elif op.exists(p):
-            if op.isfile(p):
-                dirname = op.dirname(p)
-            else:
-                dirname = p
-            git_root = Image._get_git_root(dirname)
-            if git_root:
-                # Put a '//' after the git_root in `p`
-                before, after = p.split(git_root, 1)
-                p = before + git_root.rstrip("/") + "//" + after.lstrip("/")
-
-        if hostdet.is_wsl():
-            # The point is largely that we state paths in terms of the docker
-            # host and the recommended docker method in WSL1 is to use the
-            # windows installation as a remote docker host.
-            p_host = _split_winpath(p).replace("/", "\\")
+            result = imagepath.Path.from_localhost(p)
+            result = result.mark_git_root()
         else:
-            p_host = p
+            result = imagepath.Path.from_localhost(p)
 
-        auto_reg_path = None
-        auto_reg_name = None
-        if named_mounts:
+        if named_shares:
+            auto_reg_path = None
+            auto_reg_name = None
+
+            compare = result.as_docker_host_path()
+
             dirsettings = conducto.api.dirconfig_detect(p)
             if dirsettings and "registered" in dirsettings:
                 auto_reg_name = dirsettings["registered"]
                 auto_reg_path = dirsettings["dir-path"]
 
-            # iterate through named mounts looking for a match in this org
+            # iterate through named shares looking for a match in this org
             if auto_reg_path is None:
                 conf = conducto.api.Config()
-                mounts = conf.get_named_mount_mapping(conf.default_profile)
+                shares = conf.get_named_share_mapping(conf.default_profile)
 
                 def enum():
-                    for name, paths in mounts.items():
+                    for name, paths in shares.items():
                         for path in paths:
-                            yield name, path
+                            yield name, imagepath.Path.from_dockerhost(path)
 
                 for name, path in enum():
-                    reg = parse_registered_path(path)
-                    if reg is not None:
-                        path = reg.hint
-                    if path_utils.is_parent_subdir(path, p_host):
-                        # bingo, we have recognized this as a mount for your org
+                    if compare.is_subdir_of(path):
+                        # bingo, we have recognized this as a share for your org
                         auto_reg_name = name
-                        auto_reg_path = path
+                        auto_reg_path = path.to_docker_host()
                         break
 
-        if auto_reg_path:
-            # convert to registered path and return
-            unix_tail = p_host[len(auto_reg_path) :].replace("\\", "/")
-            p = f"${{{auto_reg_name.upper()}={auto_reg_path}}}" + unix_tail
-            return ContextualizedStr(p)
-        else:
-            # convert to windows now
-            if hostdet.is_wsl():
-                p = _split_winpath(p).replace("/", "\\")
-            elif hostdet.is_windows():
-                p = hostdet.windows_docker_path(p)
+            if auto_reg_name:
+                # return an annotated result with the discovered path
+                result = compare.mark_named_share(auto_reg_name, auto_reg_path)
 
-        return ContextualizedStr(p)
-
-    @staticmethod
-    @functools.lru_cache(maxsize=None)
-    def _get_git_root(dirpath):
-        result = None
-
-        try:
-            PIPE = subprocess.PIPE
-            args = ["git", "-C", dirpath, "rev-parse", "--show-toplevel"]
-            out, err = subprocess.Popen(args, stdout=PIPE, stderr=PIPE).communicate()
-
-            nongit = "fatal: not a git repository"
-            if not err.decode("utf-8").rstrip().startswith(nongit):
-                result = out.decode("utf-8").rstrip()
-        except FileNotFoundError:
-            # log, but essentially pass
-            log.debug("no git installation found, skipping directory indication")
         return result
 
     @staticmethod
-    @functools.lru_cache(maxsize=None)
-    def _get_git_repo(dirpath):
-        result = None
-
-        try:
-            PIPE = subprocess.PIPE
-            args = ["git", "-C", dirpath, "remote", "-v"]
-            out, err = subprocess.Popen(args, stdout=PIPE, stderr=PIPE).communicate()
-
-            nongit = "fatal: not a git repository"
-            if not err.decode("utf-8").rstrip().startswith(nongit):
-                m = re.search("([\w\-_]+)\.git", out.decode("utf-8"))
-                if m:
-                    result = m.group(1)
-        except FileNotFoundError:
-            # log, but essentially pass
-            log.debug("no git installation found, skipping directory indication")
-        return result
-
-    @staticmethod
-    def register_directory(name, relative):
-        path = Image.get_contextual_path(relative, named_mounts=False).rstrip(
-            os.path.sep
-        )
+    def share_directory(name, relative):
+        path = Image.get_contextual_path(relative, named_shares=False)
         config = conducto.api.Config()
-        config.register_named_mount(config.default_profile, name, path)
+        config.register_named_share(config.default_profile, name, path)
+
+    # alias for back compat
+    register_directory = share_directory
 
     async def sha1(self):
         if self.git_sha is not None:
@@ -669,7 +494,7 @@ class Image:
                 )
             self.git_sha = sha1
         else:
-            root = serialization_path_interpretation(self.copy_dir)
+            root = self.copy_dir.to_docker_mount()
             out, err = await async_utils.run_and_check(
                 "git", "-C", root, "rev-parse", "HEAD"
             )
@@ -871,8 +696,8 @@ class Image:
                 build_args += ["--build-arg", "{}={}".format(k, v)]
         build_args += [
             "-f",
-            serialization_path_interpretation(self.dockerfile),
-            serialization_path_interpretation(self.context),
+            self.dockerfile.to_docker_mount(),
+            self.context.to_docker_mount(),
         ]
 
         out, err = await async_utils.run_and_check(
@@ -900,7 +725,7 @@ class Image:
             build_args = [
                 "-f",
                 "-",
-                serialization_path_interpretation(self.copy_dir),
+                self.copy_dir.to_docker_mount(),
             ]
         else:
             build_args = ["-"]
@@ -933,7 +758,7 @@ class Image:
             try:
                 await async_utils.run_and_check("docker", "inspect", conducto_image)
                 pull_image = False
-            except:
+            except subprocess.CalledProcessError:
                 pass
 
             if pull_image and conducto_image not in Image._PULLED_IMAGES:
@@ -965,7 +790,7 @@ class Image:
                 try:
                     await async_utils.run_and_check("docker", "inspect", worker_image)
                     pull_worker = False
-                except:
+                except subprocess.CalledProcessError:
                     pass
             if pull_worker and worker_image not in Image._PULLED_IMAGES:
                 await async_utils.run_and_check("docker", "pull", worker_image)

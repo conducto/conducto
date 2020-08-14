@@ -3,12 +3,13 @@ import os
 import hashlib
 import secrets
 import subprocess
+import json
 import sys
 import time
 import typing
 import tempfile
 import urllib.parse
-from conducto.shared import constants, log, types as t, path_utils
+from conducto.shared import constants, log, types as t, path_utils, imagepath
 from . import api_utils
 from .. import api
 
@@ -136,20 +137,15 @@ class Config:
                 yield fname
 
     def delete_profile(self, profile):
-        import conducto.internal.host_detection as hostdet
-
         dotconducto = constants.ConductoPaths.get_local_base_dir()
-        if hostdet.is_wsl():
-            dotconducto = hostdet.wsl_host_docker_path(os.path.realpath(dotconducto))
-        elif hostdet.is_windows():
-            dotconducto = hostdet.windows_docker_path(os.path.realpath(dotconducto))
+        dotconducto = imagepath.Path.from_localhost(dotconducto)
 
         cmd = [
             "docker",
             "run",
             "--rm",
             "-v",
-            f"{dotconducto}:/root/.conducto",
+            f"{dotconducto.to_docker_mount()}:/root/.conducto",
             "alpine",
             "rm",
             "-rf",
@@ -297,7 +293,7 @@ commands:
                     t.Token(token), force=force_refresh
                 )
                 if new_token is None:
-                    raise PermissionError(f"Expired token in config")
+                    raise PermissionError("Expired token in config")
                 if token != new_token:
                     claims = auth.get_unverified_claims(new_token)
                     print(
@@ -332,81 +328,60 @@ commands:
         profconfig.set("general", option, value)
         self.write_profile_config(profile, profconfig)
 
-    def register_named_mount(self, profile, name, dirname):
+    def register_named_share(self, profile, name, dirname):
         """
         Create or append to a named directory list in the profile
         configuration.
         """
-        import conducto.internal.host_detection as hostdet
+        from .. import image as image_mod
 
-        sep = os.pathsep
-        if hostdet.is_wsl():
-            # pretend to be windows because we are going to creating this as a
-            # windows path.
-            sep = ";"
-            is_windows = dirname[1] == ":" and "\\" in dirname
-            if not is_windows:
-                dirname = hostdet.windows_drive_path(dirname).replace("/", "\\")
+        path = image_mod.Image.get_contextual_path(dirname, named_shares=False)
+        dirname = path.to_docker_host()
+
+        # TODO:  this test is good for my implementation now, but needs to go
+        if "{" in dirname:
+            raise RuntimeError(f"this is a bug -- {dirname}")
 
         profconfig = self.get_profile_config(profile)
 
-        current = profconfig.get("mounts", name, fallback=None)
-        if current == None:
-            current = dirname
-        else:
-            current = current.split(sep)
+        share_str = profconfig.get("shares", name, fallback="[]")
+        current = json.loads(share_str)
+        assert isinstance(current, list), "shares are stored as json lists of strings"
 
+        if not current:
+            current = [dirname]
+        else:
             if dirname in current:
                 return
             else:
                 current.append(dirname)
-                current = sep.join(current)
 
-        if not profconfig.has_section("mounts"):
-            profconfig.add_section("mounts")
-        profconfig.set("mounts", name, current)
+        if not profconfig.has_section("shares"):
+            profconfig.add_section("shares")
+        profconfig.set("shares", name, json.dumps(current))
 
         self.write_profile_config(profile, profconfig)
 
-    @staticmethod
-    def _get_mount_sep():
-        import conducto.internal.host_detection as hostdet
-
-        sep = os.pathsep
-        if constants.ExecutionEnv.value() in constants.ExecutionEnv.manager_all:
-            if os.getenv("WINDOWS_HOST"):
-                # outer docker host is windows
-                sep = ";"
-        elif hostdet.is_wsl():
-            # pretend to be windows because we are going to creating this as a
-            # windows path.
-            sep = ";"
-        return sep
-
-    def get_named_mount_mapping(self, profile):
+    def get_named_share_mapping(self, profile):
         profconfig = self.get_profile_config(profile)
-        sep = self._get_mount_sep()
 
         try:
-            mounts = profconfig.items("mounts")
+            shares = profconfig.items("shares")
         except configparser.NoSectionError:
-            mounts = {}
+            shares = {}
 
-        return {k: v.split(sep) for k, v in mounts}
+        return {k: json.loads(v) for k, v in shares}
 
-    def get_named_mount_paths(self, profile, name):
+    def get_named_share_paths(self, profile, name):
         profconfig = self.get_profile_config(profile)
-        sep = self._get_mount_sep()
 
         try:
-            current = profconfig.get("mounts", name, fallback=None)
+            share_str = profconfig.get("shares", name, fallback="[]")
         except configparser.NoSectionError:
-            current = None
-        if current == None:
-            return []
-        else:
-            current = current.split(sep)
-            return current
+            share_str = "[]"
+        current = json.loads(share_str)
+        assert isinstance(current, list), "shares are stored as json lists of strings"
+        return current
 
     def get_connect_url(self, pipeline_id):
         if self.get_url().find("conducto.com") > 0:
@@ -506,12 +481,20 @@ commands:
 
     @staticmethod
     def _atomic_write_config(config, filename):
+        try:
+            import conducto.internal.host_detection as hostdet
+
+            is_windows = hostdet.is_windows()
+        except ImportError:
+            is_windows = False
+
         cwd = os.path.dirname(filename)
         with tempfile.NamedTemporaryFile(
             mode="w", delete=False, prefix=".config.", dir=cwd
         ) as temp_file:
             config.write(temp_file)
-        path_utils.outer_chown(temp_file.name)
+        if not is_windows:
+            path_utils.outer_chown(temp_file.name)
         os.replace(temp_file.name, filename)
 
     @staticmethod

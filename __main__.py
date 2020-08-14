@@ -50,7 +50,7 @@ def show(id, app=True, shell=False):
             host = pipeline["meta"].get("hostname", None)
             if host != None:
                 m += f"  Try waking it from '{host}' with conducto show."
-            m += f"  For further assistance, contact us on Slack at ConductoHQ."
+            m += "  For further assistance, contact us on Slack at ConductoHQ."
 
             print(m, file=sys.stderr)
             sys.exit(1)
@@ -90,17 +90,6 @@ def show(id, app=True, shell=False):
         )
 
     build.run(token, pipeline_id, func, app, shell, msg, starting)
-
-
-async def migrate(pipeline_id):
-    token = co.api.Auth().get_token_from_shell(force=True)
-    conn = await co.api.connect_to_pipeline(pipeline_id, token=token)
-    try:
-        await conn.send(json.dumps({"type": "MIGRATE"}))
-        # sleep, if I don't do this sometimes the command doesn't go through ¯\_(ツ)_/¯
-        await asyncio.sleep(0.1)
-    finally:
-        await conn.close()
 
 
 async def sleep(id):
@@ -195,7 +184,6 @@ def main():
         "debug",
         "livedebug",
         "init",
-        "migrate",
         "dump-serialization",
         "sleep",
         "discover",
@@ -205,7 +193,6 @@ def main():
             "debug": debug,
             "livedebug": livedebug,
             "init": dir_init,
-            "migrate": migrate,
             "dump-serialization": dump_serialization,
             "sleep": sleep,
             "discover": discover_cli,

@@ -1,8 +1,6 @@
 import os
 import sys
 import platform
-import subprocess
-import conducto.api as co_api
 
 
 def is_windows():
@@ -93,59 +91,3 @@ def system_open(url):
             # things which look scary but have little to do with the user level
             # reality
             os.system(f'xdg-open "{sanitized}" > /dev/null 2>&1')
-
-
-class WSLMapError(co_api.UserPathError):
-    pass
-
-
-class WindowsMapError(co_api.UserPathError):
-    pass
-
-
-def windows_host_path_from_docker(path):
-    if "A" <= path[0] <= "Z" and path[1] == ":":
-        # already a windows path
-        return path
-
-    if path[0] != "/" or path[2] != "/":
-        raise NotImplementedError(
-            "This is only for paths converted to the docker format with front slashes and the first segment being a drive letter."
-        )
-
-    drive = path[1].upper()
-    tail = path[3:].replace("/", "\\")
-    return f"{drive}:\\{tail}"
-
-
-def windows_drive_path(path):
-    """
-    Returns the windows path with forward slashes.  This is the format docker
-    wants in the -v switch.
-    """
-    proc = subprocess.run(["wslpath", "-m", path], stdout=subprocess.PIPE)
-    winpath = proc.stdout.decode("utf-8").strip()
-    if winpath.startswith(r"\\") or winpath[1] != ":":
-        raise WSLMapError(
-            f"The context path {path} is not on a Windows drive accessible to Docker.  All image contexts paths must resolve to a location on the Windows file system."
-        )
-
-    return winpath
-
-
-def wsl_host_docker_path(path):
-    """
-    Returns the windows path with forward slashes.  This is the format docker
-    wants in the -v switch.
-    """
-    winpath = windows_drive_path(path)
-    return f"/{winpath[0].lower()}{winpath[2:]}"
-
-
-def windows_docker_path(path):
-    """
-    Returns the windows path with forward slashes.  This is the format docker
-    wants in the -v switch.
-    """
-    winpath = path.replace("\\", "/")
-    return f"/{winpath[0].lower()}{winpath[2:]}"

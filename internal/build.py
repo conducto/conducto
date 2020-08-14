@@ -234,7 +234,7 @@ def run_in_local_container(
         "--label",
         f"com.conducto.pipeline={pipeline_id}",
         "--label",
-        f"conducto",
+        "conducto",
     ]
 
     network_name = os.getenv("CONDUCTO_NETWORK", f"conducto_network_{pipeline_id}")
@@ -307,7 +307,7 @@ def run_in_local_container(
     for k, v in inject_env.items():
         flags.extend(["-e", f"{k}={v}"])
 
-    flags += container_utils.get_whole_host_mounting_flags()
+    flags += container_utils.get_whole_host_mounting_flags(is_migration)
 
     if _manager_debug():
         flags[0] = "-it"

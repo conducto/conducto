@@ -46,7 +46,9 @@ def launch_agent(inside_container=False, check_for_old=True, token=None):
 
     eeagent = constants.ExecutionEnv.AGENT_LOCAL
 
-    if not (hostdet.is_windows() or hostdet.is_wsl()):
+    if os.getenv("CONDUCTO_OUTER_OWNER"):
+        outer_xid = os.getenv("CONDUCTO_OUTER_OWNER")
+    elif not (hostdet.is_windows() or hostdet.is_wsl()):
         outer_xid = f"{os.getuid()}:{os.getgid()}"
     else:
         outer_xid = ""
@@ -90,7 +92,7 @@ def launch_agent(inside_container=False, check_for_old=True, token=None):
         if os.environ.get(env_var):
             flags.extend(["-e", f"{env_var}={os.environ[env_var]}"])
 
-    flags += container_utils.get_whole_host_mounting_flags()
+    flags += container_utils.get_whole_host_mounting_flags(False)
 
     if co.env_bool("CONDUCTO_AGENT_DEBUG"):
         flags[0] = "-it"

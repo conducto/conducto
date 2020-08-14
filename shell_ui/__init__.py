@@ -211,7 +211,7 @@ class ShellUI(object):
     async def reconnect_ns(self):
         ns_url = self.get_ns_url()
         log.debug("[run] Connecting to", ns_url)
-        header = {"Authorization": f"bearer {self.get_token()}"}
+        header = {"Authorization": f"bearer {api.Config().get_token(refresh=False)}"}
 
         # we retry connection for roughly 2 minutes
         for i in range(45):

@@ -10,9 +10,8 @@ import time
 import tarfile
 import io
 from conducto.shared.log import format
-from conducto.shared import constants
+from conducto.shared import constants, imagepath
 import conducto.internal.host_detection as hostdet
-import conducto.image as image_mod
 
 NULL = subprocess.DEVNULL
 PIPE = subprocess.PIPE
@@ -113,23 +112,22 @@ def start_container(payload, live):
 
     # TODO: Should actually pass these variables from manager, iff local
     local_basedir = constants.ConductoPaths.get_profile_base_dir()
-    if hostdet.is_wsl():
-        local_basedir = os.path.realpath(local_basedir)
-        local_basedir = hostdet.wsl_host_docker_path(local_basedir)
-    elif hostdet.is_windows():
-        local_basedir = hostdet.windows_docker_path(local_basedir)
+    local_basedir = imagepath.Path.from_localhost(local_basedir)
 
     profile = api.Config().default_profile
     remote_basedir = f"{get_home_dir_for_image(image_name)}/.conducto/{profile}"
-    options.append(f"-v {local_basedir}:{remote_basedir}")
+    options.append(f"-v {local_basedir.to_docker_mount()}:{remote_basedir}")
 
     if live:
         for external, internal in image["path_map"].items():
-            external = image_mod.resolve_registered_path(external)
+            external = imagepath.Path.from_dockerhost_encoded(external)
+
+            # Corrected named shares to corresponding local paths
+            external = external.resolve_named_share()
 
             if not os.path.isabs(internal):
                 internal = get_work_dir_for_image(image_name) + "/" + internal
-            options.append(f"-v {external}:{internal}")
+            options.append(f"-v {external.to_docker_mount()}:{internal}")
 
     command = f"docker run {' '.join(options)} --name={container_name} {image_name} tail -f /dev/null "
 

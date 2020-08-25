@@ -34,7 +34,7 @@ class Credentials:
                 import boto3
                 from conducto import api
 
-                cls._creds = api.Auth().get_credentials()
+                cls._creds = api.Auth().get_credentials(force_refresh=True)
 
                 session = boto3.Session(
                     aws_access_key_id=cls._creds["AccessKeyId"],

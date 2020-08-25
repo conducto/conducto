@@ -102,6 +102,8 @@ class NodeMethodError(Exception):
 
 
 class Wrapper(object):
+    EXE = "conducto"
+
     def __init__(
         self,
         func,
@@ -184,7 +186,7 @@ class Wrapper(object):
         quoted = [shlex.quote(part) for part in parts]
 
         serialized = f"__conducto_path:{ctxpath.linear()}:endpath__"
-        command = ["conducto", serialized] + quoted
+        command = [Wrapper.EXE, serialized] + quoted
 
         return " ".join(command)
 
@@ -423,6 +425,14 @@ def _get_default_title(specifiedFuncName, default_was_used):
     return " ".join(shlex.quote(a) for a in args)
 
 
+def _get_default_shell():
+    return t.Bool(api.Config().get("general", "show_shell", default=False))
+
+
+def _get_default_app():
+    return t.Bool(api.Config().get("general", "show_app", default=True))
+
+
 def _get_call_func(argv, default, methods):
     prog = _get_calling_filename()
 
@@ -502,11 +512,7 @@ def _make_usage_message(methods):
     prog = _get_calling_filename()
 
     if returns_node:
-        commands = "[--run] [--sleep-when-done]"
-        if _accepts_cloud():
-            commands = "[--local | --cloud] " + commands
-        else:
-            commands = "[--local] " + commands
+        commands = "[--local | --cloud] [--run] [--sleep-when-done]"
         node_l1 = commands
         node_l2 = "[--app | --no-app] [--shell | --no-shell]"
         node_usage = "\n".join([" " * (len(prog) + 8) + l for l in [node_l1, node_l2]])
@@ -526,10 +532,6 @@ def _bool_mutex_group(parser, base, default=None):
     group.add_argument(f"--no-{base}", dest=base, action="store_false")
     if default != None:
         parser.set_defaults(**{base: default})
-
-
-def _accepts_cloud():
-    return api.Config().get("dev", "who") is not None
 
 
 def _get_state(callFunc, remainder):
@@ -598,7 +600,10 @@ def _get_state(callFunc, remainder):
             sys.exit(1)
 
     # Separate out conducto args and strip unset ones
-    conducto_state = {k: kwargs.pop(k, None) for k in CONDUCTO_ARGS}
+    if called_func_returns_node:
+        conducto_state = {k: kwargs.pop(k, None) for k in CONDUCTO_ARGS}
+    else:
+        conducto_state = {}
     kwargs = {k: v for k, v in kwargs.items() if v != empty}
 
     # Apply the variable and named args to callFunc
@@ -617,16 +622,11 @@ def _get_state(callFunc, remainder):
 
 
 def _add_argparse_options_for_node(parser):
-    config = api.Config()
-    default_shell = t.Bool(config.get("general", "show_shell", default=False))
-    default_app = t.Bool(config.get("general", "show_app", default=True))
-
-    if _accepts_cloud():
-        parser.add_argument("--cloud", action="store_true")
+    parser.add_argument("--cloud", action="store_true")
     parser.add_argument("--local", action="store_true")
     parser.add_argument("--run", action="store_true")
-    _bool_mutex_group(parser, "shell", default=default_shell)
-    _bool_mutex_group(parser, "app", default=default_app)
+    _bool_mutex_group(parser, "shell", default=_get_default_shell())
+    _bool_mutex_group(parser, "app", default=_get_default_app())
     parser.add_argument("--prebuild-images", action="store_true")
     parser.add_argument("--sleep-when-done", action="store_true")
     parser.add_argument("--public", action="store_true")
@@ -741,8 +741,8 @@ def _parse_image_kwargs_from_config_section(section):
 def _parse_config_args_from_cmdline(argv):
     # Parse the command,
     conducto_kwargs = {
-        "shell": t.Bool(api.Config().get("general", "show_shell", default=False)),
-        "app": t.Bool(api.Config().get("general", "show_app", default=True)),
+        "shell": _get_default_shell(),
+        "app": _get_default_app(),
     }
     branch_cmd = None
     wildcard_args = []
@@ -980,7 +980,7 @@ def main(
         # Allow easier setting of attributes on any returned node. Most obviously
         # useful for env/image, but conceivable for the others to.
         #
-        # Present in Node.__init__ but omitted here: stop_on_error, same_container,
+        # Present in Node.__init__ but omitted here: stop_on_error, container_reuse_context,
         # and suppress_errors. They seem too specific to a single node to be
         # generally applicable.
         for key in "env", "cpu", "gpu", "mem", "image":

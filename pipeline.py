@@ -61,7 +61,7 @@ class Node:
     :param image_name: `str`, Reference an :py:class:`conducto.Image` by
         name instead of passing it explicitly. The Image must have been
         registered with :py:func:`conducto.Node.register_image`.
-    :param same_container: See :ref:`Running Exec nodes` for details. Note this
+    :param container_reuse_context: See :ref:`Running Exec nodes` for details. Note this
         has special inheritance rules when propagating to child nodes.
 
     :param skip: bool, default `False`, If False the Node will be run normally.
@@ -151,7 +151,7 @@ class Node:
         "_callbacks",
         "suppress_errors",
         "max_time",
-        "same_container",
+        "container_reuse_context",
         "env",
         "doc",
         "title",
@@ -176,7 +176,8 @@ class Node:
         requires_docker=None,
         suppress_errors=False,
         max_time: typing.Union[int, float, str] = None,
-        same_container=constants.SameContainer.INHERIT,
+        container_reuse_context=None,
+        same_container=constants.SameContainer.INHERIT,  # deprecated
         image: typing.Union[str, image_mod.Image] = None,
         image_name=None,
         doc=None,
@@ -217,7 +218,18 @@ class Node:
         self._name = "/"
         self.suppress_errors = False
         self.max_time = None
-        self.same_container = constants.SameContainer.INHERIT
+        self.container_reuse_context = None
+
+        # prefer same_container only if it is set and container_reuse_context is not
+        if same_container is not constants.SameContainer.INHERIT:
+            if container_reuse_context is None:
+                container_reuse_context = same_container
+            # throw if both are set
+            else:
+                raise ValueError(
+                    "same_container is deprecated in favor of container_reuse_context, please don't use both."
+                )
+
         self.file, self.line = self._get_file_and_line()
 
         self.set(
@@ -230,7 +242,7 @@ class Node:
             requires_docker=requires_docker,
             suppress_errors=suppress_errors,
             max_time=max_time,
-            same_container=same_container,
+            container_reuse_context=container_reuse_context,
             image=image,
             image_name=image_name,
             doc=doc,
@@ -252,7 +264,7 @@ class Node:
         requires_docker=None,
         suppress_errors=None,
         max_time: typing.Union[int, float, str] = None,
-        same_container=None,
+        container_reuse_context=None,
         image: typing.Union[str, image_mod.Image] = None,
         image_name=None,
         doc=None,
@@ -309,9 +321,8 @@ class Node:
             self.suppress_errors = suppress_errors
         if max_time is not None:
             self.max_time = max_time
-        if same_container is not None:
-            self.same_container = same_container
-
+        if container_reuse_context is not None:
+            self.container_reuse_context = container_reuse_context
         if file is not None:
             self.file = file
             self.line = line
@@ -530,8 +541,8 @@ class Node:
             output["title"] = self.title
         if self.tags:
             output["tags"] = self.tags
-        if self.same_container != constants.SameContainer.INHERIT:
-            output["same_container"] = self.same_container
+        if self.container_reuse_context is not None:
+            output["container_reuse_context"] = self.container_reuse_context
         if self.suppress_errors:
             output["suppress_errors"] = self.suppress_errors
         if self.max_time:
@@ -849,7 +860,7 @@ class Exec(Node):
         super().__init__(**kwargs)
 
         # Instance variables
-        self.command = command
+        self.command = log.unindent(command)
 
     # Validate arguments for the given function without calling it. This is useful for
     # raising early errors on `co.Lazy()` or `co.Exec(func, *args, **kwargs).
@@ -990,7 +1001,8 @@ class Serial(Node):
         stop_on_error=True,
         suppress_errors=False,
         max_time=None,
-        same_container=constants.SameContainer.INHERIT,
+        container_reuse_context=None,
+        same_container=constants.SameContainer.INHERIT,  # deprecated
         image: typing.Union[str, image_mod.Image] = None,
         image_name=None,
         doc=None,
@@ -1009,6 +1021,7 @@ class Serial(Node):
             requires_docker=requires_docker,
             suppress_errors=suppress_errors,
             max_time=max_time,
+            container_reuse_context=container_reuse_context,
             same_container=same_container,
             image=image,
             image_name=image_name,

@@ -145,7 +145,7 @@ class OneLineDisplay(Listener):
                 break
             output_line += c
 
-        print(f"\r{log.Control.ERASE_LINE}{output_line}", end="", flush=True)
+        print(f"\r{log.Control.ERASE_LINE}{output_line}", end="")
 
     def shutdown(self):
         print()

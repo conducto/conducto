@@ -246,14 +246,15 @@ class Path:
                 else:
                     firstmark = len(self._value)
 
-                winpath = self._wsl_to_windows(self._value[:firstmark])
+                markpref = self._value[:firstmark]
+                winpath = self._wsl_to_windows(markpref)
 
-                delta = len(winpath) - len(self._value)
+                delta = len(winpath) - len(markpref)
 
                 r = self.__class__()
                 r._type = "dockerhost"
                 r._value = winpath + self._value[firstmark:].replace("/", "\\")
-                r.marks = [(m[0] + delta, m[1]) for m in self._marks]
+                r._marks = [(m[0] + delta, m[1]) for m in self._marks]
                 return r
             else:
                 r = self._dupe()
@@ -281,10 +282,10 @@ class Path:
         import conducto.internal.host_detection as hostdet
 
         # WSL on windows is the only context in which external & dockerhost are not synonyms
-        safe_host_aliasing = (
-            set((self._type, parent._type)) == set(("external", "dockerhost"))
-            and not hostdet.is_wsl()
-        )
+        safe_host_aliasing = {self._type, parent._type} == {
+            "external",
+            "dockerhost",
+        } and not hostdet.is_wsl()
         assert (
             self._type == parent._type or safe_host_aliasing
         ), f"cannot compare path domains {self._type} and {parent._type}"
@@ -301,7 +302,7 @@ class Path:
             cleanpath = parent._value.rstrip("/\\")
             try:
                 return cleanpath == ntpath.commonpath([parent._value, self._value])
-            except ValueError as e:
+            except ValueError:
                 # https://docs.python.org/3/library/os.path.html
                 # if paths contain both absolute and relative pathnames,
                 # the paths are on the different drives or if paths is empty.

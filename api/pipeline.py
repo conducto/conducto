@@ -1,4 +1,5 @@
 import boto3
+import typing
 from .. import api
 from ..shared import constants, types as t, request_utils
 from . import api_utils
@@ -105,6 +106,28 @@ class Pipeline:
         )
         api_utils.get_data(response)
 
+    def sleep(
+        self,
+        org_id: t.OrgId,
+        user_ids: typing.List[t.UserId],
+        pipeline_ids: typing.List[t.PipelineId],
+        local: bool,
+        cloud: bool,
+        token: t.Token = None,
+    ):
+        headers = api_utils.get_auth_headers(token)
+        data = {"local": local, "cloud": cloud}
+        if org_id:
+            data["org_id"] = org_id
+        if user_ids:
+            data["user_ids"] = user_ids
+        if pipeline_ids:
+            data["pipeline_ids"] = pipeline_ids
+        response = request_utils.put(
+            self.url + "/program/program/sleep", headers=headers, data=data
+        )
+        return api_utils.get_data(response)
+
     def sleep_standby(self, pipeline_id: t.PipelineId, token: t.Token = None):
         pipeline = self.get(pipeline_id, token=token)
 
@@ -122,6 +145,11 @@ class Pipeline:
         response = request_utils.get(
             self.url + "/program/program/history", headers=headers, params=params
         )
+        return api_utils.get_data(response)
+
+    def agent_list(self, token: t.Token = None) -> list:
+        headers = api_utils.get_auth_headers(token)
+        response = request_utils.get(self.url + "/program/agent", headers=headers)
         return api_utils.get_data(response)
 
 

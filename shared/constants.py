@@ -246,26 +246,37 @@ class Hashing:
         return "".join(res)
 
 
-class SameContainer:
+class ContainerReuseContext:
     """
+
     Consider the pipeline as a directed graph where all the parents point to their children
     Let's define a "valid" path as a path from a node to one of its descendants if all nodes on
-    that path have same_container=SameContainer.INHERIT (the original node isn't counted as part of the path).
+    that path have container_reuse_context=None (the original node isn't counted as part of the path).
 
     Let's define a node v is reachable from a node u if there exists a valid path from u to v
 
-    u with same_container=SameContainer.NEW forces all reachable v from u to run in the same container
-    u with same_container=SameContainer.ESCAPE forces all reachable v from u to run with default behavior
+    u with container_reuse_context=ContainerReuseContext.NEW forces all reachable v from u to run in the same container
+    u with container_reuse_context=ContainerReuseContext.GLOBAL forces all reachable v from u to run with default behavior
 
     This translates into:
-    SameContainer.NEW -> container_id is set to the node id
-    SameContainer.ESCAPE -> container_id is force set to -1
-    SameContainer.INHERIT -> container_id is deleted and regular inheritance applies
+    ContainerReuseContext.NEW -> container_id is set to the node id
+    ContainerReuseContext.GLOBAL -> container_id is force set to -1
+    None -> container_id is deleted and regular inheritance applies
     """
 
     NEW = "new"
-    ESCAPE = "escape"
-    INHERIT = "inherit"
+    GLOBAL = "global"
+
+
+# deprecated
+class SameContainer:
+    """
+    Deprecated.  See ContainerReuseContext.
+    """
+
+    NEW = ContainerReuseContext.NEW
+    ESCAPE = ContainerReuseContext.GLOBAL
+    INHERIT = None
 
 
 # TODO: https://app.clickup.com/t/8jcxwd

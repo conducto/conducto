@@ -658,23 +658,25 @@ class Image:
             entry.finish(e.stdout, e.stderr)
             if self._push_results:
                 await self._push_results(status, Status.ERROR, entry)
-            x = HistoryEntry(Status.ERROR, finish=True)
-            x.finish(e.stdout, e.stderr)
-            self.history.append(x)
+            self.history.append(HistoryEntry(Status.ERROR, finish=True))
             if self._push_results:
-                await self._push_results(Status.ERROR, Status.ERROR, x)
+                await self._push_results(Status.ERROR, Status.ERROR, self.history[-1])
             raise
         except (asyncio.CancelledError, concurrent.futures.CancelledError):
             entry.finish(None, None)
             if self._push_results:
                 await self._push_results(status, Status.CANCELLED, entry)
             self.history.append(HistoryEntry(Status.CANCELLED, finish=True))
+            if self._push_results:
+                await self._push_results(Status.ERROR, Status.ERROR, self.history[-1])
             raise
         except Exception:
             entry.finish(None, traceback.format_exc())
             if self._push_results:
                 await self._push_results(status, Status.ERROR, entry)
             self.history.append(HistoryEntry(Status.ERROR, finish=True))
+            if self._push_results:
+                await self._push_results(Status.ERROR, Status.ERROR, self.history[-1])
             raise
         else:
             if not entry.end:
@@ -859,14 +861,14 @@ def make_all(node: "pipeline.Node", pipeline_id, push_to_cloud):
             if count > 0:
                 line += f"{sep} {count} {status}"
                 sep = ","
-            print(f"\r{log.Control.ERASE_LINE}{line}", end=".", flush=True)
+            print(f"\r{log.Control.ERASE_LINE}{line}", end=".")
 
     # Run all the builds concurrently.
     # TODO: limit simultaneous builds using an asyncio.Semaphore
     futs = [img.make(push_to_cloud, callback=_print_status) for img in images.values()]
 
     asyncio.get_event_loop().run_until_complete(asyncio.gather(*futs))
-    print(f"\r{log.Control.ERASE_LINE}", end="", flush=True)
+    print(f"\r{log.Control.ERASE_LINE}", end="")
 
 
 class HistoryEntry:

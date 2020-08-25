@@ -52,8 +52,8 @@ class Auth:
         claims = self.get_unverified_claims(id_token)
         return claims
 
-    def get_credentials(self, token: t.Token = None) -> dict:
-        headers = api_utils.get_auth_headers(token)
+    def get_credentials(self, token: t.Token = None, force_refresh=False) -> dict:
+        headers = api_utils.get_auth_headers(token, force_refresh=force_refresh)
         response = request_utils.get(self.url + "/auth/creds", headers=headers)
         data = self._get_data(response)
         return data

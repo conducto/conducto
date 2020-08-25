@@ -92,11 +92,11 @@ def is_conducto_url(url):
         return False
 
 
-def get_auth_headers(token: t.Token = None, refresh=True):
+def get_auth_headers(token: t.Token = None, refresh=True, force_refresh=False):
     if token is None:
         from . import config
 
-        token = config.Config().get_token(refresh=refresh)
+        token = config.Config().get_token(refresh=refresh, force_refresh=force_refresh)
         if token is None:
             raise ValueError(
                 "Cannot authenticate to Conducto services because no token is available."

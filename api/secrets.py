@@ -47,21 +47,17 @@ class Secrets:
         )
         return api_utils.get_data(response)["secrets"]
 
-    def put_user_secrets(
-        self, secrets: dict, token: types.Token = None, replace: bool = False
-    ):
+    def put_user_secrets(self, secrets: dict, token: types.Token = None):
         data = {"secrets": {k: str(v) for k, v in secrets.items()}}
-        (request_utils.put if replace else request_utils.patch)(
+        request_utils.patch(
             f"{self.url}/secrets/user",
             data=json.dumps(data),
             headers=api_utils.get_auth_headers(token),
         )
 
-    def put_org_secrets(
-        self, secrets: dict, token: types.Token = None, replace: bool = False
-    ):
+    def put_org_secrets(self, secrets: dict, token: types.Token = None):
         data = {"secrets": {k: str(v) for k, v in secrets.items()}}
-        (request_utils.put if replace else request_utils.patch)(
+        request_utils.patch(
             f"{self.url}/secrets/org",
             data=json.dumps(data),
             headers=api_utils.get_auth_headers(token),

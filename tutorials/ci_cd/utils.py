@@ -23,5 +23,5 @@ def run_test(project, test):
 
     for i in range(50):
         time.sleep(0.1)
-        print(".", end="", flush=True)
+        print(".", end="")
     print("\nDone!")

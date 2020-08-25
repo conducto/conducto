@@ -1,6 +1,6 @@
 from .pipeline import Exec, Serial, Parallel, Node
 from .glue import lazy_py, main, lazy_shell, Lazy
-from .shared.constants import SameContainer
+from .shared.constants import SameContainer, ContainerReuseContext
 from .shared.imagepath import Path
 from .image import Image, relpath
 from .data import pipeline as temp_data, user as perm_data
@@ -23,7 +23,8 @@ __all__ = [
     "profile",
     "Image",
     "relpath",
-    "SameContainer",
+    "SameContainer",  # deprecated
+    "ContainerReuseContext",
     "env_bool",
     "api",
 ]

@@ -925,7 +925,7 @@ def unindent(string):
     string = string.replace("\t", "    ")
 
     # Find minimum indentation distance
-    indents = [len(match) for match in re.findall("\n( +)\\S", string)]
+    indents = [len(match) for match in re.findall("\n( *)\\S", string)]
     if indents:
         minIndent = min(indents)
 

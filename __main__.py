@@ -7,6 +7,7 @@ from conducto.shared import constants
 from conducto.contrib.discover.cli import discover_cli
 from conducto.debug import debug, livedebug
 from conducto.profile import dir_init
+from conducto.glue import method
 import asyncio
 
 
@@ -23,7 +24,7 @@ def _get_pipeline_validated(token, pipeline_id):
     return pipeline
 
 
-def show(id, app=True, shell=False):
+def show(id, app=method._get_default_app(), shell=method._get_default_shell()):
     """
     Attach to a an active pipeline.  If it is sleeping it will be awakened.
     """

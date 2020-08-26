@@ -38,6 +38,7 @@ def build(
     # Force in case of cognito change
     if token is None:
         token = api.Auth().get_token_from_shell(force=True)
+        token = api.Auth().get_refreshed_token(token, force=True)
     node.token = token
 
     if prebuild_images and build_mode == constants.BuildMode.DEPLOY_TO_CLOUD:

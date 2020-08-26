@@ -287,7 +287,7 @@ commands:
             self._get_profile_config_file(self.default_profile)
         ):
             token = self._profile_general(self.default_profile).get("token", None)
-            if refresh or force_refresh:
+            if token and (refresh or force_refresh):
                 auth = api.Auth()
                 new_token = auth.get_refreshed_token(
                     t.Token(token), force=force_refresh
@@ -325,6 +325,11 @@ commands:
 
     def set_profile_general(self, profile, option, value):
         profconfig = self.get_profile_config(profile)
+        try:
+            # ensure we have the general section
+            profconfig.add_section("general")
+        except configparser.DuplicateSectionError:
+            pass
         profconfig.set("general", option, value)
         self.write_profile_config(profile, profconfig)
 
@@ -334,6 +339,10 @@ commands:
         configuration.
         """
         from .. import image as image_mod
+
+        if not self.default_profile:
+            auth = api.Auth()
+            auth.get_token_from_shell(force=True)
 
         path = image_mod.Image.get_contextual_path(dirname, named_shares=False)
         dirname = path.to_docker_host()
@@ -489,6 +498,7 @@ commands:
             is_windows = False
 
         cwd = os.path.dirname(filename)
+        os.makedirs(cwd, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             mode="w", delete=False, prefix=".config.", dir=cwd
         ) as temp_file:

@@ -152,6 +152,14 @@ class Pipeline:
         response = request_utils.get(self.url + "/program/agent", headers=headers)
         return api_utils.get_data(response)
 
+    def admin_delete_logs(self, user_ids: list, token: t.Token = None):
+        headers = api_utils.get_auth_headers(token)
+        data = {"user_ids": user_ids}
+        response = request_utils.post(
+            self.url + "/program/admin/delete_logs", headers=headers, data=data
+        )
+        return api_utils.get_data(response)
+
 
 def _get_s3_split(path):
     s3Prefix = "s3://"

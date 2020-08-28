@@ -11,8 +11,32 @@ def is_mac():
     return platform.system().lower() == "darwin"
 
 
-def is_wsl():
-    return "microsoft" in platform.uname().version.lower()
+def is_wsl1():
+    # uname_result(system='Linux', node='...', release='4.4.0-19041-Microsoft', version='#1-Microsoft Fri Dec 06 14:06:00 PST 2019', machine='x86_64', processor='x86_64')
+    uname = platform.uname()
+    return "microsoft" in uname.version.lower() and "microsoft" in uname.release.lower()
+
+
+def is_wsl2():
+    # uname_result(system='Linux', node='...', release='4.19.104-microsoft-standard', version='#1 SMP Wed Feb 19 06:37:35 UTC 2020', machine='x86_64', processor='')
+    uname = platform.uname()
+    return (
+        "microsoft" not in uname.version.lower()
+        and "microsoft" in uname.release.lower()
+    )
+
+
+# 6 ways to use docker and linux on windows
+# +-----------------+---------------+-----------------------------------------------------+
+# | Pipeline Launch | Docker Engine |                      Comments                       |
+# +-----------------+---------------+-----------------------------------------------------+
+# | Windows         | Hyper-V       | current recommended conducto usage                  |
+# | Windows         | WSL2          | probably future recommended conducto usage          |
+# | WSL1 Distro     | Hyper-V       | shares ~/.conducto with Windows and supported       |
+# | WSL1 Distro     | WSL2          | suggest to update your distro - "wsl --set-version" |
+# | WSL2 Distro     | Hyper-V       | suggest to turn on docker "WSL2 based engine"       |
+# | WSL2 Distro     | WSL2          | supported elegantly by docker basic installation    |
+# +-----------------+---------------+-----------------------------------------------------+
 
 
 def is_linux():
@@ -59,8 +83,10 @@ def os_name():
         return f"macOS {platform.mac_ver()[0]}"
     elif is_windows():
         return f"Windows {platform.release()}"  # Works for 10 and Vista
-    elif is_wsl():
-        return f"WSL {platform.release()}"
+    elif is_wsl1():
+        return f"WSL1 {platform.release()}"
+    elif is_wsl2():
+        return f"WSL2 {platform.release()}"
     elif is_linux():
         if os.path.exists("/etc/os-release"):
             with open("/etc/os-release") as f:
@@ -80,7 +106,7 @@ def system_open(url):
     sanitized = url.replace(";", r"\;").replace("&", r"\&")
     if is_windows():
         os.startfile(url)
-    elif is_wsl():
+    elif is_wsl1() or is_wsl2():
         os.system(f'powershell.exe /c start "{sanitized}"')
     elif is_mac():
         os.system(f'open "{sanitized}"')

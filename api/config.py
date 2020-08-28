@@ -171,7 +171,7 @@ class Config:
             # local import due to import loop
             import conducto.internal.host_detection as hostdet
 
-            if hostdet.is_wsl():
+            if hostdet.is_wsl1():
                 # Create .conducto directory in the window's users homedir.
                 # Symlink that to the linux user's homedir.  This is
                 # back-translated to a docker friendly path on docker mounting.

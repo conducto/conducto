@@ -152,6 +152,13 @@ class Pipeline:
         response = request_utils.get(self.url + "/program/agent", headers=headers)
         return api_utils.get_data(response)
 
+    def get_agent(self, agent_id, token: t.Token = None) -> dict:
+        headers = api_utils.get_auth_headers(token)
+        response = request_utils.get(
+            self.url + f"/program/agent/{agent_id}", headers=headers
+        )
+        return api_utils.get_data(response)
+
     def admin_delete_logs(self, user_ids: list, token: t.Token = None):
         headers = api_utils.get_auth_headers(token)
         data = {"user_ids": user_ids}

@@ -785,7 +785,13 @@ def _parse_config_args_from_cmdline(argv):
 
 
 def run_cfg(
-    file: typing.IO, argv, copy_repo=True, copy_branch=None, headless=False, token=None
+    file: typing.IO,
+    argv,
+    copy_repo=True,
+    copy_branch=None,
+    headless=False,
+    token=None,
+    tags=None,
 ):
     import conducto as co
 
@@ -832,6 +838,7 @@ def run_cfg(
 
     output = co.Lazy(command)
     output.title = _get_default_title(None, default_was_used=False)
+    output.tags = tags
 
     branch_env = os.environ.get("CONDUCTO_GIT_BRANCH")
     if branch_cmd is not None and branch_env is not None and branch_cmd != branch_env:

@@ -112,7 +112,7 @@ class Path:
     def _id(self):
         import conducto.internal.host_detection as hostdet
 
-        windockerhost = os.getenv("WINDOWS_HOST") or hostdet.is_wsl()
+        windockerhost = os.getenv("WINDOWS_HOST") or hostdet.is_wsl1()
         is_win_host = self._type == "dockerhost" and windockerhost
         is_win_env = self._type == "external" and hostdet.is_windows()
         is_win_pathhack = (
@@ -166,7 +166,7 @@ class Path:
             hostpath = self.to_docker_host()
 
             # this results in a unix host path ...
-            if hostdet.is_wsl() or hostdet.is_windows():
+            if hostdet.is_wsl1() or hostdet.is_windows():
                 # ... or a docker-friendly windows path
                 hostpath = self._windows_docker_path(hostpath)
             return hostpath
@@ -183,7 +183,7 @@ class Path:
 
         import conducto.internal.host_detection as hostdet
 
-        if hostdet.is_wsl():
+        if hostdet.is_wsl1():
             return self._wsl_to_windows(self._value)
         else:
             return self._value
@@ -198,7 +198,7 @@ class Path:
 
         import conducto.internal.host_detection as hostdet
 
-        if hostdet.is_wsl():
+        if hostdet.is_wsl1():
             return self._windows_to_wsl(self._value)
         else:
             return self._value
@@ -240,7 +240,7 @@ class Path:
             # worker shared code
             import conducto.internal.host_detection as hostdet
 
-            if hostdet.is_wsl():
+            if hostdet.is_wsl1():
                 if len(self._marks):
                     firstmark = self._marks[0][0]
                 else:
@@ -285,12 +285,12 @@ class Path:
         safe_host_aliasing = {self._type, parent._type} == {
             "external",
             "dockerhost",
-        } and not hostdet.is_wsl()
+        } and not hostdet.is_wsl1()
         assert (
             self._type == parent._type or safe_host_aliasing
         ), f"cannot compare path domains {self._type} and {parent._type}"
 
-        windockerhost = os.getenv("WINDOWS_HOST") or hostdet.is_wsl()
+        windockerhost = os.getenv("WINDOWS_HOST") or hostdet.is_wsl1()
         is_win_host = self._type == "dockerhost" and windockerhost
         is_win_env = self._type in ("dockerhost", "external") and hostdet.is_windows()
         is_win_pathhack = (
@@ -320,7 +320,7 @@ class Path:
     def append(self, tail, sep):
         import conducto.internal.host_detection as hostdet
 
-        windockerhost = os.getenv("WINDOWS_HOST") or hostdet.is_wsl()
+        windockerhost = os.getenv("WINDOWS_HOST") or hostdet.is_wsl1()
         is_win_host = self._type == "dockerhost" and windockerhost
         is_win_env = self._type == "external" and hostdet.is_windows()
         is_win_pathhack = (
@@ -484,7 +484,7 @@ class Path:
         # session on linux (respectively windows) from a pipeline
         # originally launched on windows (respectively linux).  Right this
         # moment, I will assume that debug and launch platform match.
-        if hostdet.is_windows() or hostdet.is_wsl():
+        if hostdet.is_windows() or hostdet.is_wsl1():
             tailsep = "\\"
         else:
             tailsep = "/"

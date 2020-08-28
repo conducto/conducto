@@ -38,7 +38,6 @@ def build(
     # Force in case of cognito change
     if token is None:
         token = api.Auth().get_token_from_shell(force=True)
-        token = api.Auth().get_refreshed_token(token, force=True)
     node.token = token
 
     if prebuild_images and build_mode == constants.BuildMode.DEPLOY_TO_CLOUD:
@@ -250,7 +249,7 @@ def run_in_local_container(
             else:
                 raise
 
-    if not (hostdet.is_windows() or hostdet.is_wsl()):
+    if not (hostdet.is_windows() or hostdet.is_wsl1()):
         outer_xid = f"{os.getuid()}:{os.getgid()}"
     else:
         outer_xid = ""
@@ -302,6 +301,7 @@ def run_in_local_container(
         "CONDUCTO_URL",
         "CONDUCTO_DEV_REGISTRY",
         "CONDUCTO_USE_TEST_IMAGES",
+        "CONDUCTO_USE_ID_TOKEN",
     ):
         if os.environ.get(env_var):
             flags.extend(["-e", f"{env_var}={os.environ[env_var]}"])

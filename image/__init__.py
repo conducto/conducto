@@ -1,7 +1,6 @@
 import asyncio
 import contextlib
 import concurrent.futures
-import inspect
 import hashlib
 import json
 import os
@@ -322,7 +321,6 @@ class Image:
         self._make_fut: typing.Optional[asyncio.Future] = None
 
         self._cloud_tag_convert = None
-        self._push_results: typing.Optional[typing.Callable] = None
         self._pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID")
 
     def __eq__(self, other):
@@ -573,16 +571,14 @@ class Image:
         """
         if self.history and self.history[-1].end is None:
             self.history[-1].finish()
-            if self._push_results:
-                await self._push_results(Status.PENDING, Status.DONE, self.history[-1])
+            if callback:
+                await callback(Status.PENDING, Status.DONE, self.history[-1])
 
         # Pull the image if needed
         if self.image and "/" in self.image:
-            async with self._new_status(Status.PULLING) as st:
+            async with self._new_status(Status.PULLING, callback) as st:
                 if force_rebuild or not await self._image_exists(self.image):
-                    cb = callback()
-                    if inspect.isawaitable(cb):
-                        await cb
+                    await callback()
                     out, err = await async_utils.run_and_check(
                         "docker", "pull", self.image
                     )
@@ -593,11 +589,9 @@ class Image:
 
         # Build the image if needed
         if self.needs_building():
-            async with self._new_status(Status.BUILDING) as st:
+            async with self._new_status(Status.BUILDING, callback) as st:
                 if force_rebuild or not await self._image_exists(self.name_built):
-                    cb = callback()
-                    if inspect.isawaitable(cb):
-                        await cb
+                    await callback()
                     out, err = await self._build()
                     st.finish(out, err)
                 else:
@@ -606,22 +600,18 @@ class Image:
 
         # If needed, copy files into the image and install packages
         if self.needs_completing():
-            async with self._new_status(Status.COMPLETING) as st:
+            async with self._new_status(Status.COMPLETING, callback) as st:
                 if force_rebuild or not await self._image_exists(self.name_complete):
-                    cb = callback()
-                    if inspect.isawaitable(cb):
-                        await cb
+                    await callback()
                     out, err = await self._complete()
                     st.finish(out, err)
                 else:
                     st.finish("Code and/or Python libraries already installed.")
         yield
 
-        async with self._new_status(Status.EXTENDING) as st:
+        async with self._new_status(Status.EXTENDING, callback) as st:
             if force_rebuild or not await self._image_exists(self.name_local_extended):
-                cb = callback()
-                if inspect.isawaitable(cb):
-                    await cb
+                await callback()
                 out, err = await self._extend()
                 st.finish(out, err)
             else:
@@ -629,16 +619,14 @@ class Image:
         yield
 
         if push_to_cloud:
-            async with self._new_status(Status.PUSHING) as st:
-                cb = callback()
-                if inspect.isawaitable(cb):
-                    await cb
+            async with self._new_status(Status.PUSHING, callback) as st:
+                await callback()
                 out, err = await self._push()
                 st.finish(out, err)
 
         self.history.append(HistoryEntry(Status.DONE, finish=True))
-        if self._push_results:
-            await self._push_results(Status.DONE, Status.DONE, self.history[-1])
+        if callback:
+            await callback(Status.DONE, Status.DONE, self.history[-1])
 
     async def _image_exists(self, image):
         try:
@@ -649,40 +637,40 @@ class Image:
             return True
 
     @asynccontextmanager
-    async def _new_status(self, status):
+    async def _new_status(self, status, callback):
         entry = HistoryEntry(status)
         self.history.append(entry)
         try:
             yield entry
         except subprocess.CalledProcessError as e:
             entry.finish(e.stdout, e.stderr)
-            if self._push_results:
-                await self._push_results(status, Status.ERROR, entry)
+            if callback:
+                await callback(status, Status.ERROR, entry)
             self.history.append(HistoryEntry(Status.ERROR, finish=True))
-            if self._push_results:
-                await self._push_results(Status.ERROR, Status.ERROR, self.history[-1])
+            if callback:
+                await callback(Status.ERROR, Status.ERROR, self.history[-1])
             raise
         except (asyncio.CancelledError, concurrent.futures.CancelledError):
             entry.finish(None, None)
-            if self._push_results:
-                await self._push_results(status, Status.CANCELLED, entry)
+            if callback:
+                await callback(status, Status.CANCELLED, entry)
             self.history.append(HistoryEntry(Status.CANCELLED, finish=True))
-            if self._push_results:
-                await self._push_results(Status.ERROR, Status.ERROR, self.history[-1])
+            if callback:
+                await callback(Status.ERROR, Status.ERROR, self.history[-1])
             raise
         except Exception:
             entry.finish(None, traceback.format_exc())
-            if self._push_results:
-                await self._push_results(status, Status.ERROR, entry)
+            if callback:
+                await callback(status, Status.ERROR, entry)
             self.history.append(HistoryEntry(Status.ERROR, finish=True))
-            if self._push_results:
-                await self._push_results(Status.ERROR, Status.ERROR, self.history[-1])
+            if callback:
+                await callback(Status.ERROR, Status.ERROR, self.history[-1])
             raise
         else:
             if not entry.end:
                 entry.finish()
-            if self._push_results:
-                await self._push_results(status, None, entry)
+            if callback:
+                await callback(status, None, entry)
 
     async def _build(self):
         """

@@ -48,7 +48,7 @@ def launch_agent(inside_container=False, check_for_old=True, token=None):
 
     if os.getenv("CONDUCTO_OUTER_OWNER"):
         outer_xid = os.getenv("CONDUCTO_OUTER_OWNER")
-    elif not (hostdet.is_windows() or hostdet.is_wsl()):
+    elif not (hostdet.is_windows() or hostdet.is_wsl1()):
         outer_xid = f"{os.getuid()}:{os.getgid()}"
     else:
         outer_xid = ""
@@ -88,7 +88,12 @@ def launch_agent(inside_container=False, check_for_old=True, token=None):
         f"CONDUCTO_OS={hostdet.os_name()}",
     ]
 
-    for env_var in "CONDUCTO_URL", "CONDUCTO_DEV_REGISTRY", "CONDUCTO_IMAGE_TAG":
+    for env_var in (
+        "CONDUCTO_URL",
+        "CONDUCTO_DEV_REGISTRY",
+        "CONDUCTO_IMAGE_TAG",
+        "CONDUCTO_USE_ID_TOKEN",
+    ):
         if os.environ.get(env_var):
             flags.extend(["-e", f"{env_var}={os.environ[env_var]}"])
 

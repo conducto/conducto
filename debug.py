@@ -97,7 +97,7 @@ def start_container(payload, live):
     if live:
         print("Context will be mounted read-write")
         print(
-            "Make modifications on your local  machine, "
+            "Make modifications on your local machine, "
             "and they will be reflected in the container."
         )
 
@@ -314,7 +314,7 @@ async def _debug(id, node, live, timestamp):
     eedebug = ee.DEBUG_CLOUD if status in pl.cloud else ee.DEBUG_LOCAL
     autogen_dict["CONDUCTO_EXECUTION_ENV"] = eedebug
 
-    if not (hostdet.is_windows() or hostdet.is_wsl()):
+    if not (hostdet.is_windows() or hostdet.is_wsl1()):
         outer_xid = f"{os.getuid()}:{os.getgid()}"
     else:
         outer_xid = ""

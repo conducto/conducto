@@ -15,10 +15,27 @@ import conducto.internal.host_detection as hostdet
 
 @functools.lru_cache(None)
 def docker_available_drives():
-    kwargs = dict(check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    lsdrives = "docker run --rm -v /:/mnt/external alpine ls /mnt/external/host_mnt"
-    proc = subprocess.run(lsdrives, shell=True, **kwargs)
-    return proc.stdout.decode("utf8").split()
+    try:
+        kwargs = dict(check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        lsdrives = "docker run --rm -v /:/mnt/external alpine ls /mnt/external/host_mnt"
+        proc = subprocess.run(lsdrives, shell=True, **kwargs)
+        return proc.stdout.decode("utf8").split()
+    except subprocess.CalledProcessError:
+        import string
+        from ctypes import windll  # Windows only
+
+        # get all drives
+        bitmask = windll.kernel32.GetLogicalDrives()
+        drives = []
+        for letter in string.ascii_uppercase:
+            if bitmask & 1:
+                drives.append(letter)
+            bitmask >>= 1
+
+        # filter to fixed drives
+        is_fixed = lambda x: windll.kernel32.GetDriveTypeW(f"{x}:\\") == 3
+        drives = [d for d in drives if is_fixed(d)]
+        return [d.lower() for d in drives]
 
 
 @functools.lru_cache(None)
@@ -43,7 +60,7 @@ def get_whole_host_mounting_flags(from_container):
     """
     Mount whole system read-only to enable rebuilding images as needed
     """
-    if hostdet.is_wsl() or hostdet.is_windows() or os.getenv("WINDOWS_HOST"):
+    if hostdet.is_wsl1() or hostdet.is_windows() or os.getenv("WINDOWS_HOST"):
         if from_container:
             mounts = get_current_container_mounts()
 

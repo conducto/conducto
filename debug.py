@@ -244,7 +244,7 @@ def print_editor_commands(container_name):
 def start_shell(container_name, env_list):
     cmd = ["docker", "exec", "-it", *env_list, container_name]
     subp = subprocess.Popen(
-        ["docker", "exec", container_name, "/bin/bash"], stdout=NULL, stderr=NULL
+        ["docker", "exec", container_name, "/bin/sh"], stdout=NULL, stderr=NULL
     )
     subp.wait()
     has_bash = subp.returncode == 0

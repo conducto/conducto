@@ -58,6 +58,26 @@ class Auth:
         data = self._get_data(response)
         return data
 
+    def admin_disable_users(self, token: t.Token, users: list):
+        headers = api_utils.get_auth_headers(token)
+        body = {"user_ids": users}
+
+        data = json.dumps(body)
+        response = request_utils.post(
+            self.url + "/auth/disable", headers=headers, data=data
+        )
+        return self._get_data(response)
+
+    def admin_enable_users(self, token: t.Token, users: list):
+        headers = api_utils.get_auth_headers(token)
+        body = {"user_ids": users}
+
+        data = json.dumps(body)
+        response = request_utils.post(
+            self.url + "/auth/enable", headers=headers, data=data
+        )
+        return self._get_data(response)
+
     def get_token_from_shell(
         self, login: dict = None, force=False, skip_profile=False
     ) -> typing.Optional[t.Token]:
@@ -108,7 +128,10 @@ class Auth:
         # If no token by now, prompt for login.
         if not token:
             token = self._get_token_from_login()
-            self.config.set_profile_general(self.config.default_profile, "token", token)
+            if self.config.default_profile:
+                self.config.set_profile_general(
+                    self.config.default_profile, "token", token
+                )
 
         if os.environ.get("CONDUCTO_USE_ID_TOKEN"):
             token = self.get_id_token(token)

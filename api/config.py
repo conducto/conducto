@@ -470,6 +470,9 @@ commands:
         assert default in (True, False, "first")
         if default is True or (default == "first" and is_first):
             self.set("general", "default", profile, write=False)
+        if not (default is False):
+            # stash this for all later config in this process
+            os.environ["CONDUCTO_PROFILE"] = profile
             self.default_profile = profile
         self.write()
         return profile

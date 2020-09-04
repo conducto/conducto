@@ -8,7 +8,6 @@ from .config import (
 from .auth import Auth, AsyncAuth
 from .analytics import Analytics, AsyncAnalytics
 from .dir import Dir, AsyncDir
-from .git import Git, AsyncGit
 from .pipeline import Pipeline, AsyncPipeline
 from .manager import Manager, AsyncManager
 from .secrets import Secrets, AsyncSecrets

@@ -792,8 +792,17 @@ def run_cfg(
     headless=False,
     token=None,
     tags=None,
+    unique_tag=None,
 ):
     import conducto as co
+
+    if constants.ExecutionEnv.value() == constants.ExecutionEnv.EXTERNAL:
+        # default filename to current working directory
+        # allows python -m conducto debug to respect local .conducto/profile
+        filename = file.name
+        if filename is None:
+            filename = str(pathlib.Path().absolute()) + "/dummy"
+        api.dirconfig_select(filename)
 
     # Read the config file
     cp = configparser.ConfigParser()
@@ -814,6 +823,31 @@ def run_cfg(
     else:
         method, *remainder = argv
         section = cp[method]
+
+    # See if this user is already a running pipeline for this unique_tag
+    if unique_tag is not None:
+        pipe_api = co.api.Pipeline()
+        pipelines = pipe_api.list(token, user_only=True)
+        s = constants.PipelineLifecycle.sleeping
+        matches = [
+            p for p in pipelines if unique_tag in p["tags"] and p["status"] not in s
+        ]
+        if matches:
+            dup_action = section.get("duplicate", fallback="SUPPRESS_NEW")
+            if dup_action == "SUPPRESS_NEW":
+                return
+            elif dup_action == "ALLOW":
+                pass
+            elif dup_action == "SLEEP_OLD":
+                ids = [m["pipeline_id"] for m in matches]
+                log.log(
+                    f"Sleeping pipelines due to conflict with unique_tag={unique_tag}. Pipelines: {ids}"
+                )
+                pipe_api.sleep(pipeline_ids=ids, cloud=True, local=True)
+
+        # Add unique_tag to the list of tags
+        tags = (tags or []) + [unique_tag]
+        tags = sorted(set(tags))
 
     # Parse the command template. Find which variables need to be passed.
     command_template = section["command"]

@@ -1,8 +1,9 @@
 import boto3
 import typing
 from .. import api
-from ..shared import constants, types as t, request_utils
+from ..shared import constants, types as t, request_utils, data
 from . import api_utils
+import os
 
 
 class Pipeline:
@@ -52,11 +53,12 @@ class Pipeline:
         )
         return api_utils.get_data(response)
 
-    def list(self, token: t.Token = None) -> list:
+    def list(self, token: t.Token = None, user_only=False) -> list:
         headers = api_utils.get_auth_headers(token)
-        response = request_utils.get(
-            self.url + "/program/program/list", headers=headers
-        )
+        url = self.url + "/program/program/list"
+        if user_only:
+            url += "?user_only=true"
+        response = request_utils.get(url, headers=headers)
         return api_utils.get_data(response)
 
     def perms(self, pipeline_id: t.PipelineId, token: t.Token = None) -> set:
@@ -108,11 +110,12 @@ class Pipeline:
 
     def sleep(
         self,
-        org_id: t.OrgId,
-        user_ids: typing.List[t.UserId],
-        pipeline_ids: typing.List[t.PipelineId],
-        local: bool,
-        cloud: bool,
+        *,
+        org_id: t.OrgId = None,
+        user_ids: typing.List[t.UserId] = None,
+        pipeline_ids: typing.List[t.PipelineId] = None,
+        local: bool = False,
+        cloud: bool = False,
         token: t.Token = None,
     ):
         headers = api_utils.get_auth_headers(token)
@@ -177,37 +180,16 @@ def _get_s3_split(path):
 
 def put_serialization_s3(s3path, serialization, token: t.Token = None):
     bucket, key = _get_s3_split(s3path)
-    # log.log("S3 bucket={}, key={}".format(bucket, key))
-
-    auth = api.Auth()
-    token = auth.get_refreshed_token(token)
-    creds = auth.get_credentials(token)
-
-    session = boto3.Session(
-        aws_access_key_id=creds["AccessKeyId"],
-        aws_secret_access_key=creds["SecretKey"],
-        aws_session_token=creds["SessionToken"],
-    )
-    s3 = session.client("s3")
-    s3.put_object(Body=serialization.encode("utf-8"), Bucket=bucket, Key=key)
+    os.environ["CONDUCTO_S3_BUCKET"] = bucket
+    data._Data._init(local=False)
+    data.superuser.puts(key.split("/", 1)[-1], serialization.encode("utf-8"))
 
 
 def get_serialization_s3(s3path, token: t.Token = None):
     bucket, key = _get_s3_split(s3path)
-    # log.log("S3 bucket={}, key={}".format(bucket, key))
-
-    auth = api.Auth()
-    token = auth.get_refreshed_token(token)
-    creds = auth.get_credentials(token)
-
-    session = boto3.Session(
-        aws_access_key_id=creds["AccessKeyId"],
-        aws_secret_access_key=creds["SecretKey"],
-        aws_session_token=creds["SessionToken"],
-    )
-    s3 = session.client("s3")
-    r = s3.get_object(Bucket=bucket, Key=key)
-    return r["Body"].read().decode("utf-8")
+    os.environ["CONDUCTO_S3_BUCKET"] = bucket
+    data._Data._init(local=False)
+    return data.superuser.gets(key.split("/", 1)[-1]).decode("utf-8")
 
 
 AsyncPipeline = api_utils.async_helper(Pipeline)

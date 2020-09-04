@@ -53,6 +53,7 @@ async def connect_to_pipeline(pipeline_id, token=None):
         except (
             websockets.ConnectionClosedError,
             websockets.InvalidStatusCode,
+            websockets.InvalidMessage,
             socket.gaierror,
         ) as e:
             if getattr(e, "status_code", None) == 403:

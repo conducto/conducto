@@ -56,14 +56,13 @@ class Credentials:
 
 
 class _Context:
-    def __init__(self, local, uri):
+    def __init__(self, local, uri, service=False):
         self.uri = uri
         self.local = local
-
         if not self.local:
             import boto3
 
-            self.s3_client = Credentials.s3_client()
+            self.s3_client = boto3.client("s3") if service else Credentials.s3_client()
             m = re.search("^s3://(.*?)/(.*)", self.uri)
             self.bucket, self.key_root = m.group(1, 2)
         else:
@@ -79,26 +78,38 @@ class _Context:
     def get_path(self, name):
         return _safe_join(self.uri, name)
 
-    def cleanup(self, key, skip_latest=False):
+    def delete_objects(self, objs):
+        for pos in range(0, len(objs), 1000):
+            self.s3_client.delete_objects(
+                Bucket=self.bucket, Delete={"Objects": objs[pos : pos + 1000]}
+            )
+
+    def list_all_versions(self, prefix, is_exact=False):
+        response = self.s3_client.list_object_versions(
+            Bucket=self.bucket, Prefix=prefix
+        )
+        while True:
+            for version in response.get("Versions", []):
+                if not (is_exact and version["Key"] != prefix):
+                    yield version
+            if not response["IsTruncated"]:
+                return
+            response = self.s3_client.list_object_versions(
+                Bucket=self.bucket, Prefix=prefix, KeyMarker=response["KeyMarker"]
+            )
+
+    def cleanup(self, key, skip_latest=False, is_exact=True):
         key = self.get_s3_key(key)
         # this method is invoked to clear out all but the latest version, or to delete all versions
-        while True:
-            r = self.s3_client.list_object_versions(Bucket=self.bucket, Prefix=key)
-            versions = r.get("Versions")
-            if versions is None:
-                break
-            to_delete = [
-                i["VersionId"]
-                for i in versions
-                if (not (skip_latest and i["IsLatest"])) and i["Key"] == key
-            ]
-
-            if not to_delete:
-                break
-            for version_id in to_delete:
-                self.s3_client.delete_object(
-                    Bucket=self.bucket, Key=key, VersionId=version_id
-                )
+        versions = list(self.list_all_versions(prefix=key, is_exact=is_exact))
+        to_delete = [
+            {"VersionId": i["VersionId"], "Key": i["Key"]}
+            for i in versions
+            if not (skip_latest and i["IsLatest"])
+        ]
+        if not to_delete:
+            return
+        self.delete_objects(to_delete)
 
 
 class _Data:
@@ -129,15 +140,18 @@ class _Data:
         _Data._pipeline_id = (
             pipeline_id or _Data._pipeline_id or os.getenv("CONDUCTO_PIPELINE_ID")
         )
-        _Data._local = (
-            local
-            or _Data._local
-            or api.Config().get_location() == api.Config.Location.LOCAL
-        )
+        for attr in (
+            local,
+            _Data._local,
+            api.Config().get_location() == api.Config.Location.LOCAL,
+        ):
+            if attr is not None:
+                _Data._local = attr
+                break
         _Data._s3_bucket = _Data._s3_bucket or os.getenv("CONDUCTO_S3_BUCKET")
 
     @classmethod
-    def get(cls, name, file):
+    def get(cls, name, file, local=None):
         """
         Get object at `name`, store it to `file`.
         """
@@ -232,10 +246,7 @@ class _Data:
         """
         ctx = cls._ctx()
         if not ctx.local:
-            if recursive:
-                # TODO: S3 delete recursive
-                raise NotImplementedError("Haven't done this yet.")
-            ctx.cleanup(name)
+            ctx.cleanup(name, is_exact=not recursive)
         else:
             import shutil
 
@@ -364,6 +375,17 @@ class _Data:
         conducto_url = "" if path_only else os.environ["CONDUCTO_AUTO_URL"]
         qname = urllib.parse.quote(name)
         return f"{conducto_url}/gw/manager/data/{pipeline_id}/{cls.__name__}/{qname}"
+
+
+class service(_Data):
+    @staticmethod
+    def _get_uri():
+        return f"s3://{_Data._s3_bucket}/"
+
+    @classmethod
+    def _ctx(cls):
+        cls._init()
+        return _Context(local=False, uri=cls._get_uri(), service=True)
 
 
 class superuser(_Data):

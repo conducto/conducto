@@ -67,16 +67,17 @@ def email(to=None, cc=None):
     return base("email", to=to, cc=cc)
 
 
-def slack(to, token, extra=None):
+def slack(to, token, message=None, node_summary=False):
     """
     Post a summary of the node in the specified slack channel.
     :param to: where to send the updates to
     :param token: slack token. Obtain it by running /gettoken in your slack channel
-    :param extra: extra data to include in the summary
+    :param message: message to print, optional
+    :param node_summary: print node summary, defaults to True if no message, False otherwise
     :return:
     """
 
-    return base("slack", to=to, token=token, extra=extra)
+    return base("slack", to=to, token=token, message=message, node_summary=node_summary)
 
 
 def github_status_update(owner, repo, sha, access_token, state, **kwargs):

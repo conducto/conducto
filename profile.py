@@ -71,7 +71,16 @@ def profile_list():
 
         data["dir-default"] = profile == dirprofile
 
-        _print_profile(profile, data)
+        try:
+            _print_profile(profile, data)
+        except KeyError:
+            print(
+                log.format(
+                    f"Invalid or incomplete profile '{profile}'",
+                    color="red",
+                    bold=False,
+                )
+            )
 
 
 def profile_set_default(id):

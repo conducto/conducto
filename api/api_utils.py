@@ -107,12 +107,14 @@ def get_auth_headers(token: t.Token = None, refresh=True, force_refresh=False):
     }
 
 
-def get_data(response) -> typing.Union[None, dict, list]:
+def get_data(
+    response,
+) -> typing.Union[None, dict, list, str, int, float, typing.Dict[str, dict]]:
     if "application/json" not in response.headers["content-type"]:
         raise InvalidResponse(
             response.read(), status_code=response.status_code, url=response.url
         )
-    if response.status_code == hs.NO_CONTENT:
+    if response.status_code in [hs.CREATED, hs.ACCEPTED, hs.NO_CONTENT]:
         return None
     data = json.loads(response.read())
 

@@ -11,27 +11,6 @@ from conducto.shared import constants, log
 # import conducto.internal.host_detection as hostdet
 
 
-def parse_registered_path(path):
-    # TODO remove late August 2020 after everybody has the new path code
-    """
-    This function takes a path which may include registered names for the
-    active profile and parses out the registered name, path hints and tail.
-    """
-
-    regpath = collections.namedtuple("regpath", ["name", "hint", "tail"])
-
-    mm = re.match(r"^\$\{([A-Z_][A-Z0-9_]*)(|=([^}]*))\}(.*)", path)
-    if mm is not None:
-        name = mm.group(1)
-        hint = mm.group(3)
-        tail = mm.group(4)
-        if tail is None:
-            tail = ""
-
-        return regpath(name, hint, tail)
-    return None
-
-
 class Path:
     """
     This represents a path to a file or directory available to a pipeline
@@ -72,19 +51,7 @@ class Path:
             s = json.loads(s)
 
         if not isinstance(s, dict):
-            # TODO remove compatibility shim
-
-            regpath = parse_registered_path(s)
-            self = cls()
-            self._type = "dockerhost"
-            if regpath != None:
-                self._value = regpath.hint + regpath.tail
-                self._marks = [(len(regpath.hint), f"shared:name={regpath.name}")]
-            else:
-                self._value = s
-            return self
-
-            # raise RuntimeError(f"string {s} not recognized as an encoded path")
+            raise RuntimeError(f"string {s} not recognized as an encoded path")
 
         segs = s["path"]
         assert len(s["pathsep"]) == 1
@@ -94,12 +61,7 @@ class Path:
         for seg in segs:
             if isinstance(seg, dict):
                 prefix = s["pathsep"].join(dirsegs)
-                if seg["type"] == "git":
-                    marks.append((len(prefix), "git"))
-                elif seg["type"] == "shared":
-                    marks.append((len(prefix), f"shared:name={seg['name']}"))
-                else:
-                    raise RuntimeError(f"segment type {seg['type']} is unknown")
+                marks.append((len(prefix), seg))
             else:
                 dirsegs.append(seg)
 
@@ -121,22 +83,17 @@ class Path:
 
         pathsep = "\\" if is_win_host or is_win_env or is_win_pathhack else "/"
 
-        signal = "endpath:null"
+        signal = {"type": "endpath"}
         segs = []
-        beginnings = [(0, "start")] + self._marks
+        beginnings = [(0, {"type": "startpath"})] + self._marks
         endings = self._marks + [(len(self._value), signal)]
         for m1, m2 in zip(beginnings, endings):
             chunk = self._value[m1[0] : m2[0]]
             if chunk != "":
                 segs += list(chunk.lstrip(pathsep).split(pathsep))
 
-            if m2[1].startswith("shared:"):
-                n = m2[1][len("shared:name=") :]
-                segs.append({"type": "shared", "name": n})
-            elif m2[1].startswith("git"):
-                segs.append({"type": "git"})
-            elif m2[1] == signal:
-                pass
+            if m2[1]["type"] != signal["type"]:
+                segs.append(m2[1])
 
         return {"pathsep": pathsep, "path": segs}
 
@@ -362,7 +319,7 @@ class Path:
         return r
 
     def mark_named_share(self, name, path):
-        return self._dupe_new_mark((len(path), f"shared:name={name}"))
+        return self._dupe_new_mark((len(path), {"type": "shared", "name": name}))
 
     def mark_git_root(self):
         assert self._type == "external"
@@ -374,13 +331,13 @@ class Path:
             dirname = p
         git_root = Path._get_git_root(dirname)
         if git_root:
-            return self._dupe_new_mark((len(git_root), "git"))
+            return self._dupe_new_mark((len(git_root), {"type": "git"}))
         else:
             return self
 
     def get_git_root(self):
         for mark in self._marks:
-            if mark[1].startswith("git"):
+            if mark[1]["type"] == "git":
                 r = self._dupe()
                 r._value = self._value[: mark[0]]
                 r._marks = [m for m in self._marks if m[0] <= mark[0]]
@@ -389,15 +346,12 @@ class Path:
 
     def get_declared_shared(self):
         for mark in self._marks:
-            if mark[1].startswith("shared:"):
-                # TODO not sure about this syntax yet, but this is way it is for now.
-                assert mark[1].startswith("shared:name=")
-
+            if mark[1]["type"] == "shared":
                 sharedpath = collections.namedtuple(
                     "sharedpath", ["name", "hint", "tail"]
                 )
 
-                name = mark[1][len("shared:name=") :]
+                name = mark[1]["name"]
                 hint, tail = self._value[: mark[0]], self._value[mark[0] :]
                 return sharedpath(name, hint, tail)
 

@@ -316,6 +316,7 @@ class Image:
         self.history = [HistoryEntry(Status.PENDING)]
 
         if self.pre_built:
+            self.history[0].finish()
             self.history.append(HistoryEntry(Status.DONE, finish=True))
 
         self._make_fut: typing.Optional[asyncio.Future] = None
@@ -481,7 +482,9 @@ class Image:
                         f"Specified copy_branch={self.copy_branch} but did "
                         f"not specify copy_url or copy_repo.\nImage: {self.to_dict()}"
                     )
-                url = await conducto.api.AsyncGit().url(self.copy_repo)
+                from conducto.integrations import git
+
+                url = await async_utils.eval_in_thread(git.url, self.copy_repo)
             out, _err = await async_utils.run_and_check(
                 "git", "ls-remote", url, f"refs/heads/{branch}"
             )
@@ -841,7 +844,7 @@ def make_all(node: "pipeline.Node", pipeline_id, push_to_cloud):
             if img.name_complete not in images:
                 images[img.name_complete] = img
 
-    def _print_status():
+    async def _print_status(*args, **kwargs):
         line = "Preparing images:"
         sep = ""
         for status in Status.order:

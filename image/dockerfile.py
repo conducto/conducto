@@ -133,7 +133,9 @@ async def text_for_build_dockerfile(
             lines.append(f"COPY . {COPY_DIR}")
         else:
             if copy_repo and not copy_url:
-                copy_url = await api.AsyncGit().url(copy_repo)
+                from conducto.integrations import git
+
+                copy_url = await async_utils.eval_in_thread(git.url, copy_repo)
             lines.append("ARG CONDUCTO_CACHE_BUSTER")
             lines.append("RUN echo $CONDUCTO_CACHE_BUSTER")
             lines.append(

@@ -9,12 +9,12 @@ import sys
 import time
 import traceback
 import typing
-import uuid
 
-from conducto.shared import async_utils, log, constants, imagepath
+from conducto.shared import async_utils, constants, imagepath
 import conducto
-from .. import pipeline
 from . import dockerfile as dockerfile_mod, names
+
+CONST_EE = constants.ExecutionEnv
 
 if sys.version_info >= (3, 7):
     asynccontextmanager = contextlib.asynccontextmanager
@@ -43,8 +43,10 @@ class Status:
     PENDING = "pending"
     QUEUED = "queued"
     PULLING = "pulling"
+    CLONING = "cloning"
     BUILDING = "building"
-    COMPLETING = "completing"
+    INSTALLING = "installing"
+    COPYING = "copying"
     EXTENDING = "extending"
     PUSHING = "pushing"
     DONE = "done"
@@ -54,8 +56,10 @@ class Status:
         PENDING,
         QUEUED,
         PULLING,
+        CLONING,
         BUILDING,
-        COMPLETING,
+        INSTALLING,
+        COPYING,
         EXTENDING,
         PUSHING,
         DONE,
@@ -150,6 +154,9 @@ class Image:
         `copy_dir`; if not using that, you must specify `path_map`.
     :param reqs_py:  List of Python packages for Conducto to pip install into
         the generated Docker image.
+    :param reqs_packages: List of packages to install with the appropriate Linux package
+        manager for this image's flavor.
+    :param reqs_docker: `bool` for whether to install Docker.
     :param name: Name this `Image` so other Nodes can reference it by name. If
         no name is given, one will automatically be generated from a list of
         our favorite Pokemon. I choose you, angry-bulbasaur!
@@ -157,6 +164,8 @@ class Image:
 
     _PULLED_IMAGES = set()
     _CONTEXT = None
+    _CLONE_LOCKS = {}
+    _COMPLETED_CLONES = set()
 
     def __init__(
         self,
@@ -171,11 +180,19 @@ class Image:
         copy_branch=None,
         docker_auto_workdir=True,
         reqs_py=None,
+        reqs_packages=None,
+        reqs_docker=False,
         path_map=None,
         name=None,
-        pre_built=False,
         git_sha=None,
+        git_urls=None,
+        **kwargs,
     ):
+
+        # TODO: remove pre_built back-compatibility for sept 9 changes
+        kwargs.pop("pre_built", None)
+        if len(kwargs):
+            raise ValueError(f"unknown args {','.join(kwargs)}")
 
         if name is None:
             name = names.NameGenerator.name()
@@ -213,7 +230,9 @@ class Image:
         self.copy_branch = copy_branch
         self.docker_auto_workdir = docker_auto_workdir
         self.reqs_py = reqs_py
-        self.path_map = path_map
+        self.reqs_packages = reqs_packages
+        self.reqs_docker = reqs_docker
+        self.path_map = path_map or {}
         if self.path_map:
             # on deserialize pathmaps are strings but they may also be strings when
             # being passed from the user.
@@ -229,9 +248,9 @@ class Image:
             }
         self.git_sha = git_sha or os.getenv("CONDUCTO_GIT_SHA")
 
-        self.pre_built = pre_built
-
-        self._env_vars = {}
+        self.git_urls = git_urls or []
+        if not git_urls and "CONDUCTO_GIT_URLS" in os.environ:
+            self.git_urls = json.loads(os.environ["CONDUCTO_GIT_URLS"])
 
         if self.copy_repo:
             # `copy_repo` automatically copies the whole repo. If environment
@@ -244,8 +263,6 @@ class Image:
                     # The value `True` means "auto-detect", so go ahead and auto-detect.
                     if "CONDUCTO_GIT_REPO" in os.environ:
                         self.copy_repo = os.environ["CONDUCTO_GIT_REPO"]
-                        # TODO: Is there a way to set `path_map` here? If run in PR mode
-                        # then we'd have to use named shares. Get help setting this up.
                     else:
                         self.copy_repo = imagepath.Path._get_git_repo(
                             _non_conducto_dir()
@@ -253,33 +270,46 @@ class Image:
 
                     if "CONDUCTO_GIT_REPO_ROOT" in os.environ:
                         repo_root = os.environ["CONDUCTO_GIT_REPO_ROOT"]
+                    elif CONST_EE.headless():
+                        # In headless mode, the repo_root must be a bare Git repo that
+                        # is not rooted in any filesystem.
+                        gitroot = {
+                            "type": "git",
+                            "repo": self.copy_repo,
+                            "branch": self.copy_branch,
+                        }
+                        repo_root = imagepath.Path.from_marked_root(gitroot, ".")
+                        for url in self.git_urls:
+                            sanitized = imagepath.Path._sanitize_git_origin(url)
+                            repo_root = repo_root.mark_named_share(sanitized, "")
                     else:
                         # Set the path_map to show that this repo is at COPY_DIR
                         repo_root = imagepath.Path._get_git_root(_non_conducto_dir())
 
-                    const_ee = constants.ExecutionEnv
-                    if const_ee.value() in const_ee.external:
-                        origin = imagepath.Path._get_git_origin(repo_root)
-                        sharename = imagepath.Path._sanitize_git_origin(origin)
-                        Image.share_directory(sharename, repo_root)
+                        if CONST_EE.value() == CONST_EE.EXTERNAL:
+                            # In non-headless EXTERNAL mode, copy_repo=True should
+                            # attempt to share the Git root according to its origin url.
+                            origin = imagepath.Path._get_git_origin(repo_root)
+                            sharename = imagepath.Path._sanitize_git_origin(origin)
+                            Image.share_directory(sharename, repo_root)
 
-                    repo_root = self.get_contextual_path(repo_root)
-
-                    if not self.path_map:
-                        self.path_map = {}
-                    self.path_map.setdefault(repo_root, dockerfile_mod.COPY_DIR)
+                    # Set this in `path_map` and in `context`
+                    repo_root = self._get_contextual_path_helper(repo_root)
+                    self.path_map.setdefault(
+                        repo_root, constants.ConductoPaths.COPY_LOCATION
+                    )
                     self.context = repo_root
             else:
                 # In normal mode, `copy_repo` resolves to `copy_dir`. Record the repo
                 # location here.
                 if self.copy_dir is None:
                     if "CONDUCTO_GIT_REPO_ROOT" in os.environ:
-                        self.copy_dir = self.get_contextual_path(
+                        self.copy_dir = self._get_contextual_path_helper(
                             os.environ["CONDUCTO_GIT_REPO_ROOT"]
                         )
                     else:
                         outside_dir = _non_conducto_dir()
-                        contextual_path = self.get_contextual_path(outside_dir)
+                        contextual_path = self._get_contextual_path_helper(outside_dir)
                         gitroot = contextual_path.get_git_root()
                         if not gitroot:
                             raise ValueError(
@@ -288,41 +318,39 @@ class Image:
                         self.copy_dir = gitroot.as_docker_host_path()
                 self.context = self.copy_dir
 
-            # Set CONDUCTO_GIT_SHA later because we have to run a command to do it
-            self._env_vars["CONDUCTO_GIT_REPO_ROOT"] = dockerfile_mod.COPY_DIR
-            self._env_vars["CONDUCTO_GIT_REPO"] = self.copy_repo
-            if self.copy_branch:
-                self._env_vars["CONDUCTO_GIT_BRANCH"] = self.copy_branch
+        if self.dockerfile is not None:
+            if self.context is None:
+                self.context = os.path.dirname(self.dockerfile)
+            self.dockerfile = self._get_contextual_path_helper(self.dockerfile)
 
-        if not self.pre_built:
-            if self.dockerfile is not None:
-                if self.context is None:
-                    self.context = os.path.dirname(self.dockerfile)
-                self.dockerfile = self.get_contextual_path(self.dockerfile)
+        if self.context is not None:
+            self.context = self._get_contextual_path_helper(self.context)
 
-            if self.context is not None:
-                self.context = self.get_contextual_path(self.context)
-
-            if self.copy_dir is not None:
-                self.copy_dir = self.get_contextual_path(self.copy_dir)
-                self.path_map = {self.copy_dir: dockerfile_mod.COPY_DIR}
+        if self.copy_dir is not None:
+            self.copy_dir = self._get_contextual_path_helper(self.copy_dir)
+            self.path_map = {self.copy_dir: constants.ConductoPaths.COPY_LOCATION}
 
         if self.path_map:
             self.path_map = {
-                self.get_contextual_path(external): internal
+                self._get_contextual_path_helper(external): internal
                 for external, internal in self.path_map.items()
             }
 
         self.history = [HistoryEntry(Status.PENDING)]
 
-        if self.pre_built:
-            self.history[0].finish()
-            self.history.append(HistoryEntry(Status.DONE, finish=True))
-
         self._make_fut: typing.Optional[asyncio.Future] = None
 
         self._cloud_tag_convert = None
         self._pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID")
+
+        # Check for compatibility with Headless/Agent-less mode
+        if CONST_EE.headless() and not self.is_cloud_building():
+            raise ValueError(
+                "If in headless mode (like from a Git webhook), image must be cloud-"
+                "buildable. Cannot use copy_dir. If using dockerfile or copy_repo, "
+                "then copy_branch must be set so that the contents come from Git "
+                "instead of the local file system."
+            )
 
     def __eq__(self, other):
         return isinstance(other, Image) and self.to_dict() == other.to_dict()
@@ -361,8 +389,9 @@ class Image:
             "copy_url": self.copy_url,
             "copy_branch": self.copy_branch,
             "reqs_py": self.reqs_py,
+            "reqs_packages": self.reqs_packages,
+            "reqs_docker": self.reqs_docker,
             "path_map": self._serialize_pathmap(self.path_map),
-            "pre_built": self.pre_built,
             "git_sha": self.git_sha,
         }
 
@@ -378,11 +407,18 @@ class Image:
             "copy_url": self.copy_url,
             "copy_branch": self.copy_branch,
             "reqs_py": self.reqs_py,
+            "reqs_packages": self.reqs_packages,
+            "reqs_docker": self.reqs_docker,
             "path_map": self._serialize_pathmap(self.path_map),
         }
 
+    def _get_contextual_path_helper(self, p, **kwargs):
+        return self.get_contextual_path(
+            p, branch=self.copy_branch, url=self.copy_url, repo=self.copy_repo, **kwargs
+        )
+
     @staticmethod
-    def get_contextual_path(p, named_shares=True):
+    def get_contextual_path(p, *, named_shares=True, branch=None, url=None, repo=None):
         """
         Take a path as a string and returns a `conducto.Path`.  Optionally
         searches for named shares as recognized from the root.
@@ -422,7 +458,7 @@ class Image:
         # inside an Image with ".copy_url" set.
         elif op.exists(p):
             result = imagepath.Path.from_localhost(p)
-            result = result.mark_git_root()
+            result = result.mark_git_root(branch=branch, url=url, repo=repo)
         else:
             result = imagepath.Path.from_localhost(p)
 
@@ -469,38 +505,16 @@ class Image:
     # alias for back compat
     register_directory = share_directory
 
-    async def sha1(self):
-        if self.git_sha is not None:
-            return self.git_sha
-
-        if self.copy_branch:
-            branch = self.copy_branch
-            url = self.copy_url
-            if url is None:
-                if self.copy_repo is None:
-                    raise ValueError(
-                        f"Specified copy_branch={self.copy_branch} but did "
-                        f"not specify copy_url or copy_repo.\nImage: {self.to_dict()}"
-                    )
-                from conducto.integrations import git
-
-                url = await async_utils.eval_in_thread(git.url, self.copy_repo)
-            out, _err = await async_utils.run_and_check(
-                "git", "ls-remote", url, f"refs/heads/{branch}"
-            )
-            sha1 = out.decode().strip().split("\t")[0]
-            if not sha1:
-                raise ValueError(
-                    f"Cannot find branch named {branch}.\nImage: {self.to_dict()}"
-                )
-            self.git_sha = sha1
+    async def _sha1(self):
+        if self.needs_cloning():
+            root = self._get_clone_dest()
         else:
-            root = self.copy_dir.to_docker_mount()
-            out, err = await async_utils.run_and_check(
-                "git", "-C", root, "rev-parse", "HEAD"
-            )
-            self.git_sha = out.decode().strip()
-        return self.git_sha
+            root = self.copy_dir.to_docker_mount(pipeline_id=self._pipeline_id)
+
+        out, err = await async_utils.run_and_check(
+            "git", "-C", root, "rev-parse", "HEAD"
+        )
+        return out.decode().strip()
 
     @property
     def name_built(self):
@@ -512,17 +526,26 @@ class Image:
             return self.image
 
     @property
-    def name_complete(self):
-        if self.needs_completing():
+    def name_installed(self):
+        if self.needs_installing():
             key = json.dumps(self.to_raw_image()).encode()
             tag = hashlib.md5(key).hexdigest()
-            return f"conducto_complete:{self._pipeline_id}_{tag}"
+            return f"conducto_installed:{self._pipeline_id}_{tag}"
         else:
             return self.name_built
 
     @property
+    def name_copied(self):
+        if self.needs_copying():
+            key = json.dumps(self.to_raw_image()).encode()
+            tag = hashlib.md5(key).hexdigest()
+            return f"conducto_copied:{self._pipeline_id}_{tag}"
+        else:
+            return self.name_installed
+
+    @property
     def name_local_extended(self):
-        tag = hashlib.md5(self.name_complete.encode()).hexdigest()
+        tag = hashlib.md5(self.name_copied.encode()).hexdigest()
         return f"conducto_extended:{self._pipeline_id}_{tag}"
 
     @property
@@ -532,7 +555,7 @@ class Image:
         if self._pipeline_id is None:
             raise ValueError("Must specify pipeline_id before pushing to cloud")
         docker_domain = api.Config().get_docker_domain()
-        tag = hashlib.md5(self.name_complete.encode()).hexdigest()
+        tag = hashlib.md5(self.name_copied.encode()).hexdigest()
         return f"{docker_domain}/{self._pipeline_id}:{tag}"
 
     @property
@@ -590,6 +613,17 @@ class Image:
                     st.finish("Image already pulled")
         yield
 
+        # Clone the repo if needed
+        if self.needs_cloning():
+            async with self._new_status(Status.CLONING, callback) as st:
+                if force_rebuild or not self._clone_complete():
+                    await callback()
+                    out, err = await self._clone()
+                    st.finish(out, err)
+                else:
+                    st.finish("Using cached clone")
+        yield
+
         # Build the image if needed
         if self.needs_building():
             async with self._new_status(Status.BUILDING, callback) as st:
@@ -601,15 +635,26 @@ class Image:
                     st.finish("Dockerfile already built")
         yield
 
-        # If needed, copy files into the image and install packages
-        if self.needs_completing():
-            async with self._new_status(Status.COMPLETING, callback) as st:
-                if force_rebuild or not await self._image_exists(self.name_complete):
+        # Install packages if needed
+        if self.needs_installing():
+            async with self._new_status(Status.INSTALLING, callback) as st:
+                if force_rebuild or not await self._image_exists(self.name_installed):
                     await callback()
-                    out, err = await self._complete()
+                    out, err = await self._install()
                     st.finish(out, err)
                 else:
-                    st.finish("Code and/or Python libraries already installed.")
+                    st.finish("Python libraries already installed.")
+        yield
+
+        # Copy files if needed
+        if self.needs_copying():
+            async with self._new_status(Status.COPYING, callback) as st:
+                if force_rebuild or not await self._image_exists(self.name_copied):
+                    await callback()
+                    out, err = await self._copy()
+                    st.finish(out, err)
+                else:
+                    st.finish("Code already copied.")
         yield
 
         async with self._new_status(Status.EXTENDING, callback) as st:
@@ -675,22 +720,93 @@ class Image:
             if callback:
                 await callback(status, None, entry)
 
+    def needs_cloning(self):
+        return bool(self.copy_branch)
+
+    def _get_clone_dest(self):
+        return constants.ConductoPaths.git_clone_dest(
+            pipeline_id=self._pipeline_id,
+            copy_repo=self.copy_repo,
+            copy_url=self.copy_url,
+            copy_branch=self.copy_branch,
+        )
+
+    def _clone_complete(self):
+        """
+        Check whether this clone has completed. Other steps check doneness by looking
+        for the existence of an image name. That doesn't work for clone() because it
+        first creates the directory and then populates it, so there's no easy
+        filesystem-level answer for when it has finished. Keep a flag as a workaround,
+        keyed by clone dest.
+        """
+        dest = self._get_clone_dest()
+        return dest in Image._COMPLETED_CLONES
+
+    async def _get_clone_url(self):
+        if self.copy_url:
+            return self.copy_url
+        elif self.copy_repo:
+            from conducto.integrations import git
+
+            return await async_utils.eval_in_thread(git.url, self.copy_repo)
+        else:
+            raise ValueError(
+                "URL for cloning is unavailable: copy_url and copy_repo are both None"
+            )
+
+    async def _clone(self):
+        # Only one clone() can run at a time on a single directory
+        dest = self._get_clone_dest()
+        if dest in Image._CLONE_LOCKS:
+            lock = Image._CLONE_LOCKS[dest]
+        else:
+            lock = Image._CLONE_LOCKS[dest] = asyncio.Lock()
+        async with lock:
+            # headless builds need to git clone
+            url = await self._get_clone_url()
+
+            if os.path.exists(dest):
+                out1, err1 = await async_utils.run_and_check("git", "-C", dest, "fetch")
+                out2, err2 = await async_utils.run_and_check(
+                    "git", "-C", dest, "reset", "--hard", f"origin/{self.copy_branch}"
+                )
+                out = b"\n\n".join(o for o in [out1, out2] if o)
+                err = b"\n\n".join(e for e in [err1, err2] if e)
+            else:
+                out, err = await async_utils.run_and_check(
+                    "git",
+                    "clone",
+                    "--single-branch",
+                    "--branch",
+                    self.copy_branch,
+                    url,
+                    dest,
+                )
+
+        # Mark that this has been finished
+        Image._COMPLETED_CLONES.add(dest)
+        return out, err
+
     async def _build(self):
         """
-        "Build" this image. If a Dockerfile is specified, build it first. If copy_* or
-        reqs_py are specified, auto-generate a Dockerfile and add them.
-        Otherwise, run 'docker build', possibly auto-generating a Dockerfile.
+        Build this Image's `dockerfile`. If copy_* or reqs_* are passed, then additional
+        code or packages will be added in a later step.
         """
         assert self.dockerfile is not None
         # Build the specified dockerfile
+        if self.needs_cloning():
+            context = self._get_clone_dest()
+        else:
+            context = self.context.to_docker_mount(pipeline_id=self._pipeline_id)
+
         build_args = []
         if self.docker_build_args is not None:
             for k, v in self.docker_build_args.items():
                 build_args += ["--build-arg", "{}={}".format(k, v)]
         build_args += [
             "-f",
-            self.dockerfile.to_docker_mount(),
-            self.context.to_docker_mount(),
+            self.dockerfile.to_docker_mount(pipeline_id=self._pipeline_id),
+            context,
         ]
 
         out, err = await async_utils.run_and_check(
@@ -700,38 +816,17 @@ class Image:
             self.name_built,
             "--label",
             "com.conducto.build",
+            "--label",
+            "com.conducto",
             *build_args,
         )
         return out, err
 
-    async def _complete(self):
-        # If copying a whole repo, or if getting a remote Git repo, get the commit SHA.
-        if self.copy_repo or self.copy_branch or self.copy_url:
-            # Set CONDUCTO_GIT_SHA now that it's needed. We couldn't do it before
-            # because it could be expensive to compute (could involve a URL fetch), so
-            # we want to make sure it is only done once per Image.
-            self._env_vars["CONDUCTO_GIT_SHA"] = await self.sha1()
-
+    async def _install(self):
         # Create dockerfile from stdin. Replace "-f <dockerfile> <copy_dir>"
         # with "-"
-        if self.copy_dir:
-            build_args = [
-                "-f",
-                "-",
-                self.copy_dir.to_docker_mount(),
-            ]
-        else:
-            build_args = ["-"]
-        build_args += ["--build-arg", f"CONDUCTO_CACHE_BUSTER={uuid.uuid4()}"]
-        text = await dockerfile_mod.text_for_build_dockerfile(
-            self.name_built,
-            self.reqs_py,
-            self.copy_dir,
-            self.copy_repo,
-            self.copy_url,
-            self.copy_branch,
-            self.docker_auto_workdir,
-            self._env_vars,
+        text = await dockerfile_mod.text_for_install(
+            self.name_built, self.reqs_py, self.reqs_packages, self.reqs_docker
         )
 
         # Only in test setting, if the conducto image is used, pull it!
@@ -762,19 +857,77 @@ class Image:
             "docker",
             "build",
             "-t",
-            self.name_complete,
+            self.name_installed,
             "--label",
-            "com.conducto.complete",
-            *build_args,
+            "com.conducto.install",
+            "--label",
+            "com.conducto",
+            "-",
             input=text.encode(),
+        )
+        return out, err
+
+    async def _copy(self):
+        if self.copy_repo:
+            env_vars = {
+                "CONDUCTO_GIT_REPO_ROOT": constants.ConductoPaths.COPY_LOCATION,
+                "CONDUCTO_GIT_REPO": self.copy_repo,
+            }
+            if self.copy_branch:
+                env_vars["CONDUCTO_GIT_BRANCH"] = self.copy_branch
+            if self.git_urls:
+                env_vars["CONDUCTO_GIT_URLS"] = json.dumps(self.git_urls)
+        else:
+            env_vars = {}
+
+        # If copying a whole repo, or if getting a remote Git repo, get the commit SHA.
+        if self.copy_repo or self.needs_cloning():
+            # Set CONDUCTO_GIT_SHA now that it's needed. We couldn't do it before
+            # because it could be expensive to compute (could involve a URL fetch), so
+            # we want to make sure it is only done once per Image.
+            env_vars["CONDUCTO_GIT_SHA"] = await self._sha1()
+
+        if self.copy_dir:
+            context = self.copy_dir.to_docker_mount(pipeline_id=self._pipeline_id)
+        else:
+            context = self._get_clone_dest()
+
+        # Create dockerfile and dockerignore. For details on why we do it this way, see:
+        #   https://github.com/moby/moby/issues/12886
+        dockerfile_text = dockerfile_mod.text_for_copy(
+            self.name_installed, self.docker_auto_workdir, env_vars
+        )
+        dockerignore_text = dockerfile_mod.dockerignore_for_copy(
+            context, preserve_git=self.copy_repo or self.needs_cloning()
+        )
+        dockerfile_path = f"/tmp/{self.name}/Dockerfile"
+        dockerignore_path = f"/tmp/{self.name}/Dockerfile.dockerignore"
+        os.makedirs(f"/tmp/{self.name}", exist_ok=True)
+        with open(dockerfile_path, "w") as f:
+            f.write(dockerfile_text)
+        with open(dockerignore_path, "w") as f:
+            f.write(dockerignore_text)
+
+        # Run the command
+        out, err = await async_utils.run_and_check(
+            "docker",
+            "build",
+            "-t",
+            self.name_copied,
+            "--label",
+            "com.conducto.copy",
+            "--label",
+            "com.conducto",
+            "-f",
+            dockerfile_path,
+            context,
+            env={**os.environ, "DOCKER_BUILDKIT": "1"},
         )
         return out, err
 
     async def _extend(self):
         # Writes Dockerfile that extends user-provided image.
-        text, worker_image = await dockerfile_mod.text_for_extend_dockerfile(
-            self.name_complete
-        )
+        text, worker_image = await dockerfile_mod.text_for_extend(self.name_copied)
         if "/" in worker_image:
             pull_worker = True
             if os.environ.get("CONDUCTO_DEV_REGISTRY"):
@@ -800,6 +953,8 @@ class Image:
             "--label",
             "com.conducto.extend",
             "--label",
+            "com.conducto",
+            "--label",
             f"com.conducto.profile={profile}",
             "--label",
             f"com.conducto.pipeline={pipeline_id}",
@@ -820,46 +975,29 @@ class Image:
         return out, err
 
     def is_cloud_building(self):
-        return not self.copy_dir and not self.dockerfile
+        """
+        Check whether this image can be built in a cloud manager's RD. If it requires
+        resources from a local machine -- such as copy_dir or a non-Git-based dockerfile
+        -- then it cannot do this and needs an Agent to be built.
+        """
+        if self.copy_dir:
+            return False
+        if self.dockerfile and not self.copy_branch:
+            return False
+        return True
 
     def needs_building(self):
         return self.dockerfile is not None
 
-    def needs_completing(self):
+    def needs_installing(self):
+        return self.reqs_py or self.reqs_packages or self.reqs_docker
+
+    def needs_copying(self):
         return (
             self.copy_dir is not None
             or self.copy_repo is not None
             or self.copy_url is not None
-            or self.reqs_py is not None
         )
-
-
-def make_all(node: "pipeline.Node", pipeline_id, push_to_cloud):
-    images = {}
-    for n in node.stream():
-        if n.user_set["image_name"]:
-            img = n.repo[n.user_set["image_name"]]
-            img.pre_built = True
-            img._pipeline_id = pipeline_id
-            if img.name_complete not in images:
-                images[img.name_complete] = img
-
-    async def _print_status(*args, **kwargs):
-        line = "Preparing images:"
-        sep = ""
-        for status in Status.order:
-            count = sum(i.history[-1].status == status for i in images.values())
-            if count > 0:
-                line += f"{sep} {count} {status}"
-                sep = ","
-            print(f"\r{log.Control.ERASE_LINE}{line}", end=".")
-
-    # Run all the builds concurrently.
-    # TODO: limit simultaneous builds using an asyncio.Semaphore
-    futs = [img.make(push_to_cloud, callback=_print_status) for img in images.values()]
-
-    asyncio.get_event_loop().run_until_complete(asyncio.gather(*futs))
-    print(f"\r{log.Control.ERASE_LINE}", end="")
 
 
 class HistoryEntry:

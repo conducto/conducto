@@ -80,19 +80,16 @@ def slack(to, token, message=None, node_summary=False):
     return base("slack", to=to, token=token, message=message, node_summary=node_summary)
 
 
-def github_status_update(owner, repo, sha, access_token, state, **kwargs):
+def github_status_update(repo, state, sha, owner=None, access_token=None):
     return base(
         "github_status_update",
-        owner=owner,
-        sha=sha,
         repo=repo,
-        access_token=access_token,
         state=state,
-        **kwargs
+        sha=sha,
+        owner=owner,
+        access_token=access_token,
     )
 
 
-def github_status_creator(owner, repo, sha, access_token):
-    import functools
-
-    return functools.partial(github_status_update, owner, repo, sha, access_token)
+def github_check(repo, sha):
+    return base("github_check", repo=repo, sha=sha)

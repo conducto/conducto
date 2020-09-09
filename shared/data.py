@@ -69,7 +69,8 @@ class _Context:
             self.uri = os.path.expanduser(self.uri)
 
     def get_s3_key(self, name):
-        return _safe_join(self.key_root, name)
+        # this is a slash delimited string, not a path
+        return "/".join([self.key_root.rstrip("/"), name.lstrip("/")])
 
     def get_function(self, function_name, name):
         fxn = getattr(self.s3_client, function_name)

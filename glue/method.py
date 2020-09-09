@@ -12,7 +12,7 @@ import types
 import typing
 import pathlib
 
-from ..shared import client_utils, constants, log, types as t
+from ..shared import client_utils, constants, log, types as t, imagepath
 from .._version import __version__, __sha1__
 
 from .. import api, callback, image as image_mod, pipeline
@@ -25,7 +25,6 @@ CONDUCTO_ARGS = [
     "run",
     "shell",
     "app",
-    "prebuild_images",
     "sleep_when_done",
     "public",
 ]
@@ -627,7 +626,6 @@ def _add_argparse_options_for_node(parser):
     parser.add_argument("--run", action="store_true")
     _bool_mutex_group(parser, "shell", default=_get_default_shell())
     _bool_mutex_group(parser, "app", default=_get_default_app())
-    parser.add_argument("--prebuild-images", action="store_true")
     parser.add_argument("--sleep-when-done", action="store_true")
     parser.add_argument("--public", action="store_true")
 
@@ -733,6 +731,8 @@ def _parse_image_kwargs_from_config_section(section):
         "context": section.get("context"),
         "docker_auto_workdir": section.getboolean("docker_auto_workdir", True),
         "reqs_py": get_json("reqs_py"),
+        "reqs_packages": get_json("reqs_packages"),
+        "reqs_docker": get_json("reqs_docker"),
         "path_map": get_json("path_map"),
         "name": section.get("name"),
     }
@@ -789,7 +789,7 @@ def run_cfg(
     argv,
     copy_repo=True,
     copy_branch=None,
-    headless=False,
+    git_urls=None,
     token=None,
     tags=None,
     unique_tag=None,
@@ -856,6 +856,24 @@ def run_cfg(
         remainder
     )
 
+    if copy_branch:
+        gitroot = {"type": "git", "branch": copy_branch}
+        if image_kwargs.get("dockerfile", None):
+            dockerfile_dir = os.path.dirname(image_kwargs["dockerfile"])
+            if not dockerfile_dir:
+                dockerfile_dir = "."
+
+            image_kwargs["dockerfile"] = imagepath.Path.from_marked_root(
+                gitroot, image_kwargs["dockerfile"]
+            )
+            # if a dockerfile is given, we must root context accordingly unless
+            # otherwise specified
+            if image_kwargs.get("context", None) is None:
+                image_kwargs["context"] = dockerfile_dir
+            image_kwargs["context"] = imagepath.Path.from_marked_root(
+                gitroot, image_kwargs["context"]
+            )
+
     # Build the output node
     wildcard_str = " ".join(shlex.quote(arg) for arg in wildcard_args)
     if "{*}" in command_template:
@@ -889,7 +907,10 @@ def run_cfg(
     co.Image._CONTEXT = file.name
     try:
         output.image = co.Image(
-            copy_repo=copy_repo, copy_branch=copy_branch, **image_kwargs
+            copy_repo=copy_repo,
+            copy_branch=copy_branch,
+            git_urls=git_urls,
+            **image_kwargs,
         )
     finally:
         co.Image._CONTEXT = None
@@ -901,9 +922,8 @@ def run_cfg(
 
     if will_build:
         BM = constants.BuildMode
-        output._build(
+        return output._build(
             build_mode=BM.LOCAL if is_local else BM.DEPLOY_TO_CLOUD,
-            headless=headless,
             token=token,
             **conducto_kwargs,
         )
@@ -969,7 +989,7 @@ def main(
         if not name.startswith("_") and not inspect.isclass(obj) and callable(obj)
     }
 
-    if constants.ExecutionEnv.value() in constants.ExecutionEnv.external:
+    if constants.ExecutionEnv.value() == constants.ExecutionEnv.EXTERNAL:
         # default filename to current working directory
         # allows python -m conducto debug to respect local .conducto/profile
         if filename is None:

@@ -180,16 +180,52 @@ def _get_s3_split(path):
 
 def put_serialization_s3(s3path, serialization, token: t.Token = None):
     bucket, key = _get_s3_split(s3path)
-    os.environ["CONDUCTO_S3_BUCKET"] = bucket
-    data._Data._init(local=False)
-    data.superuser.puts(key.split("/", 1)[-1], serialization.encode("utf-8"))
+    # log.log("S3 bucket={}, key={}".format(bucket, key))
+
+    auth = api.Auth()
+    token = auth.get_refreshed_token(token)
+    creds = auth.get_credentials(token)
+
+    session = boto3.Session(
+        aws_access_key_id=creds["AccessKeyId"],
+        aws_secret_access_key=creds["SecretKey"],
+        aws_session_token=creds["SessionToken"],
+    )
+
+    s3 = session.client("s3")
+    s3.put_object(Body=serialization.encode("utf-8"), Bucket=bucket, Key=key)
+
+    # jmarcus: apeng's code below is elegant but doesn't use 'token' so it breaks when
+    # called from the GitHub webhook. It should replace the above once we figure out how
+    # to make co.data use a specific token.
+    # os.environ["CONDUCTO_S3_BUCKET"] = bucket
+    # data._Data._init(local=False)
+    # data.superuser.puts(key.split("/", 1)[-1], serialization.encode("utf-8"))
 
 
 def get_serialization_s3(s3path, token: t.Token = None):
     bucket, key = _get_s3_split(s3path)
-    os.environ["CONDUCTO_S3_BUCKET"] = bucket
-    data._Data._init(local=False)
-    return data.superuser.gets(key.split("/", 1)[-1]).decode("utf-8")
+    # log.log("S3 bucket={}, key={}".format(bucket, key))
+
+    auth = api.Auth()
+    token = auth.get_refreshed_token(token)
+    creds = auth.get_credentials(token)
+
+    session = boto3.Session(
+        aws_access_key_id=creds["AccessKeyId"],
+        aws_secret_access_key=creds["SecretKey"],
+        aws_session_token=creds["SessionToken"],
+    )
+    s3 = session.client("s3")
+    r = s3.get_object(Bucket=bucket, Key=key)
+    return r["Body"].read().decode("utf-8")
+
+    # jmarcus: apeng's code below is elegant but doesn't use 'token' so it breaks when
+    # called from the GitHub webhook. It should replace the above once we figure out how
+    # to make co.data use a specific token.
+    # os.environ["CONDUCTO_S3_BUCKET"] = bucket
+    # data._Data._init(local=False)
+    # return data.superuser.gets(key.split("/", 1)[-1]).decode("utf-8")
 
 
 AsyncPipeline = api_utils.async_helper(Pipeline)

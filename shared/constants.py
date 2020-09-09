@@ -1,5 +1,8 @@
 import os
+import re
 import string
+import urllib.parse
+from . import types as t
 
 
 def skip(base_state):
@@ -123,6 +126,8 @@ class RdParams:
 
 class ConductoPaths:
     MOUNT_LOCATION = "/mnt/external"
+    GIT_LOCATION = "/mnt/git"
+    COPY_LOCATION = "/mnt/conducto"
     SERIALIZATION = "serialization"
 
     @staticmethod
@@ -145,11 +150,16 @@ class ConductoPaths:
         import conducto.api as api
 
         conducto_root = ConductoPaths.get_local_base_dir(expand=expand)
-        profile = api.Config().default_profile if profile is None else profile
-        if profile is None:
-            # this is a (poorly defined) signal that you are in a cloud worker
+        if ExecutionEnv.value() == ExecutionEnv.WORKER_CLOUD:
             return conducto_root
         else:
+            if not profile:
+                # only load api.Config() if necessary
+                profile = api.Config().default_profile
+            if profile is None:
+                # TODO:  This is almost surely an error that deserves an
+                # exception, but that causes too much trouble for tonight.
+                return conducto_root
             return os.path.join(conducto_root, profile)
 
     @staticmethod
@@ -169,6 +179,28 @@ class ConductoPaths:
         else:
             return os.path.join(log_dir, pipeline_id)
 
+    @staticmethod
+    def git_clone_dest(pipeline_id, copy_repo, copy_url, copy_branch):
+        if copy_repo is not None:
+            # TODO: this should depend on owner once we know it, not just repo
+            base = copy_repo
+        elif copy_url is not None:
+            # Clean up URL: remove username/password, and sanitize the rest
+            res = urllib.parse.urlparse(copy_url)
+            url = res._replace(netloc=res.hostname).geturl()
+            base = re.sub("[^\w_:@?=\-]+", "_", url)
+        else:
+            raise ValueError("Cannot clone if copy_repo and copy_url are both None")
+
+        if not isinstance(copy_branch, str):
+            raise TypeError(f"Expected str. Got copy_branch={repr(copy_branch)}")
+
+        return f"{ConductoPaths.GIT_LOCATION}/{pipeline_id}:{base}:{copy_branch}"
+
+
+# 8 characters, matches a host_id
+HOST_ID_NO_AGENT = "*nohost*"
+
 
 class ExecutionEnv:
     # environment -- CONDUCTO_EXECUTION_ENV
@@ -184,6 +216,7 @@ class ExecutionEnv:
     WORKER_CLOUD = "worker_cloud"
     DEBUG_CLOUD = "debug_cloud"
 
+    # Interactive state
     EXTERNAL = "external"
 
     local = {MANAGER_LOCAL, WORKER_LOCAL, DEBUG_LOCAL, AGENT_LOCAL}
@@ -195,11 +228,23 @@ class ExecutionEnv:
     manager_all = {MANAGER_LOCAL, MANAGER_CLOUD, AGENT_LOCAL}
     manager = {MANAGER_LOCAL, MANAGER_CLOUD}
     agent = {AGENT_LOCAL}
-    external = {EXTERNAL}
 
     @staticmethod
     def value():
         return os.getenv("CONDUCTO_EXECUTION_ENV", ExecutionEnv.EXTERNAL)
+
+    @staticmethod
+    def headless():
+        """
+        Headless/Agent-less modes, primarily for manager spawned from a Git webhook.
+        * The webhook is the same as External but it is not interactive, has no profile
+          directory, and should launch no Agent.
+        * It creates a Cloud manager that is mostly normal but cannot use an Agent.
+        * For debugging we may create a Local manager that does not use an Agent.
+        * Workers run from Headless pipelines should not create Images that cannot be
+          built without an Agent.
+        """
+        return t.Bool(os.getenv("CONDUCTO_HEADLESS"))
 
 
 class PipelineLifecycle:

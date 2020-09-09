@@ -112,8 +112,21 @@ class Config:
 
         if os.environ.get("CONDUCTO_PROFILE", "") != "":
             self.default_profile = os.environ["CONDUCTO_PROFILE"]
+            # we use this special value to explicitly clear the default
+            if self.default_profile == "__none__":
+                self.default_profile = None
         else:
             self.default_profile = self.get("general", "default")
+
+            if self.default_profile:
+                profdir = constants.ConductoPaths.get_profile_base_dir(
+                    expand=True, profile=self.default_profile
+                )
+                if not os.path.exists(profdir):
+                    # This indicates that the profile dir could not be found.
+                    # We could fix the general config, but I'll pass on that
+                    # for now.
+                    self.default_profile = None
 
     def get(self, section, key, default=None):
         return self.config.get(section, key, fallback=default)
@@ -256,9 +269,8 @@ commands:
                     raise PermissionError("Expired token in Config.TOKEN")
                 if Config.TOKEN != new_token:
                     claims = auth.get_unverified_claims(new_token)
-                    print(
-                        f'Just refreshed token from Config.TOKEN with new expiration time of {time.ctime(claims["exp"])}',
-                        file=sys.stderr,
+                    log.debug(
+                        f'Just refreshed token from Config.TOKEN with new expiration time of {time.ctime(claims["exp"])}'
                     )
                     Config.TOKEN = new_token
             return Config.TOKEN
@@ -274,9 +286,8 @@ commands:
                     raise PermissionError("Expired token in CONDUCTO_TOKEN")
                 if os.environ["CONDUCTO_TOKEN"] != new_token:
                     claims = auth.get_unverified_claims(new_token)
-                    print(
-                        f'Just refreshed token from CONDUCTO_TOKEN with new expiration time of {time.ctime(claims["exp"])}',
-                        file=sys.stderr,
+                    log.debug(
+                        f'Just refreshed token from CONDUCTO_TOKEN with new expiration time of {time.ctime(claims["exp"])}'
                     )
                     os.environ["CONDUCTO_TOKEN"] = new_token
             return os.environ["CONDUCTO_TOKEN"]
@@ -296,9 +307,8 @@ commands:
                     raise PermissionError("Expired token in config")
                 if token != new_token:
                     claims = auth.get_unverified_claims(new_token)
-                    print(
-                        f'Just refreshed token from config with new expiration time of {time.ctime(claims["exp"])}',
-                        file=sys.stderr,
+                    log.debug(
+                        f'Just refreshed token from config with new expiration time of {time.ctime(claims["exp"])}'
                     )
                     self.set_profile_general(self.default_profile, "token", new_token)
                 return new_token
@@ -415,6 +425,9 @@ commands:
         """
         Return the unique host_id stored in the .config. If none exist, generate one.
         """
+        if constants.ExecutionEnv.headless():
+            return constants.HOST_ID_NO_AGENT
+
         host_id = self.get("general", "host_id")
         if host_id is None:
             host_id = secrets.token_hex(4)

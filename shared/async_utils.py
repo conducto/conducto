@@ -196,20 +196,24 @@ def schedule_instance_async_non_concurrent(async_fxn):
     Additionally changes an async function into a synchronous one that
     schedules the async function to run in the background
     """
+    raise NotImplementedError(
+        "jmarcus believes this doesn't catch errors properly and we should instead use "
+        "asyncio.Lock."
+    )
 
-    def inner(self, *args, **kwargs):
-        if not hasattr(self, "last_task"):
-            self.last_task = done_future()
-
-        to_await = self.last_task
-
-        async def _coro():
-            await to_await
-            await async_fxn(self, *args, **kwargs)
-
-        self.last_task = asyncio.create_task(_coro())
-
-    return inner
+    # def inner(self, *args, **kwargs):
+    #     if not hasattr(self, "last_task"):
+    #         self.last_task = done_future()
+    #
+    #     to_await = self.last_task
+    #
+    #     async def _coro():
+    #         await to_await
+    #         await async_fxn(self, *args, **kwargs)
+    #
+    #     self.last_task = asyncio.create_task(_coro())
+    #
+    # return inner
 
 
 def loop(func, interval, ignore_errors=True):
@@ -251,18 +255,18 @@ def async_cache(fxn):
     return wrapper
 
 
-async def run_and_check(*args, input=None, stop_on_error=True, shell=False):
+async def run_and_check(*args, input=None, stop_on_error=True, shell=False, **kwargs):
     log.info("Running:", " ".join(pipes.quote(a) for a in args))
     if input is not None:
         log.info("stdin:", input)
     PIPE = asyncio.subprocess.PIPE
     if shell:
         proc = await asyncio.subprocess.create_subprocess_shell(
-            *args, stdin=PIPE, stdout=PIPE, stderr=PIPE
+            *args, stdin=PIPE, stdout=PIPE, stderr=PIPE, **kwargs
         )
     else:
         proc = await asyncio.subprocess.create_subprocess_exec(
-            *args, stdin=PIPE, stdout=PIPE, stderr=PIPE
+            *args, stdin=PIPE, stdout=PIPE, stderr=PIPE, **kwargs
         )
     stdout, stderr = await proc.communicate(input=input)
 

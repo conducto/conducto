@@ -81,7 +81,12 @@ class Auth:
     def get_token_from_shell(
         self, login: dict = None, force=False, skip_profile=False
     ) -> typing.Optional[t.Token]:
-        token = self.config.get_token(refresh=True)
+        try:
+            token = self.config.get_token(refresh=True)
+        except api_utils.UnauthorizedResponse:
+            # silently null the token and it will be prompted from the user
+            # further down
+            token = None
 
         # If login not specified, read from environment.
         if not login and os.environ.get("CONDUCTO_EMAIL"):

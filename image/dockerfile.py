@@ -1,39 +1,26 @@
 import json
+import os
 import packaging.version
 import re
+import shlex
 import subprocess
-import os
 
 from .. import api
 from .._version import __version__
-from ..shared import async_utils
-
-COPY_DIR = "/mnt/conducto"
+from ..shared import async_utils, constants
 
 
-async def text_for_build_dockerfile(
-    image,
-    reqs_py,
-    copy_dir,
-    copy_repo,
-    copy_url,
-    copy_branch,
-    docker_auto_workdir,
-    env_vars,
-):
+async def text_for_install(image, reqs_py, reqs_packages, reqs_docker):
     lines = [f"FROM {image}"]
 
     linux_flavor, linux_version, linux_name = None, None, None
 
-    async def _ensure_linux_flavor():
-        nonlocal linux_flavor, linux_version, linux_name
-
-        if linux_flavor is None:
-            (
-                linux_flavor,
-                linux_version,
-                linux_name,
-            ) = await _get_linux_flavor_and_version(image)
+    if linux_flavor is None:
+        (
+            linux_flavor,
+            linux_version,
+            linux_name,
+        ) = await _get_linux_flavor_and_version(image)
 
     def lines_append_once(cmd):
         nonlocal lines
@@ -41,44 +28,40 @@ async def text_for_build_dockerfile(
         if cmd not in lines:
             lines.append(cmd)
 
-    if copy_url or (copy_repo and not copy_dir):
-        # Install git as per distro
-        await _ensure_linux_flavor()
-        try:
-            git_version = await _get_git_version(image)
-        except subprocess.CalledProcessError:
-            git_version = None
+    # All installs should be done as root, so set uid=0 if needed
+    uid = await _get_uid(image)
+    if uid != 0:
+        lines.append("USER 0")
 
-        if not git_version:
-            uid = await _get_uid(image)
+    # Install any packages the user requests
+    if reqs_packages:
+        package_str = " ".join(shlex.quote(p) for p in reqs_packages)
+        if _is_debian(linux_flavor):
+            lines_append_once("RUN apt-get update")
+            lines.append(f"RUN apt-get install -y {package_str}")
+        elif _is_alpine(linux_flavor):
+            lines_append_once("RUN apk update")
+            lines.append(f"RUN apk add --update {package_str}")
+        elif _is_centos(linux_flavor):
+            lines_append_once("RUN yum update -y")
+            lines.append(f"RUN yum install -y {package_str}")
+        elif _is_fedora(linux_flavor):
+            lines_append_once("RUN dnf update -y")
+            lines.append(f"RUN dnf install -y {package_str}")
+        else:
+            raise ValueError(
+                f"Don't know how to install packages for linux_flavor={repr(linux_flavor)}"
+            )
 
-            lines.append("USER 0")
-            if _is_debian(linux_flavor):
-                lines_append_once("RUN apt-get update")
-                # this will install python too
-                lines.append("RUN apt-get install -y git")
-            elif _is_alpine(linux_flavor):
-                lines_append_once("RUN apk update")
-                # this will install pip3 as well
-                lines.append("RUN apk add --update git")
-            elif _is_centos(linux_flavor):
-                lines_append_once("RUN yum update -y")
-                lines.append("RUN yum install -y git")
-            elif _is_fedora(linux_flavor):
-                lines_append_once("RUN dnf update -y")
-                lines.append("RUN dnf install -y git")
-            lines.append(f"USER {uid}")
+    # Install docker if needed
+    if reqs_docker:
+        lines.append("RUN curl -sSL https://get.docker.com/ | sh")
 
+    # Instead python packages with pip
     if reqs_py:
         py_binary, _py_version, pip_binary = await get_python_version(image)
-
-        if reqs_py and not pip_binary:
+        if not pip_binary:
             # install pip as per distro
-            await _ensure_linux_flavor()
-
-            uid = await _get_uid(image)
-
-            lines.append("USER 0")
             if _is_debian(linux_flavor):
                 lines_append_once("RUN apt-get update")
                 # this will install python too
@@ -97,7 +80,10 @@ async def text_for_build_dockerfile(
                 lines_append_once("RUN dnf update -y")
                 lines.append("RUN dnf install -y python38")
                 py_binary = "python3"
-            lines.append(f"USER {uid}")
+            else:
+                raise ValueError(
+                    f"Don't know how to install pip for linux_flavor={repr(linux_flavor)}"
+                )
 
         if py_binary is None:
             raise Exception(
@@ -125,31 +111,46 @@ async def text_for_build_dockerfile(
             else:
                 lines.append(f"RUN {py_binary} -m pip install conducto=={__version__}")
 
-    if copy_dir or copy_repo or copy_url:
-        if docker_auto_workdir:
-            lines.append(f"WORKDIR {COPY_DIR}")
-
-        if copy_dir:
-            lines.append(f"COPY . {COPY_DIR}")
-        else:
-            if copy_repo and not copy_url:
-                from conducto.integrations import git
-
-                copy_url = await async_utils.eval_in_thread(git.url, copy_repo)
-            lines.append("ARG CONDUCTO_CACHE_BUSTER")
-            lines.append("RUN echo $CONDUCTO_CACHE_BUSTER")
-            lines.append(
-                f"RUN git clone --single-branch --branch {copy_branch} {copy_url} {COPY_DIR}"
-            )
-
-    if env_vars:
-        env_str = " ".join(_escape(f"{k}={v}") for k, v in env_vars.items())
-        lines.append(f"ENV {env_str}")
+    # Reset the uid to its original value, if needed
+    if uid != 0:
+        lines.append(f"USER {uid}")
 
     return "\n".join(lines)
 
 
-async def text_for_extend_dockerfile(user_image):
+def text_for_copy(image, docker_auto_workdir, env_vars):
+    lines = [
+        f"FROM {image}",
+        f"COPY . {constants.ConductoPaths.COPY_LOCATION}",
+    ]
+
+    if docker_auto_workdir:
+        lines.append(f"WORKDIR {constants.ConductoPaths.COPY_LOCATION}")
+
+    if env_vars:
+        env_str = " ".join(_escape(f"{k}={v}") for k, v in env_vars.items())
+        lines.append(f"ENV {env_str}")
+    return "\n".join(lines)
+
+
+def dockerignore_for_copy(context, preserve_git):
+    path = os.path.join(context, ".dockerignore")
+    if not os.path.exists(path):
+        # TODO: read the .gitignore and convert to a .dockerignore
+        return ""
+
+    # Read the existing dockerfile
+    with open(path, "r") as f:
+        text = f.read()
+
+    # Add an anti-ignore line to the end of the file if we need to preserve Git
+    if preserve_git:
+        text = text.strip() + "\n" + "!**/.git"
+
+    return text
+
+
+async def text_for_extend(user_image):
     lines = [f"FROM {user_image}"]
 
     linux_flavor, linux_version, linux_name = await _get_linux_flavor_and_version(
@@ -268,7 +269,7 @@ class UnsupportedPythonException(Exception):
 # Note: we don't need caching here except on get_python_version
 # because we already have caching mechanisms above
 # each image gets their .build called once, and everything below _get_python_version
-# is called just once per name_complete
+# is called just once per name_copied
 
 
 async def get_python_version(user_image):

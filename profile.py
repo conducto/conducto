@@ -98,7 +98,10 @@ def profile_set_default(id):
 
 
 def _profile_add(url, default):
+    # set global url for config object and clear profile to avoid clobbering
+    # the default
     os.environ["CONDUCTO_URL"] = url
+    os.environ["CONDUCTO_PROFILE"] = "__none__"
 
     # this writes the profile
     token = api.Auth().get_token_from_shell(force=True)

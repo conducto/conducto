@@ -5,7 +5,7 @@ import socket
 import sys
 import time
 
-from conducto import api, image as image_mod
+from conducto import api
 from conducto.shared import (
     client_utils,
     constants,
@@ -25,12 +25,17 @@ def build(
     use_app=True,
     retention=7,
     is_public=False,
-    prebuild_images=False,
-    headless=False,
     token=None,
 ):
     assert node.parent is None
     assert node.name == "/"
+
+    const_ee = constants.ExecutionEnv
+    if const_ee.value() != const_ee.EXTERNAL:
+        raise RuntimeError(
+            "It is not supported to launch pipelines from with-in other pipelines. "
+            "Consider using `co.Lazy` to compose pipelines dynamically."
+        )
 
     from .. import api
 
@@ -39,15 +44,6 @@ def build(
     if token is None:
         token = api.Auth().get_token_from_shell(force=True)
     node.token = token
-
-    if prebuild_images and build_mode == constants.BuildMode.DEPLOY_TO_CLOUD:
-        import subprocess
-
-        url = api.Config().get_url()
-        subprocess.run(
-            f"docker login -u conducto -p {node.token} {url.replace('.conducto', '-docker.conducto')}",
-            shell=True,
-        )
 
     command = " ".join(pipes.quote(a) for a in sys.argv)
 
@@ -63,26 +59,13 @@ def build(
         is_public=is_public,
     )
 
-    # note: image_mod.make_all will set the .pre_built attribute in the images
-    # it is important to take the serialization after this step otherwise
-    # these changes are not recorded
-    if prebuild_images:
-        image_mod.make_all(
-            node, pipeline_id, push_to_cloud=build_mode != constants.BuildMode.LOCAL
-        )
     if cloud:
         _check_nodes_for_cloud(node)
 
     serialization = node.serialize()
 
-    launch_from_serialization(
-        serialization,
-        pipeline_id,
-        build_mode,
-        use_shell,
-        use_app,
-        token,
-        headless=headless,
+    return launch_from_serialization(
+        serialization, pipeline_id, build_mode, use_shell, use_app, token,
     )
 
 
@@ -95,7 +78,6 @@ def launch_from_serialization(
     token=None,
     inject_env=None,
     is_migration=False,
-    headless=False,
 ):
     if not token:
         token = api.Auth().get_token_from_shell(force=True)
@@ -143,9 +125,9 @@ def launch_from_serialization(
         func = local_deploy
         starting = True
 
-    # Make sure that an agent is running before we launch. A local manager will
-    # start it if none are running, but cloud has no way to do that.
-    if not headless:
+    if not constants.ExecutionEnv.headless():
+        # Make sure that an agent is running before we launch. A local manager
+        # will start it if none are running, but cloud has no way to do that.
         agent_utils.launch_agent(inside_container=False, token=token)
 
     run(token, pipeline_id, func, use_app, use_shell, "Starting", starting)
@@ -296,6 +278,9 @@ def run_in_local_container(
         # this is dev/test only so we do not always set it
         tag = config.get_image_tag()
         flags.extend(["-e", f"CONDUCTO_IMAGE_TAG={tag}"])
+
+    if constants.ExecutionEnv.headless():
+        flags.extend(["-e", "CONDUCTO_HEADLESS=1"])
 
     for env_var in (
         "CONDUCTO_URL",

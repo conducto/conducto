@@ -83,6 +83,9 @@ def get_param(payload, param, default=None):
 
 def start_container(payload, live):
     import random
+    from rich.console import Console
+
+    console = Console()
 
     image = get_param(payload, "image", default={})
     image_name = image["name_debug"]
@@ -95,8 +98,8 @@ def start_container(payload, live):
     container_name = "conducto_debug_" + str(random.randrange(1 << 64))
     print("Launching docker container...")
     if live:
-        print("Context will be mounted read-write")
-        print(
+        console.print("Context will be mounted read-write")
+        console.print(
             "Make modifications on your local machine, "
             "and they will be reflected in the container."
         )
@@ -127,7 +130,13 @@ def start_container(payload, live):
 
             if not os.path.isabs(internal):
                 internal = get_work_dir_for_image(image_name) + "/" + internal
-            options.append(f"-v {external.to_docker_mount()}:{internal}")
+
+            mount = os.path.normpath(external.to_docker_mount())
+            console.print(
+                f"Mounting [bold black]{mount}[/bold black] "
+                f"at [bold black]{internal}[/bold black]"
+            )
+            options.append(f"-v {mount}:{internal}")
 
     command = f"docker run {' '.join(options)} --name={container_name} {image_name} tail -f /dev/null "
 

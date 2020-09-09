@@ -72,8 +72,6 @@ class Dir:
         return api_utils.get_data(response)
 
     def org_by_user(self, token: t.Token = None) -> dict:
-        user_id = api.Auth().get_user_id(token)
-
         headers = api_utils.get_auth_headers(token)
 
         response = request_utils.get(self.url + f"/dir/org/by_user", headers=headers)
@@ -85,24 +83,8 @@ class Dir:
             )
         return api_utils.get_data(response)
 
-    def nuke_org(self, org_id: t.OrgId, token: t.Token = None):
+    def org_delete(self, org_id: t.OrgId, token: t.Token = None):
         headers = api_utils.get_auth_headers(token)
-
-        # get teams and users in org
-        teams = {team["team_id"] for team in self.teams(org_id, token)}
-        users = self.users(org_id, token=token)
-
-        # delete teams, users, and org
-        for team in teams:
-            response = request_utils.delete(
-                self.url + f"/dir/team/{team}", headers=headers
-            )
-            api_utils.get_data(response)
-        for u in users:
-            response = request_utils.delete(
-                self.url + f"/dir/user/{u}", headers=headers
-            )
-            api_utils.get_data(response)
         response = request_utils.delete(
             self.url + f"/dir/org/{org_id}", headers=headers
         )
@@ -130,7 +112,7 @@ class Dir:
             self.url + f"/dir/org/{org_id}/teams", headers=headers
         )
         data = api_utils.get_data(response)
-        return data["teams"]
+        return data
 
     def users(self, org_id: t.OrgId, token: t.Token = None):
         headers = api_utils.get_auth_headers(token)

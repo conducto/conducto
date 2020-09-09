@@ -78,7 +78,7 @@ import conducto as co\n\n
 def discover() -> co.Parallel:
     # this is the image used to run these tests
     # modify it as appropriate 
-    # (this should probably be a link to the image docs)
+    # https://www.conducto.com/docs/basics/images 
     image = co.Image(copy_dir=\"{source_dir}\", reqs_py={reqs_py}) 
 
     with co.Parallel(image=image) as output:
@@ -95,3 +95,5 @@ if __name__ == "__main__":
     co.main(default=discover)
 """
     )
+
+    f.close()

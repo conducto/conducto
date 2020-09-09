@@ -1,4 +1,6 @@
 from .. import api
+import conducto as co
+from conducto import callback
 from conducto.shared import types as t, request_utils
 from ..api import api_utils
 import subprocess
@@ -21,12 +23,10 @@ class LogType(enum.Enum):
 def url(repo: str, token: t.Token = None) -> str:
     if t.Bool(os.getenv("CONDUCTO_GITHUB_USE_SECRETS", "1")):
         secrets = api.Secrets().get_user_secrets(token=token, include_org_secrets=True)
-        github_user = secrets["GITHUB_USER"]
-        github_token = secrets["GITHUB_TOKEN"]
-        github_owner = secrets["GITHUB_OWNER"]
-        return (
-            f"https://{github_user}:{github_token}@github.com/{github_owner}/{repo}.git"
-        )
+        user = secrets["GITHUB_USER"]
+        token = secrets["GITHUB_TOKEN"]
+        owner = secrets["GITHUB_OWNER"]
+        return f"https://{user}:{token}@github.com/{owner}/{repo}.git"
     else:
         u = api.Config().get_url()
         headers = api_utils.get_auth_headers(token=token)
@@ -34,6 +34,44 @@ def url(repo: str, token: t.Token = None) -> str:
             f"{u}/integrations/github/url/{repo}", headers=headers
         )
         return api_utils.get_data(response)
+
+
+def add_check_callbacks(node: co.Node, repo=None, sha=None):
+    if repo is None:
+        repo = os.environ["CONDUCTO_GIT_REPO"]
+    if sha is None:
+        sha = os.environ["CONDUCTO_GIT_SHA"]
+    cb = callback.github_check(repo, sha)
+    node.on_queued(cb)
+    node.on_running(cb)
+    node.on_done(cb)
+    node.on_error(cb)
+    node.on_killed(cb)
+
+
+def commit_status(
+    repo: str,
+    sha: str,
+    state,
+    description=None,
+    context=None,
+    target_url=None,
+    token: t.Token = None,
+):
+    data = {
+        "state": state,
+        "context": context,
+        "description": description,
+        "target_url": target_url,
+    }
+    secrets = api.Secrets().get_user_secrets(token=token, include_org_secrets=True)
+    access_token = secrets["GITHUB_TOKEN"]
+    owner = secrets["GITHUB_OWNER"]
+
+    url = f"https://api.github.com/repos/{owner}/{repo}/statuses/{sha}"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    response = request_utils.post(url, headers=headers, data=data)
+    api_utils.get_data(response)
 
 
 def get_log_diff(

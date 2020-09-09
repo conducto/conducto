@@ -161,7 +161,6 @@ class Node:
         "_repo",
         "_autorun",
         "_sleep_when_done",
-        "_headless",
     )
 
     def __init__(
@@ -200,7 +199,6 @@ class Node:
         # These are only to be set on the root node, and only by co.main().
         self._autorun = None
         self._sleep_when_done = None
-        self._headless = None
 
         # default all user-settable parameters
         self.user_set = {
@@ -469,6 +467,10 @@ class Node:
         assert isinstance(cback, callback.base)
         self._callbacks.append((State.RUNNING, cback))
 
+    def on_killed(self, cback):
+        assert isinstance(cback, callback.base)
+        self._callbacks.append((State.WORKER_ERROR, cback))
+
     def _pull(self):
         if self.id is None or self.root != self.id_root:
             self.id_root = self.root
@@ -572,7 +574,7 @@ class Node:
             "token": self.token,
             "autorun": self._autorun,
             "sleep_when_done": self._sleep_when_done,
-            "headless": self._headless,
+            "agent_only": t.Bool(os.getenv("CONDUCTO_AGENT_ONLY")),
         }
         queue = collections.deque([self])
         while queue:
@@ -625,7 +627,6 @@ class Node:
         root.token = data.get("token")
         root._autorun = data.get("autorun", False)
         root._sleep_when_done = data.get("sleep_when_done", False)
-        root._headless = data.get("headless", False)
         return root
 
     # returns a stream in topological order
@@ -668,12 +669,7 @@ class Node:
         return None
 
     def launch_local(
-        self,
-        use_shell=True,
-        retention=7,
-        run=False,
-        sleep_when_done=False,
-        prebuild_images=False,
+        self, use_shell=True, retention=7, run=False, sleep_when_done=False,
     ):
         """
         Launch directly from python.
@@ -689,7 +685,6 @@ class Node:
         :param sleep_when_done: If True the pipeline will sleep -- manager
             exits with recoverable state -- when the root node successfully
             gets to the Done state.
-        :param prebuild_images: If True build the images before launching the pipeline.
         """
 
         # TODO:  Do we want these params? They seem sensible and they were documented at one point.
@@ -702,7 +697,6 @@ class Node:
             retention=retention,
             run=run,
             sleep_when_done=sleep_when_done,
-            prebuild_images=prebuild_images,
         )
 
     def _build(
@@ -710,12 +704,10 @@ class Node:
         build_mode=constants.BuildMode.LOCAL,
         shell=False,
         app=False,
-        prebuild_images=False,
         retention=7,
         run=False,
         sleep_when_done=False,
         public=False,
-        headless=False,
         token=None,
     ):
         if self.image is None:
@@ -725,7 +717,6 @@ class Node:
 
         self._autorun = run
         self._sleep_when_done = sleep_when_done
-        self._headless = headless
 
         from conducto.internal import build
 
@@ -736,8 +727,6 @@ class Node:
             use_app=app,
             retention=retention,
             is_public=public,
-            prebuild_images=prebuild_images,
-            headless=headless,
             token=token,
         )
 
@@ -924,7 +913,7 @@ class Exec(Node):
                 else:
                     return self.command
 
-            COPY_DIR = image_mod.dockerfile_mod.COPY_DIR
+            copy_loc = constants.ConductoPaths.COPY_LOCATION
 
             def repl(match):
                 path = match.group(1)
@@ -949,8 +938,8 @@ class Exec(Node):
 
                     # As a convenience, if we `docker_auto_workdir` then we know the workdir and
                     # we can shorten the path
-                    if img.docker_auto_workdir and new_path.startswith(COPY_DIR):
-                        return shlex.quote(os.path.relpath(new_path, COPY_DIR))
+                    if img.docker_auto_workdir and new_path.startswith(copy_loc):
+                        return shlex.quote(os.path.relpath(new_path, copy_loc))
                     else:
                         # Otherwise just return an absolute path.
                         return shlex.quote(new_path)

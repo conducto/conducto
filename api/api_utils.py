@@ -32,14 +32,18 @@ class WindowsMapError(UserPathError):
 
 
 class InvalidResponse(Exception):
-    def __init__(self, *args, status_code=None, url=None):
+    def __init__(self, *args, status_code=None, url=None, content_type=None):
         super().__init__(*args)
         self.status_code = status_code
         self.url = url
+        self.content_type = content_type
 
     def __str__(self):
         return (
-            f"{super().__str__()}\n  status_code={self.status_code}\n  url={self.url}"
+            f"{super().__str__()}\n"
+            f"  status_code={self.status_code}\n"
+            f"  url={self.url}\n"
+            f"  content_type={self.content_type}"
         )
 
 
@@ -108,31 +112,69 @@ def get_auth_headers(token: t.Token = None, refresh=True, force_refresh=False):
 
 
 def get_data(
-    response,
+    response, content_type="application/json"
 ) -> typing.Union[None, dict, list, str, int, float, typing.Dict[str, dict]]:
-    if "application/json" not in response.headers["content-type"]:
+    """
+        Handle responses that have errors, and return the JSON-parsed result. May return
+        None for certain status codes that have no data.
+    """
+    url = response.url if hasattr(response, "url") else ""
+    res = response.read()
+    status = response.status_code
+    return _get_data(response.headers, url, res, status, content_type)
+
+
+async def aiohttp_get_data(
+    response, content_type="application/json"
+) -> typing.Union[None, dict, list, str, int, float, typing.Dict[str, dict]]:
+    """
+        Handle responses that have errors, and return the JSON-parsed result. May return
+        None for certain status codes that have no data.
+    """
+    url = response.url if hasattr(response, "url") else ""
+    res = await response.read()
+    status = response.status
+    return _get_data(response.headers, url, res, status, content_type)
+
+
+def _get_data(headers, url, res, status, content_type="application/json"):
+    if content_type not in headers["content-type"]:
         raise InvalidResponse(
-            response.read(), status_code=response.status_code, url=response.url
+            res, status_code=status, url=url, content_type=headers["content-type"]
         )
-    if response.status_code in [hs.CREATED, hs.ACCEPTED, hs.NO_CONTENT]:
-        return None
-    data = json.loads(response.read())
-
-    if response.status_code != hs.OK:
-        message = data["message"] if "message" in data else data
-        status_code = response.status_code
-        url = response.url if hasattr(response, "url") else ""
-
-        if response.status_code == hs.UNAUTHORIZED:
-            raise UnauthorizedResponse(message, status_code=status_code, url=url)
+    if len(res) == 0:
+        if status in [hs.CREATED, hs.ACCEPTED, hs.NO_CONTENT]:
+            return None
         else:
-            raise InvalidResponse(message, status_code=status_code, url=url)
+            raise InvalidResponse(
+                res, status_code=status, url=url, content_type=headers["content-type"]
+            )
+
+    data = json.loads(res)
+
+    if not 200 <= status < 299:
+        message = data["message"] if "message" in data else data
+
+        if status == hs.UNAUTHORIZED:
+            raise UnauthorizedResponse(
+                message,
+                status_code=status,
+                url=url,
+                content_type=headers["content-type"],
+            )
+        else:
+            raise InvalidResponse(
+                message,
+                status_code=status,
+                url=url,
+                content_type=headers["content-type"],
+            )
 
     return data
 
 
-def get_text(response) -> str:
-    if "text/plain" in response.headers["content-type"]:
+def get_text(response, content_type="text/plain") -> str:
+    if content_type in response.headers["content-type"]:
         return response.read().decode("utf-8")
     else:
         # Call _get_data to parse response and throw an Exception. If it
@@ -142,4 +184,20 @@ def get_text(response) -> str:
             f"Got unexpected result from {response}: {data}",
             status_code=response.status_code,
             url=response.url if hasattr(response, "url") else "",
+            content_type=response.headers["content-type"],
+        )
+
+
+async def aiohttp_get_text(response, content_type="text/plain") -> str:
+    if content_type in response.headers["content-type"]:
+        return (await response.read()).decode("utf-8")
+    else:
+        # Call _get_data to parse response and throw an Exception. If it
+        # doesn't throw one, raise a new one
+        data = await aiohttp_get_data(response)
+        raise InvalidResponse(
+            f"Got unexpected result from {response}: {data}",
+            status_code=response.status,
+            url=response.url if hasattr(response, "url") else "",
+            content_type=response.headers["content-type"],
         )

@@ -32,6 +32,7 @@ class Path:
     def __init__(self):
         # _type is one of internal, external, dockerhost, exportrooted
         self._type = None
+        self._pathsep = None
         self._value = None
         # ordered by index list of tuples
         #   [(i1, marktype), (i2, marktype), ...]
@@ -42,6 +43,7 @@ class Path:
         # This is only for diagnostic prints
         return f"""{{
     "path": "{self._value}",
+    "pathsep": "{self._pathsep}",
     "marks": {json.dumps(self._marks)}
 }}"""
 
@@ -67,21 +69,13 @@ class Path:
 
         self = cls()
         self._type = "dockerhost"
+        self._pathsep = s["pathsep"]
         self._value = s["pathsep"].join(dirsegs)
         self._marks = marks
         return self
 
     def _id(self):
-        import conducto.internal.host_detection as hostdet
-
-        windockerhost = os.getenv("WINDOWS_HOST") or hostdet.is_wsl1()
-        is_win_host = self._type == "dockerhost" and windockerhost
-        is_win_env = self._type == "external" and hostdet.is_windows()
-        is_win_pathhack = (
-            self._value[1] == ":"
-        )  # TODO - WINDOWS_HOST is not passed down to worker
-
-        pathsep = "\\" if is_win_host or is_win_env or is_win_pathhack else "/"
+        pathsep = self._pathsep
 
         signal = {"type": "endpath"}
         segs = []
@@ -100,32 +94,52 @@ class Path:
     def linear(self):
         return json.dumps(self._id())
 
-    def to_docker_mount(self):
+    def is_git_branch_rooted(self):
+        for m in self._marks:
+            if m[1]["type"] == "git" and m[1].get("branch", None):
+                return True
+
+    def to_docker_mount(self, *, pipeline_id=None):
         # to be used for building
         # This converts a path from a serialization to the manager or the host
         # machine which created this serialization.  It is will return a valid path
         # supposing that the host machine's directory structure matches what was at
         # the point of pipeline creation.  No information required from the user as
         # in resolve_named_share.
-        import conducto.internal.host_detection as hostdet
 
         if constants.ExecutionEnv.value() in constants.ExecutionEnv.manager_all:
             # TODO:  I think this is a little ambiguous to call this "docker
             # mount" because this is really about building inside the container
-            hostpath = self.to_docker_host()
+            if self.is_git_branch_rooted():
+                mark = [m for m in self._marks if m[1]["type"] == "git"][0]
+                gitroot = constants.ConductoPaths.git_clone_dest(
+                    pipeline_id=pipeline_id,
+                    copy_repo=mark[1].get("repo"),
+                    copy_url=mark[1].get("url"),
+                    copy_branch=mark[1].get("branch"),
+                )
+                # git-rooted paths have a leading slash bug
+                gittail = self._value[mark[0] + 1 :]
 
-            if os.getenv("WINDOWS_HOST"):
-                hostpath = self._windows_docker_path(hostpath)
+                return os.path.join(gitroot, gittail)
+            else:
+                hostpath = self.to_docker_host()
 
-            # host `/` is mounted at `/mnt/external`
-            return Path.PATH_PREFIX + hostpath
+                if self._pathsep == "\\":
+                    hostpath = self._windows_docker_path(hostpath)
+
+                # host `/` is mounted at `/mnt/external`
+                return Path.PATH_PREFIX + hostpath
         else:
+            import conducto.internal.host_detection as hostdet
+
             hostpath = self.to_docker_host()
 
             # this results in a unix host path ...
             if hostdet.is_wsl1() or hostdet.is_windows():
                 # ... or a docker-friendly windows path
                 hostpath = self._windows_docker_path(hostpath)
+
             return hostpath
 
     def to_docker_host(self):
@@ -210,6 +224,7 @@ class Path:
 
                 r = self.__class__()
                 r._type = "dockerhost"
+                r._pathsep = "\\"
                 r._value = winpath + self._value[firstmark:].replace("/", "\\")
                 r._marks = [(m[0] + delta, m[1]) for m in self._marks]
                 return r
@@ -223,16 +238,40 @@ class Path:
 
     @classmethod
     def from_localhost(cls, s: str) -> "Path":
+        import conducto.internal.host_detection as hostdet
+
         self = cls()
         self._type = "external"
+        self._pathsep = "/" if not hostdet.is_windows() else "\\"
         self._value = s
         return self
 
     @classmethod
     def from_dockerhost(cls, s: str) -> "Path":
+        import conducto.internal.host_detection as hostdet
+
+        win_dockerhost = (
+            hostdet.is_windows() or hostdet.is_wsl1() or os.environ.get("WINDOWS_HOST")
+        )
+
         self = cls()
         self._type = "dockerhost"
+        self._pathsep = "/" if not win_dockerhost else "\\"
         self._value = s
+        return self
+
+    @classmethod
+    def from_marked_root(cls, rootdict, tail: str) -> "Path":
+        # NOTE:  Windows users may specify either leaning slash in their
+        # `.conducto.cfg` (particularly if they have unix peers).  However a
+        # marked root is always materialized as a real path in a unix
+        # environment.  The code here figures accordingly.
+
+        self = cls()
+        self._type = "dockerhost"
+        self._pathsep = "/"
+        self._value = tail.replace("\\", "/")
+        self._marks = [(0, rootdict)]
         return self
 
     def is_subdir_of(self, parent: "Path") -> bool:
@@ -243,17 +282,16 @@ class Path:
             "external",
             "dockerhost",
         } and not hostdet.is_wsl1()
+
         assert (
             self._type == parent._type or safe_host_aliasing
         ), f"cannot compare path domains {self._type} and {parent._type}"
 
-        windockerhost = os.getenv("WINDOWS_HOST") or hostdet.is_wsl1()
-        is_win_host = self._type == "dockerhost" and windockerhost
-        is_win_env = self._type in ("dockerhost", "external") and hostdet.is_windows()
-        is_win_pathhack = (
-            self._value[1] == ":"
-        )  # TODO - WINDOWS_HOST is not passed down to worker
-        if is_win_host or is_win_env or is_win_pathhack:
+        assert (
+            self._pathsep == parent._pathsep
+        ), "cannot compare paths with different slashes"
+
+        if self._pathsep == "\\":
             import ntpath
 
             cleanpath = parent._value.rstrip("/\\")
@@ -271,19 +309,11 @@ class Path:
         else:
             import posixpath
 
-            cleanpath = parent._value.rstrip("/")
+            cleanpath = os.path.normpath(parent._value.rstrip("/"))
             return cleanpath == posixpath.commonpath([parent._value, self._value])
 
     def append(self, tail, sep):
-        import conducto.internal.host_detection as hostdet
-
-        windockerhost = os.getenv("WINDOWS_HOST") or hostdet.is_wsl1()
-        is_win_host = self._type == "dockerhost" and windockerhost
-        is_win_env = self._type == "external" and hostdet.is_windows()
-        is_win_pathhack = (
-            self._value[1] == ":"
-        )  # TODO - WINDOWS_HOST is not passed down to worker
-        if is_win_host or is_win_env or is_win_pathhack:
+        if self._pathsep == "\\":
             if sep == "/":
                 tail = tail.replace("/", "\\")
         else:
@@ -293,7 +323,7 @@ class Path:
         x = self._dupe()
         # empty strings get a trailing slash on an os.path.join, not a fan
         if tail != "":
-            if is_win_host or is_win_env or is_win_pathhack:
+            if self._pathsep == "\\":
                 import ntpath
 
                 x._value = ntpath.join(x._value, tail)
@@ -306,6 +336,7 @@ class Path:
     def _dupe(self):
         r = self.__class__()
         r._type = self._type
+        r._pathsep = self._pathsep
         r._value = self._value
         r._marks = self._marks
         return r
@@ -313,6 +344,7 @@ class Path:
     def _dupe_new_mark(self, newmark):
         r = self.__class__()
         r._type = self._type
+        r._pathsep = self._pathsep
         r._value = self._value
         r._marks = self._marks[:] + [newmark]
         r._marks.sort(key=lambda x: x[0])
@@ -321,7 +353,7 @@ class Path:
     def mark_named_share(self, name, path):
         return self._dupe_new_mark((len(path), {"type": "shared", "name": name}))
 
-    def mark_git_root(self):
+    def mark_git_root(self, *, branch=None, url=None, repo=None):
         assert self._type == "external"
 
         p = self._value
@@ -331,7 +363,14 @@ class Path:
             dirname = p
         git_root = Path._get_git_root(dirname)
         if git_root:
-            return self._dupe_new_mark((len(git_root), {"type": "git"}))
+            d = {"type": "git"}
+            if branch is not None:
+                d["branch"] = branch
+            if url is not None:
+                d["url"] = url
+            if isinstance(repo, str):
+                d["repo"] = repo
+            return self._dupe_new_mark((len(git_root), d))
         else:
             return self
 
@@ -423,11 +462,15 @@ class Path:
         # may not the same host machine as the one that made the serialization and
         # it may need to be interactive with the user.
 
-        if constants.ExecutionEnv.value() not in constants.ExecutionEnv.external:
+        if constants.ExecutionEnv.value() != constants.ExecutionEnv.EXTERNAL:
             raise RuntimeError(
                 "this is an interactive function and has no manager (or worker) implementation"
             )
 
+        # TODO: There may be multiple possible shares: the GitHub webhook includes
+        # shares for all possible URLs that clone the repo. One of them should match,
+        # depending on how the user actually cloned the repo (e.g., 'git@github.com:',
+        # 'https://', or 'git://').
         parsed = self.get_declared_shared()
 
         if not parsed:
@@ -448,7 +491,7 @@ class Path:
 
         if len(shares) == 1:
             sharepath = Path.from_dockerhost(shares[0])
-            sharepath.mark_named_share(parsed.name, shares[0])
+            sharepath = sharepath.mark_named_share(parsed.name, shares[0])
             result = sharepath.append(parsed.tail.strip(tailsep), sep=tailsep)
         elif len(shares) == 0:
             # ask
@@ -461,11 +504,11 @@ class Path:
             conf.register_named_share(conf.default_profile, parsed.name, path)
 
             sharepath = Path.from_dockerhost(path)
-            sharepath.mark_named_share(parsed.name, path)
+            sharepath = sharepath.mark_named_share(parsed.name, path)
             result = sharepath.append(parsed.tail.strip(tailsep), sep=tailsep)
         elif parsed.hint in shares:
             sharepath = Path.from_dockerhost(parsed.hint)
-            sharepath.mark_named_share(parsed.name, parsed.hint)
+            sharepath = sharepath.mark_named_share(parsed.name, parsed.hint)
             result = sharepath.append(parsed.tail.strip(tailsep), sep=tailsep)
         else:
             # disambiguate by asking which
@@ -496,7 +539,7 @@ class Path:
                 path = shares[int(sel) - 1]
 
             sharepath = Path.from_dockerhost(path)
-            sharepath.mark_named_share(parsed.name, path)
+            sharepath = sharepath.mark_named_share(parsed.name, path)
             result = sharepath.append(parsed.tail.strip(tailsep), sep=tailsep)
 
         return result

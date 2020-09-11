@@ -196,24 +196,24 @@ def schedule_instance_async_non_concurrent(async_fxn):
     Additionally changes an async function into a synchronous one that
     schedules the async function to run in the background
     """
-    raise NotImplementedError(
-        "jmarcus believes this doesn't catch errors properly and we should instead use "
-        "asyncio.Lock."
-    )
+    # raise NotImplementedError(
+    #     "jmarcus believes this doesn't catch errors properly and we should instead use "
+    #     "asyncio.Lock."
+    # )
 
-    # def inner(self, *args, **kwargs):
-    #     if not hasattr(self, "last_task"):
-    #         self.last_task = done_future()
-    #
-    #     to_await = self.last_task
-    #
-    #     async def _coro():
-    #         await to_await
-    #         await async_fxn(self, *args, **kwargs)
-    #
-    #     self.last_task = asyncio.create_task(_coro())
-    #
-    # return inner
+    def inner(self, *args, **kwargs):
+        if not hasattr(self, "last_task"):
+            self.last_task = done_future()
+
+        to_await = self.last_task
+
+        async def _coro():
+            await to_await
+            await async_fxn(self, *args, **kwargs)
+
+        self.last_task = asyncio.create_task(_coro())
+
+    return inner
 
 
 def loop(func, interval, ignore_errors=True):
@@ -265,15 +265,21 @@ async def run_and_check(*args, input=None, stop_on_error=True, shell=False, **kw
             *args, stdin=PIPE, stdout=PIPE, stderr=PIPE, **kwargs
         )
     else:
-        proc = await asyncio.subprocess.create_subprocess_exec(
-            *args, stdin=PIPE, stdout=PIPE, stderr=PIPE, **kwargs
-        )
+        try:
+            proc = await asyncio.subprocess.create_subprocess_exec(
+                *args, stdin=PIPE, stdout=PIPE, stderr=PIPE, **kwargs
+            )
+        except FileNotFoundError as e:
+            cmd_str = " ".join(pipes.quote(a) for a in args)
+            raise client_utils.CalledProcessError(
+                -1, cmd_str, stdout="", stderr=str(e), stdin=input, msg=""
+            )
     stdout, stderr = await proc.communicate(input=input)
 
     if stop_on_error and proc.returncode != 0:
         cmd_str = " ".join(pipes.quote(a) for a in args)
         raise client_utils.CalledProcessError(
-            proc.returncode, cmd_str, stdout, stderr, "", stdin=input
+            proc.returncode, cmd_str, stdout, stderr, msg="", stdin=input
         )
     else:
         return stdout, stderr

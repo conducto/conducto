@@ -121,6 +121,9 @@ class Path:
                 # git-rooted paths have a leading slash bug
                 gittail = self._value[mark[0] + 1 :]
 
+                if self._pathsep == "\\":
+                    gittail = gittail.replace("\\", "/")
+
                 return os.path.join(gitroot, gittail)
             else:
                 hostpath = self.to_docker_host()

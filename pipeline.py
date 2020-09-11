@@ -471,6 +471,10 @@ class Node:
         assert isinstance(cback, callback.base)
         self._callbacks.append((State.WORKER_ERROR, cback))
 
+    def on_state_change(self, cback):
+        assert isinstance(cback, callback.base)
+        self._callbacks.append(("stateChange", cback))
+
     def _pull(self):
         if self.id is None or self.root != self.id_root:
             self.id_root = self.root

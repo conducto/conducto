@@ -731,6 +731,13 @@ class Image:
             copy_branch=self.copy_branch,
         )
 
+    def _get_clone_lock(self, dest):
+        if dest in Image._CLONE_LOCKS:
+            lock = Image._CLONE_LOCKS[dest]
+        else:
+            lock = Image._CLONE_LOCKS[dest] = asyncio.Lock()
+        return lock
+
     def _clone_complete(self):
         """
         Check whether this clone has completed. Other steps check doneness by looking
@@ -757,11 +764,7 @@ class Image:
     async def _clone(self):
         # Only one clone() can run at a time on a single directory
         dest = self._get_clone_dest()
-        if dest in Image._CLONE_LOCKS:
-            lock = Image._CLONE_LOCKS[dest]
-        else:
-            lock = Image._CLONE_LOCKS[dest] = asyncio.Lock()
-        async with lock:
+        async with self._get_clone_lock(dest):
             # headless builds need to git clone
             url = await self._get_clone_url()
 

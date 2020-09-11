@@ -4,6 +4,7 @@ import shutil
 import socket
 import sys
 import time
+from http import HTTPStatus as hs
 
 from conducto import api
 from conducto.shared import (
@@ -93,8 +94,18 @@ def launch_from_serialization(
 
         # Get a token, serialize, and then deploy to AWS. Once that
         # returns, connect to it using the shell_ui.
-        api.Pipeline().save_serialization(pipeline_id, serialization, token=token)
-        api.Manager().launch(pipeline_id, token=token, env=inject_env)
+        pipeline_api = api.Pipeline()
+        pipeline_api.save_serialization(pipeline_id, serialization, token=token)
+        try:
+            api.Manager().launch(pipeline_id, token=token, env=inject_env)
+        except api.api_utils.InvalidResponse as e:
+            # Archive pipeline so it does not pollute app list view.
+            pipeline_api.archive(pipeline_id, token=token)
+            if e.status_code == hs.TOO_MANY_REQUESTS:
+                msg = str(e.message)
+            else:
+                msg = f"Failed to launch cloud manager for pipeline {pipeline_id}. Please try again and/or contact us on Slack at ConductoHQ."
+            raise api.api_utils.NoTracebackError(msg)
         log.debug(f"Connecting to pipeline_id={pipeline_id}")
 
     def local_deploy():

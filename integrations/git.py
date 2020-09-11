@@ -42,11 +42,7 @@ def add_check_callbacks(node: co.Node, repo=None, sha=None):
     if sha is None:
         sha = os.environ["CONDUCTO_GIT_SHA"]
     cb = callback.github_check(repo, sha)
-    node.on_queued(cb)
-    node.on_running(cb)
-    node.on_done(cb)
-    node.on_error(cb)
-    node.on_killed(cb)
+    node.on_state_change(cb)
 
 
 def commit_status(

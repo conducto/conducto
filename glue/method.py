@@ -835,7 +835,7 @@ def run_cfg(
         if matches:
             dup_action = section.get("duplicate", fallback="SUPPRESS_NEW")
             if dup_action == "SUPPRESS_NEW":
-                return
+                return None
             elif dup_action == "ALLOW":
                 pass
             elif dup_action == "SLEEP_OLD":
@@ -1069,10 +1069,14 @@ def main(
             if output.title is None:
                 output.title = _get_default_title(callFunc.__name__, default_was_used)
             BM = constants.BuildMode
-            output._build(
-                build_mode=BM.LOCAL if is_local else BM.DEPLOY_TO_CLOUD,
-                **conducto_state,
-            )
+            try:
+                output._build(
+                    build_mode=BM.LOCAL if is_local else BM.DEPLOY_TO_CLOUD,
+                    **conducto_state,
+                )
+            except api.UserInputValidation as e:
+                print(str(e), file=sys.stderr)
+                sys.exit(1)
         else:
             if t.Bool(os.getenv("__RUN_BY_WORKER__")):
                 # Variable is set in conducto_worker/__main__.py to avoid

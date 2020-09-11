@@ -15,6 +15,10 @@ class UserInputValidation(Exception):
     pass
 
 
+class NoTracebackError(UserInputValidation):
+    pass
+
+
 class UserPermissionError(UserInputValidation):
     pass
 
@@ -34,6 +38,7 @@ class WindowsMapError(UserPathError):
 class InvalidResponse(Exception):
     def __init__(self, *args, status_code=None, url=None, content_type=None):
         super().__init__(*args)
+        self.message = args[0] if len(args) > 0 else None
         self.status_code = status_code
         self.url = url
         self.content_type = content_type

@@ -1,10 +1,13 @@
-import os
-import re
-import json
 import collections
 import functools
+import json
+import os
+import re
 import subprocess
+import typing
 from conducto.shared import constants, log
+
+Sharedpath = collections.namedtuple("Sharedpath", ["name", "hint", "tail"])
 
 # NOTE:  this is imported in the functions needed since it is not permissible
 # in the code shared with the worker.
@@ -99,7 +102,7 @@ class Path:
             if m[1]["type"] == "git" and m[1].get("branch", None):
                 return True
 
-    def to_docker_mount(self, *, pipeline_id=None):
+    def to_docker_mount(self, *, pipeline_id=None, gitroot=None) -> str:
         # to be used for building
         # This converts a path from a serialization to the manager or the host
         # machine which created this serialization.  It is will return a valid path
@@ -110,14 +113,14 @@ class Path:
         if constants.ExecutionEnv.value() in constants.ExecutionEnv.manager_all:
             # TODO:  I think this is a little ambiguous to call this "docker
             # mount" because this is really about building inside the container
-            if self.is_git_branch_rooted():
-                mark = [m for m in self._marks if m[1]["type"] == "git"][0]
-                gitroot = constants.ConductoPaths.git_clone_dest(
-                    pipeline_id=pipeline_id,
-                    copy_repo=mark[1].get("repo"),
-                    copy_url=mark[1].get("url"),
-                    copy_branch=mark[1].get("branch"),
-                )
+            if self.is_git_branch_rooted() or gitroot:
+                mark = [m for m in self._marks if m[1]["type"] == "git"][-1]
+                if gitroot is None:
+                    gitroot = constants.ConductoPaths.git_clone_dest(
+                        pipeline_id=pipeline_id,
+                        url=mark[1].get("url"),
+                        branch=mark[1].get("branch"),
+                    )
                 # git-rooted paths have a leading slash bug
                 gittail = self._value[mark[0] + 1 :]
 
@@ -145,7 +148,7 @@ class Path:
 
             return hostpath
 
-    def to_docker_host(self):
+    def to_docker_host(self) -> str:
         if self._type == "dockerhost":
             return self._value
 
@@ -162,7 +165,7 @@ class Path:
         else:
             return self._value
 
-    def to_external(self):
+    def to_external(self) -> str:
         if self._type == "external":
             return self._value
 
@@ -178,7 +181,7 @@ class Path:
             return self._value
 
     @staticmethod
-    def _wsl_to_windows(p):
+    def _wsl_to_windows(p) -> str:
         # circular import prevents top level
         import conducto.api as co_api
 
@@ -191,12 +194,12 @@ class Path:
         return winpath
 
     @staticmethod
-    def _windows_to_wsl(p):
+    def _windows_to_wsl(p) -> str:
         proc = subprocess.run(["wslpath", "-u", p], stdout=subprocess.PIPE)
         return proc.stdout.decode("utf-8").strip()
 
     @staticmethod
-    def _windows_docker_path(path):
+    def _windows_docker_path(path) -> str:
         """
         Returns the windows path with forward slashes.  This is the format docker
         wants in the -v switch.
@@ -204,7 +207,7 @@ class Path:
         winpath = path.replace("\\", "/")
         return f"/{winpath[0].lower()}{winpath[2:]}"
 
-    def as_docker_host_path(self):
+    def to_docker_host_path(self) -> "Path":
         if self._type == "dockerhost":
             return self
 
@@ -235,9 +238,6 @@ class Path:
                 r = self._dupe()
                 r._type = "dockerhost"
                 return r
-
-    def to_container(self):
-        pass
 
     @classmethod
     def from_localhost(cls, s: str) -> "Path":
@@ -294,28 +294,43 @@ class Path:
             self._pathsep == parent._pathsep
         ), "cannot compare paths with different slashes"
 
+        # find common marks -- either gitroot or shares -- and only compare tails
+        self_tail = self._value
+        parent_tail = parent._value
+        for parent_idx, parent_mark in reversed(parent._marks):
+            found_match = False
+            for self_idx, self_mark in reversed(self._marks):
+                if parent_mark == self_mark:
+                    found_match = True
+                    break
+            if found_match:
+                self_tail = self._value[self_idx:].lstrip(self._pathsep)
+                parent_tail = parent._value[parent_idx:].lstrip(parent._pathsep)
+                break
+
         if self._pathsep == "\\":
             import ntpath
 
-            cleanpath = parent._value.rstrip("/\\")
+            cleanpath = parent_tail.rstrip("/\\")
             try:
-                return cleanpath == ntpath.commonpath([parent._value, self._value])
+                return cleanpath == ntpath.commonpath([parent_tail, self_tail])
             except ValueError:
                 # https://docs.python.org/3/library/os.path.html
                 # if paths contain both absolute and relative pathnames,
                 # the paths are on the different drives or if paths is empty.
                 # then ValueError will be raised, lets just return false in this case
                 log.debug(
-                    f"commonpath raised value error for the following paths: {parent._value}, {self._value}"
+                    f"commonpath raised value error for the following paths: {parent_tail}, {self_tail}"
                 )
                 return False
         else:
             import posixpath
 
-            cleanpath = os.path.normpath(parent._value.rstrip("/"))
-            return cleanpath == posixpath.commonpath([parent._value, self._value])
+            cleanpath = parent_tail.rstrip("/")
+            common = posixpath.commonpath([parent_tail, self_tail])
+            return os.path.normpath(cleanpath) == os.path.normpath(common)
 
-    def append(self, tail, sep):
+    def append(self, tail, sep) -> "Path":
         if self._pathsep == "\\":
             if sep == "/":
                 tail = tail.replace("/", "\\")
@@ -336,7 +351,7 @@ class Path:
                 x._value = posixpath.join(x._value, tail)
         return x
 
-    def _dupe(self):
+    def _dupe(self) -> "Path":
         r = self.__class__()
         r._type = self._type
         r._pathsep = self._pathsep
@@ -344,19 +359,20 @@ class Path:
         r._marks = self._marks
         return r
 
-    def _dupe_new_mark(self, newmark):
+    def _dupe_new_mark(self, newmark) -> "Path":
         r = self.__class__()
         r._type = self._type
         r._pathsep = self._pathsep
         r._value = self._value
-        r._marks = self._marks[:] + [newmark]
-        r._marks.sort(key=lambda x: x[0])
+        if newmark not in self._marks:
+            r._marks = self._marks[:] + [newmark]
+            r._marks.sort(key=lambda x: x[0])
         return r
 
-    def mark_named_share(self, name, path):
+    def mark_named_share(self, name, path) -> "Path":
         return self._dupe_new_mark((len(path), {"type": "shared", "name": name}))
 
-    def mark_git_root(self, *, branch=None, url=None, repo=None):
+    def mark_git_root(self, *, branch=None, url=None) -> "Path":
         assert self._type == "external"
 
         p = self._value
@@ -371,13 +387,11 @@ class Path:
                 d["branch"] = branch
             if url is not None:
                 d["url"] = url
-            if isinstance(repo, str):
-                d["repo"] = repo
             return self._dupe_new_mark((len(git_root), d))
         else:
             return self
 
-    def get_git_root(self):
+    def get_git_root(self) -> typing.Optional["Path"]:
         for mark in self._marks:
             if mark[1]["type"] == "git":
                 r = self._dupe()
@@ -386,20 +400,19 @@ class Path:
                 return r
         return None
 
-    def get_declared_shared(self):
+    def get_declared_shared(self) -> typing.Optional[Sharedpath]:
         for mark in self._marks:
             if mark[1]["type"] == "shared":
-                sharedpath = collections.namedtuple(
-                    "sharedpath", ["name", "hint", "tail"]
-                )
-
                 name = mark[1]["name"]
                 hint, tail = self._value[: mark[0]], self._value[mark[0] :]
-                return sharedpath(name, hint, tail)
+                return Sharedpath(name, hint, tail)
+
+    def get_git_marks(self) -> typing.List[dict]:
+        return [m for idx, m in self._marks if m["type"] == "git"]
 
     @staticmethod
     @functools.lru_cache(maxsize=None)
-    def _get_git_root(dirpath):
+    def _get_git_root(dirpath) -> typing.Optional[str]:
         result = None
 
         try:
@@ -417,7 +430,7 @@ class Path:
 
     @staticmethod
     @functools.lru_cache(maxsize=None)
-    def _get_git_origin(dirpath):
+    def _get_git_origin(dirpath) -> typing.Optional[str]:
         result = None
 
         try:
@@ -434,30 +447,10 @@ class Path:
         return result
 
     @staticmethod
-    @functools.lru_cache(maxsize=None)
-    def _get_git_repo(dirpath):
-        result = None
+    def _sanitize_git_url(url) -> str:
+        return re.sub("[^a-zA-Z0-9@/.]", "-", url)
 
-        try:
-            PIPE = subprocess.PIPE
-            args = ["git", "-C", dirpath, "remote", "-v"]
-            out, err = subprocess.Popen(args, stdout=PIPE, stderr=PIPE).communicate()
-
-            nongit = "fatal: not a git repository"
-            if not err.decode("utf-8").rstrip().startswith(nongit):
-                m = re.search(r"([\w\-_]+)\.git", out.decode("utf-8"))
-                if m:
-                    result = m.group(1)
-        except FileNotFoundError:
-            # log, but essentially pass
-            log.debug("no git installation found, skipping directory indication")
-        return result
-
-    @staticmethod
-    def _sanitize_git_origin(repo):
-        return re.sub("[^a-zA-Z0-9@/.-]", "-", repo)
-
-    def resolve_named_share(self):
+    def resolve_named_share(self) -> "Path":
         import conducto.internal.host_detection as hostdet
         import conducto.api as co_api
 
@@ -474,6 +467,9 @@ class Path:
         # shares for all possible URLs that clone the repo. One of them should match,
         # depending on how the user actually cloned the repo (e.g., 'git@github.com:',
         # 'https://', or 'git://').
+        #
+        # Also the user can share the same path by multiple names, and they should all
+        # be considered.
         parsed = self.get_declared_shared()
 
         if not parsed:

@@ -80,10 +80,19 @@ class _Context:
         return _safe_join(self.uri, name)
 
     def delete_objects(self, objs):
-        for pos in range(0, len(objs), 1000):
-            self.s3_client.delete_objects(
-                Bucket=self.bucket, Delete={"Objects": objs[pos : pos + 1000]}
-            )
+        # TODO (apeng) ideally this will use the DeleteObjects API call, but we have no way
+        # of tracking which objects are deleted in DeleteObjects calls due to a bug in AWS,
+        # so we have to use the slow way of looping over DeleteObject.
+        # If a user calls the delete_objects api, the backend will not know that the object
+        # has been deleted, and will continue to bill users as if it was still there.
+
+        # for pos in range(0, len(objs), 1000):
+        #     self.s3_client.delete_objects(
+        #         Bucket=self.bucket, Delete={"Objects": objs[pos : pos + 1000]}
+        #     )
+
+        for obj in objs:
+            self.s3_client.delete_object(Bucket=self.bucket, **obj)
 
     def list_all_versions(self, prefix, is_exact=False):
         response = self.s3_client.list_object_versions(

@@ -734,7 +734,7 @@ def _parse_image_kwargs_from_config_section(section):
         "reqs_packages": get_json("reqs_packages"),
         "reqs_docker": get_json("reqs_docker"),
         "path_map": get_json("path_map"),
-        "name": section.get("name"),
+        "name": section.get("name", "conducto_cfg_image"),
     }
 
 
@@ -744,7 +744,7 @@ def _parse_config_args_from_cmdline(argv):
         "shell": _get_default_shell(),
         "app": _get_default_app(),
     }
-    branch_cmd = None
+    branch = None
     wildcard_args = []
     i = 0
     while i < len(argv):
@@ -756,6 +756,7 @@ def _parse_config_args_from_cmdline(argv):
                 key = arg
                 value = None
             basekey = key[2:].replace("-", "_")
+
             if basekey in CONDUCTO_ARGS:
                 if value is not None:
                     raise ValueError(
@@ -763,36 +764,42 @@ def _parse_config_args_from_cmdline(argv):
                     )
                 conducto_kwargs[basekey] = True
                 i += 1
-                continue
-            if basekey in ("no_shell", "no_app"):
+            elif basekey in ("no_shell", "no_app"):
                 if value is not None:
                     raise ValueError(
                         f"Invalid argument '{arg}'. --{key} takes no argument."
                     )
                 conducto_kwargs[basekey.replace("no_", "")] = False
                 i += 1
-                continue
-            if basekey == "branch":
+            elif basekey == "branch":
                 if value is None:
                     value = argv[i + 1]
+                    i += 2
+                    wildcard_args += [arg, value]
+                else:
                     i += 1
-                branch_cmd = value
+                    wildcard_args.append(arg)
+                branch = value
+            else:
+                wildcard_args.append(arg)
                 i += 1
-                continue
-        wildcard_args.append(arg)
-        i += 1
-    return conducto_kwargs, wildcard_args, branch_cmd
+        else:
+            wildcard_args.append(arg)
+            i += 1
+    return conducto_kwargs, wildcard_args, branch
 
 
 def run_cfg(
     file: typing.IO,
     argv,
-    copy_repo=True,
+    copy_url=None,
     copy_branch=None,
     git_urls=None,
     token=None,
     tags=None,
     unique_tag=None,
+    *,
+    callback_after_create_before_build: typing.Callable = None,
 ):
     import conducto as co
 
@@ -852,27 +859,22 @@ def run_cfg(
     # Parse the command template. Find which variables need to be passed.
     command_template = section["command"]
     image_kwargs = _parse_image_kwargs_from_config_section(section)
-    conducto_kwargs, wildcard_args, branch_cmd = _parse_config_args_from_cmdline(
+    conducto_kwargs, wildcard_args, cmdline_branch = _parse_config_args_from_cmdline(
         remainder
     )
 
-    if copy_branch:
-        gitroot = {"type": "git", "branch": copy_branch}
-        if image_kwargs.get("dockerfile", None):
-            dockerfile_dir = os.path.dirname(image_kwargs["dockerfile"])
-            if not dockerfile_dir:
-                dockerfile_dir = "."
+    # If the user specifies --branch=..., set that to the copy_branch
+    if cmdline_branch and copy_branch and cmdline_branch != copy_branch:
+        raise ValueError(
+            f"Cannot specify both copy_branch ({copy_branch}) and --branch ({cmdline_branch})"
+        )
+    copy_branch = copy_branch or cmdline_branch
 
-            image_kwargs["dockerfile"] = imagepath.Path.from_marked_root(
-                gitroot, image_kwargs["dockerfile"]
-            )
-            # if a dockerfile is given, we must root context accordingly unless
-            # otherwise specified
-            if image_kwargs.get("context", None) is None:
-                image_kwargs["context"] = dockerfile_dir
-            image_kwargs["context"] = imagepath.Path.from_marked_root(
-                gitroot, image_kwargs["context"]
-            )
+    # Environment variables for debugging headless mode
+    if "CONDUCTO_GIT_URLS" in os.environ:
+        git_urls = json.loads(os.environ["CONDUCTO_GIT_URLS"])
+        if not copy_url:
+            copy_url = git_urls[0]
 
     # Build the output node
     wildcard_str = " ".join(shlex.quote(arg) for arg in wildcard_args)
@@ -892,28 +894,22 @@ def run_cfg(
     output.title = _get_default_title(None, default_was_used=False)
     output.tags = tags
 
-    branch_env = os.environ.get("CONDUCTO_GIT_BRANCH")
-    if branch_cmd is not None and branch_env is not None and branch_cmd != branch_env:
-        raise ValueError(
-            f"Conflicting definitions for branch: --branch={branch_cmd} and CONDUCTO_GIT_BRANCH={branch_env}"
-        )
-    elif branch_env is not None:
-        output.title += f" --branch={os.environ['CONDUCTO_GIT_BRANCH']}"
-    elif branch_cmd is not None:
-        os.environ["CONDUCTO_GIT_BRANCH"] = branch_cmd
-
     # Normally `co.Image` looks through the stack to infer the repo, but the stack
     # doesn't go through the CFG file. Specify `_CONTEXT` as a workaround.
     co.Image._CONTEXT = file.name
     try:
         output.image = co.Image(
-            copy_repo=copy_repo,
+            copy_repo=True,
+            copy_url=copy_url,
             copy_branch=copy_branch,
             git_urls=git_urls,
             **image_kwargs,
         )
     finally:
         co.Image._CONTEXT = None
+
+    if callback_after_create_before_build:
+        callback_after_create_before_build(output)
 
     # Run the node or print it. This code is duplicated from main() down below.
     is_cloud = conducto_kwargs.pop("cloud", False)

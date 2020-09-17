@@ -285,7 +285,7 @@ async def _debug(id, node, live, timestamp):
 
     if status not in pl.active | pl.standby:
         print(
-            "The pipeline {pipeline_id} is sleeping.  Wake with conducto show and retry this command to debug.",
+            f"The pipeline {pipeline_id} is sleeping.  Wake with `conducto show` and retry this command to debug.",
             file=sys.stderr,
         )
         sys.exit(1)

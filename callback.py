@@ -80,16 +80,9 @@ def slack(to, token, message=None, node_summary=False):
     return base("slack", to=to, token=token, message=message, node_summary=node_summary)
 
 
-def github_status_update(repo, state, sha, owner=None, access_token=None):
-    return base(
-        "github_status_update",
-        repo=repo,
-        state=state,
-        sha=sha,
-        owner=owner,
-        access_token=access_token,
-    )
+def github_check(url, sha):
+    return base("github_check", url=url, sha=sha)
 
 
-def github_check(repo, sha):
-    return base("github_check", repo=repo, sha=sha)
+def github_status(url, sha):
+    return base("github_status", url=url, sha=sha)

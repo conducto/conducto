@@ -14,7 +14,8 @@ def name():
     user_id = auth.get_unverified_claims(token)["sub"]
     user_hash = hashlib.sha1(user_id.encode()).hexdigest()[:8]
     profile_id = co.api.Config().get_default_profile()
-    return f"conducto_agent_{user_hash}_{profile_id}"
+    host_id = co.api.Config().get_host_id()
+    return f"conducto_agent_{host_id}_{user_hash}_{profile_id}"
 
 
 def launch_agent(inside_container=False, check_for_old=True, token=None):

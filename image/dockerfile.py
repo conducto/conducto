@@ -169,15 +169,22 @@ async def text_for_extend(user_image):
                 "docker",
                 "run",
                 "--rm",
-                user_image,
+                "--entrypoint",
                 acceptable_binary,
+                user_image,
                 "-c",
                 "import sys; print(sys.executable)",
             )
             default_python = which_python.decode("utf8").strip()
         else:
             which_python, _ = await async_utils.run_and_check(
-                "docker", "run", "--rm", user_image, "which", acceptable_binary
+                "docker",
+                "run",
+                "--rm",
+                "--entrypoint",
+                "which",
+                user_image,
+                acceptable_binary,
             )
             default_python = which_python.decode("utf8").strip()
 
@@ -251,6 +258,16 @@ async def text_for_extend(user_image):
     )
     if uid != 0:
         lines.append(f"USER {uid}")
+
+    # Record the old entrypoint and clear it in the new image. For more info, see:
+    # https://docs.docker.com/engine/reference/builder/#entrypoint
+    entrypoint = await _get_entrypoint(user_image)
+    if entrypoint:
+        lines.append("ENTRYPOINT []")
+        if isinstance(entrypoint, list):
+            entrypoint = " ".join(shlex.quote(s) for s in entrypoint)
+        lines.append(f"ENV ENTRYPOINT={shlex.quote(entrypoint)}")
+
     return "\n".join(lines), worker_image
 
 
@@ -332,8 +349,9 @@ async def _get_python_version(user_image, python_binary) -> packaging.version.Ve
         "docker",
         "run",
         "--rm",
-        user_image,
+        "--entrypoint",
         python_binary,
+        user_image,
         "--version",
         stop_on_error=False,
     )
@@ -361,7 +379,7 @@ async def _get_pip_version(user_image, pip_binary) -> packaging.version.Version:
     """
 
     out, err = await async_utils.run_and_check(
-        "docker", "run", "--rm", user_image, pip_binary, "--version",
+        "docker", "run", "--rm", "--entrypoint", pip_binary, user_image, "--version",
     )
 
     # we don't really care about the pip version, but I retain it here for
@@ -384,7 +402,7 @@ async def _get_git_version(user_image) -> packaging.version.Version:
     git_binary = "git"
 
     out, err = await async_utils.run_and_check(
-        "docker", "run", "--rm", user_image, git_binary, "--version",
+        "docker", "run", "--rm", "--entrypoint", git_binary, user_image, "--version",
     )
     out = out.decode("utf-8")
 
@@ -398,7 +416,14 @@ async def _get_git_version(user_image) -> packaging.version.Version:
 
 async def _get_linux_flavor_and_version(user_image):
     out, err = await async_utils.run_and_check(
-        "docker", "run", "--rm", user_image, "sh", "-c", "cat /etc/*-release",
+        "docker",
+        "run",
+        "--rm",
+        "--entrypoint",
+        "sh",
+        user_image,
+        "-c",
+        "cat /etc/*-release",
     )
     out = out.decode("utf-8").strip()
 
@@ -431,6 +456,14 @@ async def _get_uid(image_name):
     else:
         uid = int(uid_str)
     return uid
+
+
+async def _get_entrypoint(image_name):
+    out, _err = await async_utils.run_and_check(
+        "docker", "inspect", "--format", "{{json .}}", image_name
+    )
+    d = json.loads(out)
+    return d["Config"]["Entrypoint"]
 
 
 def _escape(s):

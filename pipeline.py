@@ -140,11 +140,10 @@ class Node:
     __slots__ = (
         "_name",
         "id",
-        "id_root",
+        "_id",
         "user_set",
         "_root",
         "pipeline_id",
-        "id_generator",
         "token",
         "parent",
         "children",
@@ -161,6 +160,7 @@ class Node:
         "_repo",
         "_autorun",
         "_sleep_when_done",
+        "callback_data",
     )
 
     def __init__(
@@ -184,9 +184,8 @@ class Node:
         tags: typing.Iterable = None,
         file=None,
         line=None,
+        callback_data=None,
     ):
-        self.id_generator, self.id_root = itertools.count(), self
-        self.id = None
 
         self.parent = None
         self._root = self
@@ -217,6 +216,7 @@ class Node:
         self.suppress_errors = False
         self.max_time = None
         self.container_reuse_context = None
+        self.callback_data = callback_data
 
         # prefer same_container only if it is set and container_reuse_context is not
         if same_container is not constants.SameContainer.INHERIT:
@@ -375,10 +375,6 @@ class Node:
         return self.root._repo
 
     @property
-    def _id(self):
-        return self.id
-
-    @property
     def mem(self):
         return self.user_set["mem"]
 
@@ -476,9 +472,12 @@ class Node:
         self._callbacks.append(("stateChange", cback))
 
     def _pull(self):
-        if self.id is None or self.root != self.id_root:
-            self.id_root = self.root
-            self.id = next(self.root.id_generator)
+        # these are finalized upon serialization
+        hash_this = "/" + self.name
+        self._id = (
+            constants.Hashing.hash(hash_this, self.parent._id) if self.parent else 1
+        )
+        self.id = constants.Hashing.encode(self._id)
 
     # get root with path compression
     @property
@@ -553,6 +552,8 @@ class Node:
             output["suppress_errors"] = self.suppress_errors
         if self.max_time:
             output["max_time"] = self.max_time
+        if self.callback_data:
+            output["callback_data"] = self.callback_data
         if isinstance(self, Serial):
             output["stop_on_error"] = self.stop_on_error
         if isinstance(self, Exec):
@@ -595,10 +596,9 @@ class Node:
 
         class NodeEncoder(json.JSONEncoder):
             def default(self, o):
-                try:
-                    return o._id
-                except AttributeError:
-                    return o
+                if hasattr(o, "id"):
+                    return o.id
+                return o
 
         if pretty:
             import pprint

@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import concurrent.futures
+import functools
 import hashlib
 import json
 import os
@@ -129,17 +130,11 @@ class Image:
         into the Docker image. Use this so that a single Image definition can either use
         local code or can fetch from a remote repo.
 
-        Normal use of this parameter uses local code, so it sets `copy_dir` to point to
-        the repo root. Specify the `CONDUCTO_GIT_BRANCH` environment variable to use a remote
-        repository. This is commonly done for CI/CD. When specified, parameters will be
-        auto-populated based on environment variables:
+        **copy_dir mode**: Normal use of this parameter uses local code, so it sets
+        `copy_dir` to point to the root of the Git repo of the calling code.
 
-        `copy_url` is set to `CONDUCTO_GIT_URL` if specified, otherwise the user's Org must have
-        a Git integration installed which provides the URL.
-
-        `copy_branch` is set to `CONDUCTO_GIT_BRANCH` which must be specified in a CI/CD context.
-
-        `copy_repo` is set to `CONDUCTO_GIT_REPO` if specified, otherwise it is auto-detected.
+        **copy_url mode**: Specify `copy_branch` to use a remote repository. This is
+        commonly done for CI/CD. When specified, `copy_url` will be auto-populated.
 
     :param copy_dir:  Path to a directory. All files in that directory (and its
         subdirectories) will be copied into the generated Docker image.
@@ -184,36 +179,35 @@ class Image:
         reqs_docker=False,
         path_map=None,
         name=None,
-        git_sha=None,
         git_urls=None,
         **kwargs,
     ):
 
         # TODO: remove pre_built back-compatibility for sept 9 changes
         kwargs.pop("pre_built", None)
+        kwargs.pop("git_sha", None)
         if len(kwargs):
-            raise ValueError(f"unknown args {','.join(kwargs)}")
+            raise ValueError(f"unknown args: {','.join(kwargs)}")
 
         if name is None:
             name = names.NameGenerator.name()
 
         self.name = name
 
-        if image is not None and dockerfile is not None:
+        if image and dockerfile:
             raise ValueError(
                 f"Cannot specify both image ({image}) and dockerfile ({dockerfile})"
             )
-        if image is None and dockerfile is None:
+        if not image and not dockerfile:
             # Default to user's current version of python, if none is specified
             image = f"python:{sys.version_info[0]}.{sys.version_info[1]}-slim"
             if not reqs_py:
                 reqs_py = ["conducto"]
-        if (copy_dir is not None) + (copy_url is not None) > 1:
+        if copy_dir and copy_url:
             raise ValueError(
-                f"Must not specify more than 1 of copy_dir ({copy_dir}) and copy_url "
-                f"({copy_url})."
+                f"Must not specify copy_dir ({copy_dir}) and copy_url ({copy_url})."
             )
-        if copy_url is not None and copy_branch is None:
+        if copy_url and not copy_branch:
             raise ValueError(
                 f"If specifying copy_url ({copy_url}) must "
                 f"also specify copy_branch ({copy_branch})"
@@ -246,89 +240,94 @@ class Image:
                 auto_detect_deserialize(external): internal
                 for external, internal in self.path_map.items()
             }
-        self.git_sha = git_sha or os.getenv("CONDUCTO_GIT_SHA")
-
-        self.git_urls = git_urls or []
-        if not git_urls and "CONDUCTO_GIT_URLS" in os.environ:
-            self.git_urls = json.loads(os.environ["CONDUCTO_GIT_URLS"])
 
         if self.copy_repo:
-            # `copy_repo` automatically copies the whole repo. If environment
-            # variables are set it will use them; otherwise it copies the local
-            # contents of the repo.
-            if self.copy_branch or "CONDUCTO_GIT_BRANCH" in os.environ:
-                self.copy_branch = self.copy_branch or os.environ["CONDUCTO_GIT_BRANCH"]
-                self.copy_url = self.copy_url or os.getenv("CONDUCTO_GIT_URL")
-                if self.copy_repo is True:
-                    # The value `True` means "auto-detect", so go ahead and auto-detect.
-                    if "CONDUCTO_GIT_REPO" in os.environ:
-                        self.copy_repo = os.environ["CONDUCTO_GIT_REPO"]
-                    else:
-                        self.copy_repo = imagepath.Path._get_git_repo(
-                            _non_conducto_dir()
-                        )
+            ### Step 1: Infer repo_root and repo_url
 
-                    if "CONDUCTO_GIT_REPO_ROOT" in os.environ:
-                        repo_root = os.environ["CONDUCTO_GIT_REPO_ROOT"]
-                    elif CONST_EE.headless():
-                        # In headless mode, the repo_root must be a bare Git repo that
-                        # is not rooted in any filesystem.
-                        gitroot = {
-                            "type": "git",
-                            "repo": self.copy_repo,
-                            "branch": self.copy_branch,
-                        }
-                        repo_root = imagepath.Path.from_marked_root(gitroot, ".")
-                        for url in self.git_urls:
-                            sanitized = imagepath.Path._sanitize_git_origin(url)
-                            repo_root = repo_root.mark_named_share(sanitized, "")
-                    else:
-                        # Set the path_map to show that this repo is at COPY_DIR
-                        repo_root = imagepath.Path._get_git_root(_non_conducto_dir())
-
-                        if CONST_EE.value() == CONST_EE.EXTERNAL:
-                            # In non-headless EXTERNAL mode, copy_repo=True should
-                            # attempt to share the Git root according to its origin url.
-                            origin = imagepath.Path._get_git_origin(repo_root)
-                            sharename = imagepath.Path._sanitize_git_origin(origin)
-                            Image.share_directory(sharename, repo_root)
-
-                    # Set this in `path_map` and in `context`
-                    repo_root = self._get_contextual_path_helper(repo_root)
-                    self.path_map.setdefault(
-                        repo_root, constants.ConductoPaths.COPY_LOCATION
-                    )
-                    self.context = repo_root
+            # If there is an entry in the path_map that maps to COPY_LOCATION, then the
+            # key must be the external imagepath for the repo root, with all appropriate
+            # metadata.
+            repo_root: typing.Optional[imagepath.Path] = None
+            if CONST_EE.value() in CONST_EE.manager_all:
+                # Which path_map to use? In a manager, this image has been deserialized.
+                # Anything with copy_repo=True will be encoded in self.path_map.
+                pm = self.path_map
+            elif CONST_EE.value() in CONST_EE.worker_all:
+                # In a worker, the current contents of COPY_LOCATION come from a
+                # previously-defined Image with copy_repo=True. Inherit those values.
+                pm = _get_path_map()
+            elif CONST_EE.value() == CONST_EE.EXTERNAL:
+                # Externally, there's no previously-defined Image to use for context.
+                pm = {}
             else:
-                # In normal mode, `copy_repo` resolves to `copy_dir`. Record the repo
-                # location here.
-                if self.copy_dir is None:
-                    if "CONDUCTO_GIT_REPO_ROOT" in os.environ:
-                        self.copy_dir = self._get_contextual_path_helper(
-                            os.environ["CONDUCTO_GIT_REPO_ROOT"]
-                        )
-                    else:
-                        outside_dir = _non_conducto_dir()
-                        contextual_path = self._get_contextual_path_helper(outside_dir)
-                        gitroot = contextual_path.get_git_root()
-                        if not gitroot:
-                            raise ValueError(
-                                f"Could not find Git root for {outside_dir}."
-                            )
-                        self.copy_dir = gitroot.as_docker_host_path()
-                self.context = self.copy_dir
+                raise EnvironmentError(
+                    f"Don't know what path_map to use for ExecutionEnvironment={CONST_EE.value()}"
+                )
+            for k, v in pm.items():
+                if v == constants.ConductoPaths.COPY_LOCATION:
+                    repo_root = k
 
-        if self.dockerfile is not None:
-            if self.context is None:
-                self.context = os.path.dirname(self.dockerfile)
+            # If there's no matching entry in the path_map, autodetect the repo root.
+            if not repo_root:
+                repo_root = self._detect_repo_root()
+
+            # Extract repo_url and repo_branch from the marked Git repo in repo_root
+            mark = repo_root.get_git_marks()[-1]
+            repo_url = mark.get("url")
+            repo_branch = mark.get("branch")
+
+            ### Step 1a: Augment repo_root
+
+            # `git_urls` is a narrowly focused parameter that specifies multiple
+            # URLs by which this repo can be cloned. A user could possibly know
+            # this repo by any of them, so we need to add all of them to
+            # repo_root as named shares.
+            if git_urls:
+                for url in git_urls:
+                    sanitized = imagepath.Path._sanitize_git_url(url)
+                    repo_root = repo_root.mark_named_share(sanitized, "")
+
+            ### Step 2: Use repo_root and repo_url to set other variables
+            if self.copy_branch and repo_branch and self.copy_branch != repo_branch:
+                raise ValueError(
+                    f"copy_branch ({self.copy_branch}) does not match branch inherited "
+                    f"from path_map ({repo_branch}"
+                )
+            self.copy_branch = self.copy_branch or repo_branch
+
+            # If `copy_branch` is set, then use copy_url on the Git URL. Otherwise use
+            # copy_dir on the file system root
+            if self.copy_branch:
+                self.copy_url = repo_url
+            else:
+                self.copy_dir = repo_root
+
+            # Once inferred, set this in `path_map`
+            repo_root = self._get_contextual_path_helper(repo_root)
+            self.path_map[repo_root] = constants.ConductoPaths.COPY_LOCATION
+
+            # Set context in case of any Dockerfiles
+            if not self.context:
+                self.context = repo_root
+
+            # In EXTERNAL mode, copy_repo=True should attempt to share the Git root
+            # according to its origin url.
+            if repo_url and CONST_EE.value() == CONST_EE.EXTERNAL:
+                sharename = imagepath.Path._sanitize_git_url(repo_url)
+                Image.share_directory(sharename, repo_root)
+
+        if self.dockerfile:
             self.dockerfile = self._get_contextual_path_helper(self.dockerfile)
+            if not self.context:
+                one_level_up = os.path.dirname(self.dockerfile.to_docker_host())
+                self.context = self._get_contextual_path_helper(one_level_up)
 
-        if self.context is not None:
+        if self.context:
             self.context = self._get_contextual_path_helper(self.context)
 
-        if self.copy_dir is not None:
+        if self.copy_dir:
             self.copy_dir = self._get_contextual_path_helper(self.copy_dir)
-            self.path_map = {self.copy_dir: constants.ConductoPaths.COPY_LOCATION}
+            self.path_map[self.copy_dir] = constants.ConductoPaths.COPY_LOCATION
 
         if self.path_map:
             self.path_map = {
@@ -355,6 +354,31 @@ class Image:
     def __eq__(self, other):
         return isinstance(other, Image) and self.to_dict() == other.to_dict()
 
+    def _detect_repo_root(self):
+        if CONST_EE.headless():
+            # In headless mode, the repo_root must be a bare Git repo that
+            # is not rooted in any filesystem.
+            git_root = {
+                "type": "git",
+                "url": self.copy_url,
+                "branch": self.copy_branch,
+            }
+            return imagepath.Path.from_marked_root(git_root, "")
+        else:
+            # If not headless, then look up the Git root from the filesystem.
+            outside_dir = _non_conducto_dir()
+            git_root = imagepath.Path._get_git_root(outside_dir)
+            if not git_root:
+                raise ValueError(
+                    f"copy_repo=True was specified, but could not find Git "
+                    f"root for {outside_dir}."
+                )
+
+            git_url = imagepath.Path._get_git_origin(git_root)
+            return self.get_contextual_path(
+                git_root, branch=self.copy_branch, url=self.copy_url or git_url
+            ).to_docker_host_path()
+
     @staticmethod
     def _serialize_path(p):
         return p._id() if isinstance(p, imagepath.Path) else p
@@ -367,7 +391,7 @@ class Image:
 
     # hack to get this to serialize
     @property
-    def _id(self):
+    def id(self):
         try:
             return self.to_dict()
         except:
@@ -392,7 +416,6 @@ class Image:
             "reqs_packages": self.reqs_packages,
             "reqs_docker": self.reqs_docker,
             "path_map": self._serialize_pathmap(self.path_map),
-            "git_sha": self.git_sha,
         }
 
     def to_raw_image(self):
@@ -412,13 +435,21 @@ class Image:
             "path_map": self._serialize_pathmap(self.path_map),
         }
 
-    def _get_contextual_path_helper(self, p, **kwargs):
+    def _get_contextual_path_helper(
+        self, p: typing.Union[imagepath.Path, dict, str], **kwargs
+    ) -> imagepath.Path:
         return self.get_contextual_path(
-            p, branch=self.copy_branch, url=self.copy_url, repo=self.copy_repo, **kwargs
+            p, branch=self.copy_branch, url=self.copy_url, **kwargs
         )
 
     @staticmethod
-    def get_contextual_path(p, *, named_shares=True, branch=None, url=None, repo=None):
+    def get_contextual_path(
+        p: typing.Union[imagepath.Path, dict, str],
+        *,
+        named_shares=True,
+        branch=None,
+        url=None,
+    ) -> imagepath.Path:
         """
         Take a path as a string and returns a `conducto.Path`.  Optionally
         searches for named shares as recognized from the root.
@@ -443,56 +474,44 @@ class Image:
 
         # Apply context specified from outside this container. Needed for recursive
         # co.Lazy calls inside an Image with ".path_map".
-        path_map_text = os.getenv("CONDUCTO_PATH_MAP")
-        if path_map_text:
-            path_map = json.loads(path_map_text)
-            for external, internal in path_map.items():
-                if p.startswith(internal):
-                    external = imagepath.Path.from_dockerhost_encoded(external)
+        for external, internal in _get_path_map().items():
+            if p.startswith(internal):
+                # we are in docker, so this append is always a unix path tail
+                tail = p[len(internal) :].lstrip("/")
 
-                    # we are in docker, so this append is always a unix path tail
-                    tail = p[len(internal) :].lstrip("/")
-                    return external.append(tail, sep="/")
+                # It's okay to short-circuit here instead of adding named shares. The
+                # entry from the external path_map must have already had those done, so
+                # returning here just reuses those previously-inferred values.
+                return external.append(tail, sep="/")
 
         # If ".copy_dir" wasn't set, find the git root so that we could possibly use this
         # inside an Image with ".copy_url" set.
-        elif op.exists(p):
+        if op.exists(p):
             result = imagepath.Path.from_localhost(p)
-            result = result.mark_git_root(branch=branch, url=url, repo=repo)
+            result = result.mark_git_root(branch=branch, url=url)
         else:
             result = imagepath.Path.from_localhost(p)
 
         if named_shares:
-            auto_reg_path = None
-            auto_reg_name = None
-
-            compare = result.as_docker_host_path()
+            compare = result.to_docker_host_path()
 
             dirsettings = conducto.api.dirconfig_detect(p)
             if dirsettings and "registered" in dirsettings:
-                auto_reg_name = dirsettings["registered"]
-                auto_reg_path = dirsettings["dir-path"]
+                name = dirsettings["registered"]
+                path = dirsettings["dir-path"]
+                result = result.mark_named_share(name, path)
 
             # iterate through named shares looking for a match in this org
-            if auto_reg_path is None:
-                conf = conducto.api.Config()
-                shares = conf.get_named_share_mapping(conf.default_profile)
+            conf = conducto.api.Config()
+            shares = conf.get_named_share_mapping(conf.default_profile)
 
-                def enum():
-                    for name, paths in shares.items():
-                        for path in paths:
-                            yield name, imagepath.Path.from_dockerhost(path)
-
-                for name, path in enum():
+            for name, paths in shares.items():
+                for path in paths:
+                    path = imagepath.Path.from_dockerhost(path)
                     if compare.is_subdir_of(path):
-                        # bingo, we have recognized this as a share for your org
-                        auto_reg_name = name
-                        auto_reg_path = path.to_docker_host()
-                        break
-
-            if auto_reg_name:
-                # return an annotated result with the discovered path
-                result = compare.mark_named_share(auto_reg_name, auto_reg_path)
+                        # We have recognized this as a share, so annotate result
+                        # with the discovered path.
+                        result = result.mark_named_share(name, path.to_docker_host())
 
         return result
 
@@ -725,10 +744,7 @@ class Image:
 
     def _get_clone_dest(self):
         return constants.ConductoPaths.git_clone_dest(
-            pipeline_id=self._pipeline_id,
-            copy_repo=self.copy_repo,
-            copy_url=self.copy_url,
-            copy_branch=self.copy_branch,
+            pipeline_id=self._pipeline_id, url=self.copy_url, branch=self.copy_branch,
         )
 
     def _get_clone_lock(self, dest):
@@ -750,16 +766,9 @@ class Image:
         return dest in Image._COMPLETED_CLONES
 
     async def _get_clone_url(self):
-        if self.copy_url:
-            return self.copy_url
-        elif self.copy_repo:
-            from conducto.integrations import git
+        from conducto.integrations import git
 
-            return await async_utils.eval_in_thread(git.url, self.copy_repo)
-        else:
-            raise ValueError(
-                "URL for cloning is unavailable: copy_url and copy_repo are both None"
-            )
+        return await async_utils.eval_in_thread(git.url, self.copy_url)
 
     async def _clone(self):
         # Only one clone() can run at a time on a single directory
@@ -798,19 +807,16 @@ class Image:
         assert self.dockerfile is not None
         # Build the specified dockerfile
         if self.needs_cloning():
-            context = self._get_clone_dest()
+            context = self.context.to_docker_mount(gitroot=self._get_clone_dest())
+            dockerfile = self.dockerfile.to_docker_mount(gitroot=self._get_clone_dest())
         else:
             context = self.context.to_docker_mount(pipeline_id=self._pipeline_id)
+            dockerfile = self.dockerfile.to_docker_mount(pipeline_id=self._pipeline_id)
 
         build_args = []
         if self.docker_build_args is not None:
             for k, v in self.docker_build_args.items():
                 build_args += ["--build-arg", "{}={}".format(k, v)]
-        build_args += [
-            "-f",
-            self.dockerfile.to_docker_mount(pipeline_id=self._pipeline_id),
-            context,
-        ]
 
         out, err = await async_utils.run_and_check(
             "docker",
@@ -822,6 +828,9 @@ class Image:
             "--label",
             "com.conducto",
             *build_args,
+            "-f",
+            dockerfile,
+            context,
         )
         return out, err
 
@@ -871,24 +880,15 @@ class Image:
         return out, err
 
     async def _copy(self):
-        if self.copy_repo:
-            env_vars = {
-                "CONDUCTO_GIT_REPO_ROOT": constants.ConductoPaths.COPY_LOCATION,
-                "CONDUCTO_GIT_REPO": self.copy_repo,
-            }
-            if self.copy_branch:
-                env_vars["CONDUCTO_GIT_BRANCH"] = self.copy_branch
-            if self.git_urls:
-                env_vars["CONDUCTO_GIT_URLS"] = json.dumps(self.git_urls)
-        else:
-            env_vars = {}
+        env = {}
+        if self.copy_url:
+            env["CONDUCTO_GIT_URL"] = self.copy_url
+        if self.copy_branch:
+            env["CONDUCTO_GIT_BRANCH"] = self.copy_branch
 
         # If copying a whole repo, or if getting a remote Git repo, get the commit SHA.
         if self.copy_repo or self.needs_cloning():
-            # Set CONDUCTO_GIT_SHA now that it's needed. We couldn't do it before
-            # because it could be expensive to compute (could involve a URL fetch), so
-            # we want to make sure it is only done once per Image.
-            env_vars["CONDUCTO_GIT_SHA"] = await self._sha1()
+            env["CONDUCTO_GIT_SHA"] = await self._sha1()
 
         if self.copy_dir:
             context = self.copy_dir.to_docker_mount(pipeline_id=self._pipeline_id)
@@ -898,7 +898,7 @@ class Image:
         # Create dockerfile and dockerignore. For details on why we do it this way, see:
         #   https://github.com/moby/moby/issues/12886
         dockerfile_text = dockerfile_mod.text_for_copy(
-            self.name_installed, self.docker_auto_workdir, env_vars
+            self.name_installed, self.docker_auto_workdir, env
         )
         dockerignore_text = dockerfile_mod.dockerignore_for_copy(
             context, preserve_git=self.copy_repo or self.needs_cloning()
@@ -996,11 +996,7 @@ class Image:
         return self.reqs_py or self.reqs_packages or self.reqs_docker
 
     def needs_copying(self):
-        return (
-            self.copy_dir is not None
-            or self.copy_repo is not None
-            or self.copy_url is not None
-        )
+        return self.copy_dir is not None or self.copy_url is not None
 
 
 class HistoryEntry:
@@ -1073,6 +1069,17 @@ def _non_conducto_dir():
         filename = frame.f_code.co_filename
         if not filename.startswith(_conducto_dir):
             return op.dirname(filename)
+
+
+@functools.lru_cache(1)
+def _get_path_map() -> typing.Dict[imagepath.Path, str]:
+    if "CONDUCTO_PATH_MAP" in os.environ:
+        d = json.loads(os.environ["CONDUCTO_PATH_MAP"])
+        return {
+            imagepath.Path.from_dockerhost_encoded(external): internal
+            for external, internal in d.items()
+        }
+    return {}
 
 
 _conducto_dir = os.path.dirname(os.path.dirname(__file__)) + os.path.sep

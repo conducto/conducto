@@ -1,11 +1,14 @@
+import enum
+import os
+import re
+import subprocess
+import urllib.parse
+
 from .. import api
 import conducto as co
 from conducto import callback
-from conducto.shared import types as t, request_utils
+from conducto.shared import client_utils, request_utils, types as t
 from ..api import api_utils
-import subprocess
-import enum
-import os
 
 
 _log_diff_dict = {}
@@ -20,54 +23,40 @@ class LogType(enum.Enum):
 ############################################################
 # public methods
 ############################################################
-def url(repo: str, token: t.Token = None) -> str:
-    if t.Bool(os.getenv("CONDUCTO_GITHUB_USE_SECRETS", "1")):
+def url(url: str, token: t.Token = None) -> str:
+    if t.Bool(os.getenv("CONDUCTO_GITHUB_USE_SECRETS")):
         secrets = api.Secrets().get_user_secrets(token=token, include_org_secrets=True)
-        user = secrets["GITHUB_USER"]
-        token = secrets["GITHUB_TOKEN"]
-        owner = secrets["GITHUB_OWNER"]
-        return f"https://{user}:{token}@github.com/{owner}/{repo}.git"
+        user = secrets.get("GITHUB_USER")
+        token = secrets.get("GITHUB_TOKEN")
+        if user and token:
+            owner, repo = _parse_github_url(url)
+            return f"https://{user}:{token}@github.com/{owner}/{repo}.git"
+        else:
+            return url
     else:
-        u = api.Config().get_url()
+        query_url = f"{api.Config().get_url()}/integrations/github/url?"
+        query_url += urllib.parse.urlencode({"url": url})
         headers = api_utils.get_auth_headers(token=token)
-        response = request_utils.get(
-            f"{u}/integrations/github/url/{repo}", headers=headers
-        )
+        response = request_utils.get(query_url, headers=headers)
         return api_utils.get_data(response)
 
 
-def add_check_callbacks(node: co.Node, repo=None, sha=None):
-    if repo is None:
-        repo = os.environ["CONDUCTO_GIT_REPO"]
+def add_check_callbacks(node: co.Node, url=None, sha=None):
+    if url is None:
+        url = os.environ["CONDUCTO_GIT_URL"]
     if sha is None:
         sha = os.environ["CONDUCTO_GIT_SHA"]
-    cb = callback.github_check(repo, sha)
+    cb = callback.github_check(url, sha)
     node.on_state_change(cb)
 
 
-def commit_status(
-    repo: str,
-    sha: str,
-    state,
-    description=None,
-    context=None,
-    target_url=None,
-    token: t.Token = None,
-):
-    data = {
-        "state": state,
-        "context": context,
-        "description": description,
-        "target_url": target_url,
-    }
-    secrets = api.Secrets().get_user_secrets(token=token, include_org_secrets=True)
-    access_token = secrets["GITHUB_TOKEN"]
-    owner = secrets["GITHUB_OWNER"]
-
-    url = f"https://api.github.com/repos/{owner}/{repo}/statuses/{sha}"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    response = request_utils.post(url, headers=headers, data=data)
-    api_utils.get_data(response)
+def add_status_callback(node: co.Node, url=None, sha=None):
+    if url is None:
+        url = os.environ.get("CONDUCTO_GIT_URL")
+    if sha is None:
+        sha = os.environ["CONDUCTO_GIT_SHA"]
+    cb = callback.github_status(url, sha)
+    node.on_state_change(cb)
 
 
 def get_log_diff(
@@ -118,20 +107,43 @@ def get_log_diff(
 # internal helpers
 ############################################################
 def _get_raw_log_diff(base_branch, current_branch):
-    log_cmd = ""
-    if "CONDUCTO_PIPELINE_ID" in os.environ:
-        log_cmd = (
-            'git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*" && '
+    if "CONDUCTO_GIT_URL" in os.environ:
+        client_utils.subprocess_run(
+            [
+                "git",
+                "config",
+                "remote.origin.fetch",
+                "+refs/heads/*:refs/remotes/origin/*",
+            ]
         )
+        client_utils.subprocess_run(["git", "fetch", "origin", base_branch])
 
-    log_cmd += (
-        f"git fetch origin {base_branch} && git log --abbrev-commit --date=relative "
-        f"--pretty=format:'%h|%ad|[%an]|%d|%s' origin/{base_branch}..origin/{current_branch}"
-    )
-    result = subprocess.run(
-        log_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+    result = client_utils.subprocess_run(
+        [
+            "git",
+            "log",
+            "--abbrev-commit",
+            "--date=relative",
+            "--pretty=format:%h|%ad|[%an]|%d|%s",
+            f"origin/{base_branch}...origin/{current_branch}",
+        ],
+        capture_output=True,
     )
     log_diff = result.stdout.decode()
     key = (base_branch, current_branch)
     _log_diff_dict[key] = log_diff
     return log_diff
+
+
+def _parse_github_url(url):
+    """
+    Handle URLs of the form:
+     - git://github.com/conducto/super.git
+     - git@github.com:conducto/super.git
+     - https://github.com/conducto/super.git
+     - git@github.com-user/conducto/super.git
+    Look for "github.com/{owner}/{repo}.git" or "github.com:{owner}/{repo}.git" or "github.com-user:{owner}/{repo}.git"
+    """
+    m = re.search("github\.com(?:-.*?)?[/:]([^/]+)/(.+?)\.git$", url)
+    owner, repo = m.group(1, 2)
+    return owner, repo

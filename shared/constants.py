@@ -44,6 +44,16 @@ class State:
     unskip = unskip
 
 
+class SleepReason:
+    SLEEP_WHEN_DONE = "sleep_when_done"
+    USER_SLEPT = "user_slept"
+    DISCONNECTION = "disconnection"
+    BULK_SLEPT = "bulk_slept"
+    LAUNCH_ERROR = "launch_error"
+    RUNTIME_ERROR = "runtime_error"
+    RECONNECT_FAILURE = "reconnect_failure"
+
+
 class Perms:
     LAUNCH = "launch"
     CHANGE_STATE = "change_state"
@@ -180,22 +190,16 @@ class ConductoPaths:
             return os.path.join(log_dir, pipeline_id)
 
     @staticmethod
-    def git_clone_dest(pipeline_id, copy_repo, copy_url, copy_branch):
-        if copy_repo is not None:
-            # TODO: this should depend on owner once we know it, not just repo
-            base = copy_repo
-        elif copy_url is not None:
-            # Clean up URL: remove username/password, and sanitize the rest
-            res = urllib.parse.urlparse(copy_url)
-            url = res._replace(netloc=res.hostname).geturl()
-            base = re.sub("[^\w_:@?=\-]+", "_", url)
-        else:
-            raise ValueError("Cannot clone if copy_repo and copy_url are both None")
+    def git_clone_dest(pipeline_id, url, branch) -> str:
+        # Clean up URL: remove username/password, and sanitize the rest
+        res = urllib.parse.urlparse(url)
+        cleaner_url = res._replace(netloc=res.hostname).geturl()
+        cleaned_url = re.sub("[^\w_:@?=\-]+", "_", cleaner_url)
 
-        if not isinstance(copy_branch, str):
-            raise TypeError(f"Expected str. Got copy_branch={repr(copy_branch)}")
+        if not isinstance(branch, str):
+            raise TypeError(f"Expected str. Got copy_branch={repr(branch)}")
 
-        return f"{ConductoPaths.GIT_LOCATION}/{pipeline_id}:{base}:{copy_branch}"
+        return f"{ConductoPaths.GIT_LOCATION}/{pipeline_id}:{cleaned_url}:{branch}"
 
 
 # 8 characters, matches a host_id

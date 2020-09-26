@@ -11,6 +11,9 @@ import sys
 import types
 import typing
 import pathlib
+import fnmatch
+import re
+
 
 from ..shared import client_utils, constants, log, types as t, imagepath
 from .._version import __version__, __sha1__
@@ -28,6 +31,8 @@ CONDUCTO_ARGS = [
     "sleep_when_done",
     "public",
 ]
+
+OPS = {"||", "&&", "!=", "==", "(", ")", "!"}
 
 
 def lazy_shell(command, env=None, **exec_args) -> pipeline.Node:
@@ -738,14 +743,57 @@ def _parse_image_kwargs_from_config_section(section):
     }
 
 
+def evaluate_filter(s, substitutions):
+    s = s.format(**substitutions)
+    reg = re.compile(r"(\|\||&&|==|!=|!|\(|\))")
+
+    tokens = [i.strip() for i in reg.split(s) if i.strip()]
+    mapping = []
+
+    class SafeEvalContainer:
+        def __init__(self, idx):
+            self.internal = mapping[idx]
+
+        def __eq__(self, other):
+            return fnmatch.fnmatch(self.internal, other.internal) or fnmatch.fnmatch(
+                other.internal, self.internal
+            )
+
+    for i, token in enumerate(tokens):
+        if token not in OPS:
+            tokens[i] = f"SafeEvalContainer({len(mapping)})"
+            mapping.append(token)
+        elif token == "||":
+            tokens[i] = "or"
+        elif token == "&&":
+            tokens[i] = "and"
+        elif token == "!":
+            tokens[i] = "not"
+        elif token == "==":
+            pass
+        elif token == "!=":
+            pass
+        elif token == "==":
+            pass
+        elif token == "(":
+            pass
+        elif token == ")":
+            pass
+        else:
+            raise Exception
+    try:
+        return bool(eval(" ".join(tokens)))
+    except:
+        raise NotImplementedError("Error message for when evaluating filter fails")
+
+
 def _parse_config_args_from_cmdline(argv):
     # Parse the command,
     conducto_kwargs = {
         "shell": _get_default_shell(),
         "app": _get_default_app(),
     }
-    branch = None
-    wildcard_args = []
+    substitutions = {}
     i = 0
     while i < len(argv):
         arg = argv[i]
@@ -771,22 +819,16 @@ def _parse_config_args_from_cmdline(argv):
                     )
                 conducto_kwargs[basekey.replace("no_", "")] = False
                 i += 1
-            elif basekey == "branch":
-                if value is None:
-                    value = argv[i + 1]
-                    i += 2
-                    wildcard_args += [arg, value]
-                else:
-                    i += 1
-                    wildcard_args.append(arg)
-                branch = value
+            elif value is None:
+                value = argv[i + 1]
+                substitutions[basekey] = value
+                i += 2
             else:
-                wildcard_args.append(arg)
+                substitutions[basekey] = value
                 i += 1
         else:
-            wildcard_args.append(arg)
-            i += 1
-    return conducto_kwargs, wildcard_args, branch
+            raise NotImplementedError("Better error message for invalid substitutions")
+    return conducto_kwargs, substitutions
 
 
 def run_cfg(
@@ -800,16 +842,10 @@ def run_cfg(
     unique_tag=None,
     *,
     callback_after_create_before_build: typing.Callable = None,
+    substitutions: dict = None,
 ):
-    import conducto as co
 
-    if constants.ExecutionEnv.value() == constants.ExecutionEnv.EXTERNAL:
-        # default filename to current working directory
-        # allows python -m conducto debug to respect local .conducto/profile
-        filename = file.name
-        if filename is None:
-            filename = str(pathlib.Path().absolute()) + "/dummy"
-        api.dirconfig_select(filename)
+    import conducto as co
 
     # Read the config file
     cp = configparser.ConfigParser()
@@ -820,16 +856,19 @@ def run_cfg(
         raise NotImplementedError(
             "Make better exception for when no command is specified"
         )
-    if argv[0] not in cp:
-        if "*" in cp:
-            section = cp["*"]
-            method = "*"
-            remainder = argv
-        else:
-            raise NotImplementedError("Make better exception for invalid command")
-    else:
-        method, *remainder = argv
-        section = cp[method]
+
+    idx = len(argv)
+    for i in range(len(argv)):
+        if argv[i].startswith("--"):
+            idx = i
+            break
+
+    method = " ".join(argv[:idx])
+    remainder = argv[idx:]
+
+    if method not in cp:
+        raise NotImplementedError("Make better exception for invalid command")
+    section = cp[method]
 
     # See if this user is already a running pipeline for this unique_tag
     if unique_tag is not None:
@@ -859,9 +898,16 @@ def run_cfg(
     # Parse the command template. Find which variables need to be passed.
     command_template = section["command"]
     image_kwargs = _parse_image_kwargs_from_config_section(section)
-    conducto_kwargs, wildcard_args, cmdline_branch = _parse_config_args_from_cmdline(
-        remainder
-    )
+    conducto_kwargs, cmdline_substitutions = _parse_config_args_from_cmdline(remainder)
+
+    if substitutions is None:
+        substitutions = cmdline_substitutions
+
+    if "branch" not in substitutions:
+        raise KeyError(
+            "Key 'branch' must be specified as a substitution, attach --branch=your-branch-name to your command"
+        )
+    cmdline_branch = substitutions["branch"]
 
     # If the user specifies --branch=..., set that to the copy_branch
     if cmdline_branch and copy_branch and cmdline_branch != copy_branch:
@@ -877,18 +923,14 @@ def run_cfg(
             copy_url = git_urls[0]
 
     # Build the output node
-    wildcard_str = " ".join(shlex.quote(arg) for arg in wildcard_args)
-    if "{*}" in command_template:
-        command = command_template.replace("{*}", wildcard_str)
-    else:
-        command = command_template
-        if wildcard_args:
-            raise ValueError(
-                f"Cannot specify additional arguments because command for [{method}] "
-                f"does not contain '{{*}}'.\n"
-                f"  Command: {command_template}\n"
-                f"  User specified: {wildcard_str}"
-            )
+
+    if section.get("filter") and not evaluate_filter(
+        section.get("filter"), substitutions
+    ):
+        log.log(f"No launch - filter evaluated as False")
+        return None
+
+    command = command_template.format(**substitutions)
 
     output = co.Lazy(command)
     output.title = _get_default_title(None, default_was_used=False)
@@ -984,13 +1026,6 @@ def main(
         for name, obj in variables.items()
         if not name.startswith("_") and not inspect.isclass(obj) and callable(obj)
     }
-
-    if constants.ExecutionEnv.value() == constants.ExecutionEnv.EXTERNAL:
-        # default filename to current working directory
-        # allows python -m conducto debug to respect local .conducto/profile
-        if filename is None:
-            filename = str(pathlib.Path().absolute()) + "/dummy"
-        api.dirconfig_select(filename)
 
     if "__all__" in variables:
         methods = {

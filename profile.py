@@ -6,7 +6,6 @@ import socket
 import subprocess
 import urllib.error
 import conducto as co
-import conducto.api.config as config
 from conducto.shared import constants, log, agent_utils, container_utils
 from . import api
 
@@ -62,14 +61,8 @@ def profile_list():
     """
     conf = api.Config()
 
-    mydir = os.getcwd()
-    dirsettings = config.dirconfig_detect(mydir)
-    dirprofile = dirsettings["profile-id"] if dirsettings else None
-
     for profile in conf.profile_sections():
         data = conf._profile_general(profile)
-
-        data["dir-default"] = profile == dirprofile
 
         try:
             _print_profile(profile, data)
@@ -297,54 +290,6 @@ def profile_delete(id=None, url=None, email=None, force=False):
 
             # delete data
             conf.delete_profile(state["profile"])
-
-
-def dir_init(dir: str = ".", url: str = None, name: str = None):
-    from . import api
-
-    if url is None:
-        url = "https://conducto.com"
-    else:
-        if not api.is_conducto_url(url):
-            print(f"The url {url} is not recognized.", file=sys.stderr)
-            sys.exit(1)
-
-    dir = os.path.abspath(dir)
-
-    if not os.path.isdir(dir):
-        print(f"'{dir}' is not a directory or does not exist", file=sys.stderr)
-        sys.exit(1)
-
-    config = api.Config()
-    for profile in config.profile_sections():
-        if config.get_profile_general(profile, "url") == url:
-            break
-    else:
-        profile = None
-
-    create_new = True
-    if profile is not None:
-        # we already have a profile for this url, let's see what the intent is.
-
-        profile_email = config.get_profile_general(profile, "email")
-        email = os.environ.get("CONDUCTO_EMAIL")
-
-        if email == profile_email:
-            print(f"There is already a profile for {url} and e-mail {email}.")
-            question = "Do you wish to connect this directory to this profile? [yn] "
-            choice = input(question)
-
-            if choice.lower()[0] == "y":
-                # connect dir to this profile
-                create_new = False
-
-    if create_new:
-        profile = _profile_add(url, default=False)
-
-    profdata = config._profile_general(profile)
-    api.dirconfig_write(dir, profdata["url"], profdata["org_id"], name=name)
-    if name is not None:
-        config.register_named_mount(profile, name, dir)
 
 
 def profile_start_agent(id=None):

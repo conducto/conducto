@@ -9,16 +9,13 @@ from ..internal import host_detection as hostdet
 
 
 def name():
-    auth = co.api.Auth()
-    token = auth.get_token_from_shell()
-    user_id = auth.get_unverified_claims(token)["sub"]
-    user_hash = hashlib.sha1(user_id.encode()).hexdigest()[:8]
-    profile_id = co.api.Config().get_default_profile()
+    profile_id = co.api.Config().default_profile
     host_id = co.api.Config().get_host_id()
-    return f"conducto_agent_{host_id}_{user_hash}_{profile_id}"
+    return f"conducto_agent_h{host_id}_p{profile_id}"
 
 
-def launch_agent(inside_container=False, check_for_old=True, token=None):
+def launch_agent(check_for_old=True, token=None):
+    inside_container = container_utils.get_current_container_id()
     container_name = name()
 
     running = container_utils.get_running_containers()
@@ -26,6 +23,21 @@ def launch_agent(inside_container=False, check_for_old=True, token=None):
         return
     if check_for_old and f"{container_name}-old" in running:
         return
+
+    # TODO remove this check for prehost name around oct 2020
+    host_id = co.api.Config().get_host_id()
+    prehost_container_name = container_name.replace(f"_agent_{host_id}", "")
+    if prehost_container_name in running:
+        log.debug(f"stopping prehost container name {prehost_container_name}")
+        docker_parts = ["docker", "stop", prehost_container_name]
+        try:
+            client_utils.subprocess_run(
+                docker_parts,
+                msg="Error stopping prehost name Conducto agent container",
+                capture_output=True,
+            )
+        except client_utils.CalledProcessError:
+            pass
 
     if token is None:
         token = co.api.Config().get_token(refresh=True)
@@ -35,7 +47,7 @@ def launch_agent(inside_container=False, check_for_old=True, token=None):
     external_profile_dir = container_utils.get_external_conducto_dir(inside_container)
     internal_base_dir = "/root/.conducto"
     config = co.api.Config()
-    profile = config.get_default_profile()
+    profile = config.default_profile
     internal_profile_dir = "/".join([internal_base_dir, profile])
 
     external_profile_dir = external_profile_dir.replace(profile, "")
@@ -116,7 +128,7 @@ def launch_agent(inside_container=False, check_for_old=True, token=None):
         "--token",
         token,
         "--profile",
-        config.get_default_profile(),
+        config.default_profile,
     ]
 
     tag = config.get_image_tag()

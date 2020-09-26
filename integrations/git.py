@@ -1,13 +1,12 @@
 import enum
 import os
 import re
-import subprocess
 import urllib.parse
 
 from .. import api
 import conducto as co
 from conducto import callback
-from conducto.shared import client_utils, request_utils, types as t
+from conducto.shared import client_utils, imagepath, request_utils, types as t
 from ..api import api_utils
 
 
@@ -41,20 +40,28 @@ def url(url: str, token: t.Token = None) -> str:
         return api_utils.get_data(response)
 
 
-def add_check_callbacks(node: co.Node, url=None, sha=None):
-    if url is None:
-        url = os.environ["CONDUCTO_GIT_URL"]
-    if sha is None:
-        sha = os.environ["CONDUCTO_GIT_SHA"]
-    cb = callback.github_check(url, sha)
-    node.on_state_change(cb)
+def clone_url(url: str, token: t.Token = None) -> str:
+    # Non-GitHub URLs should be passed through unchanged
+    if not _is_github_url(url):
+        return url
+
+    # Custom override to use username/token from secrets
+    if t.Bool(os.getenv("CONDUCTO_GITHUB_USE_SECRETS")):
+        secrets = api.Secrets().get_user_secrets(token=token, include_org_secrets=True)
+        user = secrets.get("GITHUB_USER")
+        gh_token = secrets.get("GITHUB_TOKEN")
+        owner, repo = _parse_github_url(url)
+        return f"https://{user}:{gh_token}@github.com/{owner}/{repo}.git"
+
+    # Default action is to pass this through the GitHub integration, which will add the
+    # appropriate auth and redirect to GitHub.
+    if token is None:
+        token = co.api.Config().get_token(refresh=True)
+    query_url = f"{api.Config().get_url()}/integrations/github/clone_url/{token}/{url}"
+    return query_url
 
 
-def add_status_callback(node: co.Node, url=None, sha=None):
-    if url is None:
-        url = os.environ.get("CONDUCTO_GIT_URL")
-    if sha is None:
-        sha = os.environ["CONDUCTO_GIT_SHA"]
+def add_status_callback(node: co.Node, url, sha):
     cb = callback.github_status(url, sha)
     node.on_state_change(cb)
 
@@ -64,11 +71,15 @@ def get_log_diff(
     current_branch: str = None,
     log_type: LogType = LogType.RAW,
     max_lines=None,
+    git_dir=None,
 ) -> str:
-    key = (base_branch, current_branch)
+    git_root = _find_git_root(git_dir)
+
+    key = (base_branch, current_branch, git_root)
     log_diff = _log_diff_dict.get(key)
     if log_diff is None:
-        log_diff = _get_raw_log_diff(base_branch, current_branch)
+        log_diff = _get_raw_log_diff(base_branch, current_branch, git_root)
+        _log_diff_dict[key] = log_diff
     if log_diff == "":
         return ""
 
@@ -106,11 +117,13 @@ def get_log_diff(
 ############################################################
 # internal helpers
 ############################################################
-def _get_raw_log_diff(base_branch, current_branch):
+def _get_raw_log_diff(base_branch, current_branch, git_root):
     if "CONDUCTO_GIT_URL" in os.environ:
         client_utils.subprocess_run(
             [
                 "git",
+                "-C",
+                git_root,
                 "config",
                 "remote.origin.fetch",
                 "+refs/heads/*:refs/remotes/origin/*",
@@ -121,6 +134,8 @@ def _get_raw_log_diff(base_branch, current_branch):
     result = client_utils.subprocess_run(
         [
             "git",
+            "-C",
+            git_root,
             "log",
             "--abbrev-commit",
             "--date=relative",
@@ -129,10 +144,11 @@ def _get_raw_log_diff(base_branch, current_branch):
         ],
         capture_output=True,
     )
-    log_diff = result.stdout.decode()
-    key = (base_branch, current_branch)
-    _log_diff_dict[key] = log_diff
-    return log_diff
+    return result.stdout.decode()
+
+
+def _is_github_url(url):
+    return "github.com" in url
 
 
 def _parse_github_url(url):
@@ -147,3 +163,12 @@ def _parse_github_url(url):
     m = re.search("github\.com(?:-.*?)?[/:]([^/]+)/(.+?)\.git$", url)
     owner, repo = m.group(1, 2)
     return owner, repo
+
+
+def _find_git_root(p):
+    if p is None:
+        p = co.image._non_conducto_dir()
+    if not os.path.isabs(p):
+        p = os.path.join(co.image._non_conducto_dir(), p)
+    p = os.path.realpath(p)
+    return imagepath.Path._get_git_root(p)

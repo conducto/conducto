@@ -137,6 +137,7 @@ def dockerignore_for_copy(context, preserve_git):
     path = os.path.join(context, ".dockerignore")
     if not os.path.exists(path):
         # TODO: read the .gitignore and convert to a .dockerignore
+        # https://zzz.buzz/2018/05/23/differences-of-rules-between-gitignore-and-dockerignore/
         return ""
 
     # Read the existing dockerfile

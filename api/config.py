@@ -1,10 +1,9 @@
 import configparser
-import os
 import hashlib
+import json
+import os
 import secrets
 import subprocess
-import json
-import sys
 import time
 import typing
 import tempfile
@@ -14,87 +13,9 @@ from . import api_utils
 from .. import api
 
 
-def dirconfig_detect(dirname, auth_new=False):
-    log.debug(f"auto-detecting profile from directory of {dirname}")
-
-    def has_dcprofile(_dn):
-        dcprofile = os.path.join(_dn, ".conducto", "profile")
-        return os.path.exists(dcprofile)
-
-    parent = dirname
-    while True:
-        if has_dcprofile(parent):
-            break
-
-        dn2 = os.path.dirname(parent)
-        # comparing at length as a string prevents a wide swath of possible
-        # ways this loop could go endless.
-        if len(dn2) >= len(parent):
-            parent = None
-            break
-        parent = dn2
-
-    if parent is None:
-        # no .conducto/profile found
-        return
-
-    dcprofile = os.path.join(parent, ".conducto", "profile")
-
-    dirconfig = configparser.ConfigParser()
-    dirconfig.read(dcprofile)
-
-    section = dict(dirconfig.items("default"))
-
-    config = Config()
-    for profile in config.profile_sections():
-        url = config.get_profile_general(profile, "url")
-        org_id = config.get_profile_general(profile, "org_id")
-        if url == section["url"] and org_id == section["org_id"]:
-            break
-    else:
-        if auth_new:
-            profile = Config.get_profile_id(section["url"], section["org_id"])
-        else:
-            profile = None
-
-    section["profile-id"] = profile
-    section["dir-path"] = parent
-
-    if "registered" in section and profile:
-        Config().register_named_mount(profile, section["registered"], parent)
-
-    return section
-
-
-def dirconfig_select(filename):
-    if "CONDUCTO_PROFILE" in os.environ:
-        return
-
-    log.debug(f"auto-detecting profile from directory of {filename}")
-    dirname = os.path.dirname(os.path.abspath(filename))
-
-    dirsettings = dirconfig_detect(dirname, auth_new=True)
-    profile = dirsettings["profile-id"] if dirsettings else None
-
-    if profile is not None:
-        os.environ["CONDUCTO_PROFILE"] = profile
-
-
-def dirconfig_write(dirname, url, org_id, name=None):
-    dirconfig = configparser.ConfigParser()
-    dirconfig["default"] = {"url": url, "org_id": org_id}
-    if name is not None:
-        dirconfig.set("default", "registered", name)
-    dotconducto = os.path.join(dirname, ".conducto")
-    if not os.path.isdir(dotconducto):
-        os.mkdir(dotconducto)
-    dcprofile = os.path.join(dirname, ".conducto", "profile")
-    with open(dcprofile, "w") as dirfile:
-        dirconfig.write(dirfile)
-
-
 class Config:
     TOKEN: typing.Optional[t.Token] = None
+    _RAN_FIX = False
 
     class Location:
         LOCAL = "local"
@@ -102,6 +23,13 @@ class Config:
 
     def __init__(self):
         self.reload()
+
+        # Try exactly once per run to clean up old profile names. Only run this
+        # externally, not inside a container.
+        if not Config._RAN_FIX:
+            if constants.ExecutionEnv.value() == constants.ExecutionEnv.EXTERNAL:
+                self.cleanup_profile_names()
+            Config._RAN_FIX = True
 
     ############################################################
     # generic methods
@@ -169,12 +97,41 @@ class Config:
         if self.get("general", "default", None) == profile:
             self.delete("general", "default", write=True)
 
+    @staticmethod
+    def rename_profile(old_id, new_id):
+        configdir = constants.ConductoPaths.get_local_base_dir()
+        old_path = os.path.join(configdir, old_id)
+        new_path = os.path.join(configdir, new_id)
+        os.rename(old_path, new_path)
+
     def delete(self, section, key, write=True):
         del self.config[section][key]
         if not self.config[section]:
             del self.config[section]
         if write:
             self.write()
+
+    def cleanup_profile_names(self):
+        """
+        fix old misnamed profile sections
+        """
+        for section in self.profile_sections():
+            cfg = self.get_profile_config(section)
+            ss_url = cfg.get("general", "url", fallback=None)
+            ss_org_id = cfg.get("general", "org_id", fallback=None)
+            ss_email = cfg.get("general", "email", fallback=None)
+            correct_profile = self.get_profile_id(ss_url, ss_org_id, ss_email)
+            if section != correct_profile:
+                self.rename_profile(section, correct_profile)
+                if self.default_profile == section:
+                    print(
+                        f"# Renaming profile {section} -> {correct_profile} [default]"
+                    )
+                    self.default_profile = correct_profile
+                    os.environ["CONDUCTO_PROFILE"] = correct_profile
+                    self.set("general", "default", correct_profile, write=True)
+                else:
+                    print(f"# Renaming profile {section} -> {correct_profile}")
 
     def write(self):
         config_file = self._get_config_file()
@@ -402,14 +359,14 @@ commands:
         assert isinstance(current, list), "shares are stored as json lists of strings"
         return current
 
-    def get_connect_url(self, pipeline_id):
-        if self.get_url().find("conducto.com") > 0:
-            url = f"https://conduc.to/{pipeline_id}"
-        elif self.get_url().find("test.conducto.io") > 0:
-            url = f"https://test.conduc.to/{pipeline_id}"
-        else:
-            base = self.get_url().rstrip("/")
-            url = f"{base}/app/p/{pipeline_id}"
+    def get_connect_url(self, pipeline_id, allow_short_urls=False):
+        base = self.get_url().rstrip("/")
+        url = f"{base}/app/p/{pipeline_id}"
+        if allow_short_urls:
+            if self.get_url().find("conducto.com") > 0:
+                url = f"https://conduc.to/{pipeline_id}"
+            elif self.get_url().find("test.conducto.io") > 0:
+                url = f"https://test.conduc.to/{pipeline_id}"
         return url
 
     def get_location(self):
@@ -421,27 +378,57 @@ commands:
     def get_image_tag(self, default=None):
         return os.getenv("CONDUCTO_IMAGE_TAG") or self.get("dev", "who", default)
 
-    def get_host_id(self):
+    def _generate_host_id(self, profile):
+        # This generation code for the host-id is somewhat deterministic,
+        # but we save the host-id in ~/.conducto/config by design to not
+        # rely on any specifics of long-term determinism.  It is convenient
+        # to use this to mitigate race conditions if multiple processes
+        # happen to be generating a host-id at the same time for a new
+        # configuration.  We know that windows and mac generate a new
+        # docker id on docker restart.
+
+        cmd = [
+            "docker",
+            "info",
+            "--format='{{json .ID}}'",
+        ]
+        info = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+
+        docker_id = info.stdout.decode().strip('"')
+
+        if not docker_id:
+            # This should never be necessary, but having a docker error hold up
+            # this host_id generation would be annoying.
+            docker_id = secrets.token_hex(4)
+
+        seed = f"{docker_id}|{profile}"
+        return hashlib.md5(seed.encode()).hexdigest()[:8]
+
+    def get_host_id(self, profile=None):
         """
         Return the unique host_id stored in the .config. If none exist, generate one.
         """
         if constants.ExecutionEnv.headless():
             return constants.HOST_ID_NO_AGENT
 
-        host_id = self.get("general", "host_id")
+        if profile is None:
+            profile = self.default_profile
+
+        host_id = self.get_profile_general(profile, "host_id")
         if host_id is None:
-            host_id = secrets.token_hex(4)
-            self.set("general", "host_id", host_id)
+            # for the moment, we provide a conversion path from the host_id in
+            # the global config to the profile specific config
+            host_id = self.get("general", "host_id")
+            if host_id is None:
+                host_id = self._generate_host_id(profile)
+            self.set_profile_general(profile, "host_id", host_id)
         return host_id
 
-    def get_default_profile(self):
-        return self.default_profile
-
     @staticmethod
-    def get_profile_id(url, org_id):
-        return hashlib.md5(f"{url}|{org_id}".encode()).hexdigest()[:8]
+    def get_profile_id(url, org_id, email):
+        return hashlib.md5(f"{url}|{org_id}|{email}".encode()).hexdigest()[:8]
 
-    def write_profile(self, url, token, default=True, force_profile=None):
+    def write_profile(self, url, token, default=True):
         # ensure that [general] section is first for readability
         if not self.config.has_section("general"):
             self.config.add_section("general")
@@ -451,22 +438,12 @@ commands:
         dir_api = api.dir.Dir()
         dir_api.url = url
         userdata = dir_api.user(token)
+        org_id = str(userdata["org_id"])
+        email = userdata["email"]
 
-        # search for url & org matching
-        is_first = True
-        if force_profile:
-            profile = force_profile
-        else:
-            for section in self.profile_sections():
-                is_first = False
-                ss_url = self.config.get(section, "url", fallback=None)
-                ss_org_id = self.config.get(section, "org_id", fallback=None)
-                if url == ss_url and str(userdata["org_id"]) == ss_org_id:
-                    # re-use this one
-                    profile = section
-                    break
-            else:
-                profile = self.get_profile_id(url, userdata["org_id"])
+        # compute profile id search for url & org & email matching
+        profile = self.get_profile_id(url, org_id, email)
+        profile_sections = list(self.profile_sections())
 
         profdir = constants.ConductoPaths.get_profile_base_dir(profile=profile)
         conffile = os.path.join(profdir, "config")
@@ -474,14 +451,15 @@ commands:
         if not profconfig.has_section("general"):
             profconfig.add_section("general")
         profconfig.set("general", "url", url)
-        profconfig.set("general", "org_id", str(userdata["org_id"]))
-        profconfig.set("general", "email", userdata["email"])
+        profconfig.set("general", "org_id", org_id)
+        profconfig.set("general", "email", email)
         profconfig.set("general", "token", token)
+        profconfig.set("general", "host_id", self._generate_host_id(profile))
         os.makedirs(profdir, exist_ok=True)
         self._atomic_write_config(profconfig, conffile)
 
         assert default in (True, False, "first")
-        if default is True or (default == "first" and is_first):
+        if default is True or (default == "first" and len(profile_sections) == 0):
             self.set("general", "default", profile, write=False)
         if not (default is False):
             # stash this for all later config in this process

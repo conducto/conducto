@@ -6,7 +6,6 @@ import conducto as co
 from conducto.shared import constants
 from conducto.contrib.discover.cli import discover_cli
 from conducto.debug import debug, livedebug
-from conducto.profile import dir_init
 from conducto.glue import method
 import asyncio
 
@@ -193,7 +192,6 @@ def main():
             "show": show,
             "debug": debug,
             "livedebug": livedebug,
-            "init": dir_init,
             "dump-serialization": dump_serialization,
             "sleep": sleep,
             "discover": discover_cli,

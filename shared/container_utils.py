@@ -128,10 +128,33 @@ def get_running_containers():
 
 
 def get_current_container_id():
-    result = client_utils.subprocess_run(
-        "head -1 /proc/self/cgroup|cut -d/ -f3", shell=True,
-    )
-    return result.stdout.decode("utf-8").strip()
+    """
+    Return the full container ID of the Docker container we're in, or the empty string
+    if we're not in a container
+    """
+    if hostdet.is_windows() or hostdet.is_mac():
+        # This function assumes we never launch agents or managers from a
+        # container running Windows or macOS inside.
+        return ""
+
+    # If, and only if, we find docker as a cgroup owner, parse the
+    # container id from the ownership list.
+    try:
+        with open("/proc/1/cgroup") as cgroup:
+            first_resource = cgroup.read().splitlines()[-1]
+            # Inside a container will look something like this:
+            # 1:name=systemd:/docker/8780f2179bc7cbff4cc0972db8cffc2acf107ad06a11820c74f0165f21b98cbf
+            # Outside, something like this:
+            # 1:name=systemd:/init.scope
+            return (
+                first_resource.split("/")[-1].strip()
+                if "docker" in first_resource
+                else ""
+            )
+    # Allow errors to bubble up, except if we don't find the cgroups for /proc/1.
+    # In that case, we can't be in a container.
+    except FileNotFoundError:
+        return ""
 
 
 async def does_newer_version_exist():

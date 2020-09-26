@@ -1,10 +1,4 @@
-from .config import (
-    AsyncConfig,
-    Config,
-    dirconfig_write,
-    dirconfig_select,
-    dirconfig_detect,
-)
+from .config import AsyncConfig, Config
 from .auth import Auth, AsyncAuth
 from .analytics import Analytics, AsyncAnalytics
 from .dir import Dir, AsyncDir

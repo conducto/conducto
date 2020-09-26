@@ -932,8 +932,8 @@ class Exec(Node):
                     if not path.is_subdir_of(external):
                         continue
 
-                    path = path.to_docker_mount()
-                    external = external.to_docker_mount()
+                    path = path.to_worker_mount()
+                    external = external.to_worker_mount()
 
                     # If so, calculate the corresponding internal path
                     internal = os.path.normpath(internal.rstrip("/"))

@@ -148,6 +148,23 @@ class Path:
 
             return hostpath
 
+    def to_worker_mount(self, *, pipeline_id=None, gitroot=None) -> str:
+        # This converts a path from a serialization to what a worker will see when
+        # running it. It will return a valid path supposing that the host machine's
+        # directory structure matches what was at the point of pipeline creation.  No
+        # information required from the user as in resolve_named_share.
+
+        import conducto.internal.host_detection as hostdet
+
+        hostpath = self.to_docker_host()
+
+        # this results in a unix host path ...
+        if hostdet.is_wsl1() or hostdet.is_windows():
+            # ... or a docker-friendly windows path
+            hostpath = self._windows_docker_path(hostpath)
+
+        return hostpath
+
     def to_docker_host(self) -> str:
         if self._type == "dockerhost":
             return self._value

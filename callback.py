@@ -70,8 +70,8 @@ def email(to=None, cc=None):
 def slack(to, token, message=None, node_summary=False):
     """
     Post a summary of the node in the specified slack channel.
-    :param to: where to send the updates to
-    :param token: slack token. Obtain it by running /gettoken in your slack channel
+    :param to: where to send the updates to, channel id or user id
+    :param token: slack app token. Obtain it by running /conducto_token in your slack channel
     :param message: message to print, optional
     :param node_summary: print node summary, defaults to True if no message, False otherwise
     :return:
@@ -80,8 +80,18 @@ def slack(to, token, message=None, node_summary=False):
     return base("slack", to=to, token=token, message=message, node_summary=node_summary)
 
 
-def github_check(url, sha):
-    return base("github_check", url=url, sha=sha)
+def slack_status(recipient, message=None, node_summary=False):
+    """
+    Post a summary of the node in the specified slack channel via the Slack integration.
+    :param recipient: where to send the updates to, channel id or user id
+    :param message: message to print, optional
+    :param node_summary: print node summary, defaults to True if no message, False otherwise
+    :return:
+    """
+
+    return base(
+        "slack_status", recipient=recipient, message=message, node_summary=node_summary
+    )
 
 
 def github_status(url, sha):

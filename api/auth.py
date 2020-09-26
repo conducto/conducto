@@ -216,6 +216,15 @@ class Auth:
 
                 # All good
                 print("Login Successful...")
+            except api_utils.InvalidResponse as e:
+                if e.status_code == hs.CONFLICT and e.message.startswith(
+                    "User registration"
+                ):
+                    print(e.message)
+                elif e.status_code == hs.NOT_FOUND and e.message.startswith("No user"):
+                    print(e.message)
+                else:
+                    raise
             except Exception as e:
                 incorrects = ["Incorrect email or password", "User not found"]
                 unfinished = ["User must confirm email", "No user information found"]

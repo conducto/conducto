@@ -81,6 +81,7 @@ WORKER_VERSION = "v3.1.3"
 class ImageUtil:
     MANAGER_VERSION = "0.1"
     AGENT_VERSION = "0.1"
+    START_VERSION = "0.1"
 
     @staticmethod
     def get_manager_image(tag, is_test):
@@ -89,6 +90,10 @@ class ImageUtil:
     @staticmethod
     def get_agent_image(tag, is_test):
         return ImageUtil._get_image("agent", ImageUtil.AGENT_VERSION, tag, is_test)
+
+    @staticmethod
+    def get_start_image(tag, is_test):
+        return ImageUtil._get_image("start", ImageUtil.START_VERSION, tag, is_test)
 
     @staticmethod
     def _get_image(base, version, tag, is_test):
@@ -121,6 +126,11 @@ class BuildMode:
 class ManagerAppParams:
     WAIT_TIME_SECS = 45
     POLL_INTERVAL_SECS = 0.25
+
+    # limit per minute (per org)
+    LAUNCH_THROTTLE = 10
+    # total deploy/active/standby cloud programs (per org)
+    ACTIVE_LIMIT = 100
 
 
 class GwParams:

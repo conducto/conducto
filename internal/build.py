@@ -139,7 +139,7 @@ def launch_from_serialization(
     if not constants.ExecutionEnv.headless():
         # Make sure that an agent is running before we launch. A local manager
         # will start it if none are running, but cloud has no way to do that.
-        agent_utils.launch_agent(inside_container=False, token=token)
+        agent_utils.launch_agent(token=token)
 
     run(token, pipeline_id, func, use_app, use_shell, "Starting", starting)
 
@@ -206,7 +206,10 @@ def run_in_local_container(
 
     # The homedir inside the manager is /root. Mapping will be verified by manager,
     # internal to the container.
-    local_profdir = container_utils.get_external_conducto_dir(is_migration)
+    inside_container = container_utils.get_current_container_id()
+    local_profdir = container_utils.get_external_conducto_dir(
+        is_migration or inside_container
+    )
     config = api.Config()
     profile = config.default_profile
     remote_basedir = "/root/.conducto"
@@ -283,6 +286,8 @@ def run_in_local_container(
         f"CONDUCTO_OUTER_OWNER={outer_xid}",
         "-e",
         f"CONDUCTO_OS={hostdet.os_name()}",
+        "-e",
+        f"CONDUCTO_EXECUTION_ENV={constants.ExecutionEnv.MANAGER_LOCAL}",
     ]
 
     if config.get_image_tag():

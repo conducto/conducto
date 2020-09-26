@@ -11,7 +11,7 @@ import time
 import traceback
 import typing
 
-from conducto.shared import async_utils, constants, imagepath
+from conducto.shared import async_utils, constants, imagepath, types as t
 import conducto
 from . import dockerfile as dockerfile_mod, names
 
@@ -43,8 +43,8 @@ def relpath(path):
 class Status:
     PENDING = "pending"
     QUEUED = "queued"
-    PULLING = "pulling"
     CLONING = "cloning"
+    PULLING = "pulling"
     BUILDING = "building"
     INSTALLING = "installing"
     COPYING = "copying"
@@ -56,8 +56,8 @@ class Status:
     order = [
         PENDING,
         QUEUED,
-        PULLING,
         CLONING,
+        PULLING,
         BUILDING,
         INSTALLING,
         COPYING,
@@ -310,9 +310,13 @@ class Image:
             if not self.context:
                 self.context = repo_root
 
-            # In EXTERNAL mode, copy_repo=True should attempt to share the Git root
-            # according to its origin url.
-            if repo_url and CONST_EE.value() == CONST_EE.EXTERNAL:
+            # In non-headless (headful?) EXTERNAL mode, copy_repo=True should attempt to
+            # share the Git root according to its origin url.
+            if (
+                repo_url
+                and CONST_EE.value() == CONST_EE.EXTERNAL
+                and not CONST_EE.headless()
+            ):
                 sharename = imagepath.Path._sanitize_git_url(repo_url)
                 Image.share_directory(sharename, repo_root)
 
@@ -495,12 +499,6 @@ class Image:
         if named_shares:
             compare = result.to_docker_host_path()
 
-            dirsettings = conducto.api.dirconfig_detect(p)
-            if dirsettings and "registered" in dirsettings:
-                name = dirsettings["registered"]
-                path = dirsettings["dir-path"]
-                result = result.mark_named_share(name, path)
-
             # iterate through named shares looking for a match in this org
             conf = conducto.api.Config()
             shares = conf.get_named_share_mapping(conf.default_profile)
@@ -619,6 +617,17 @@ class Image:
             if callback:
                 await callback(Status.PENDING, Status.DONE, self.history[-1])
 
+        # Clone the repo if needed
+        if self.needs_cloning():
+            async with self._new_status(Status.CLONING, callback) as st:
+                if force_rebuild or not self._clone_complete():
+                    await callback()
+                    out, err = await self._clone()
+                    st.finish(out, err)
+                else:
+                    st.finish("Using cached clone")
+        yield
+
         # Pull the image if needed
         if self.image and "/" in self.image:
             async with self._new_status(Status.PULLING, callback) as st:
@@ -630,17 +639,6 @@ class Image:
                     st.finish(out, err)
                 else:
                     st.finish("Image already pulled")
-        yield
-
-        # Clone the repo if needed
-        if self.needs_cloning():
-            async with self._new_status(Status.CLONING, callback) as st:
-                if force_rebuild or not self._clone_complete():
-                    await callback()
-                    out, err = await self._clone()
-                    st.finish(out, err)
-                else:
-                    st.finish("Using cached clone")
         yield
 
         # Build the image if needed
@@ -691,9 +689,15 @@ class Image:
                 out, err = await self._push()
                 st.finish(out, err)
 
-        self.history.append(HistoryEntry(Status.DONE, finish=True))
+        self._mark_done()
         if callback:
             await callback(Status.DONE, Status.DONE, self.history[-1])
+
+    def _mark_done(self):
+        if self.history and self.history[-1].end is None:
+            self.history[-1].finish()
+        if not self.history or self.history[-1].status != Status.DONE:
+            self.history.append(HistoryEntry(Status.DONE, finish=True))
 
     async def _image_exists(self, image):
         try:
@@ -744,7 +748,7 @@ class Image:
 
     def _get_clone_dest(self):
         return constants.ConductoPaths.git_clone_dest(
-            pipeline_id=self._pipeline_id, url=self.copy_url, branch=self.copy_branch,
+            pipeline_id=self._pipeline_id, url=self.copy_url, branch=self.copy_branch
         )
 
     def _get_clone_lock(self, dest):
@@ -765,35 +769,53 @@ class Image:
         dest = self._get_clone_dest()
         return dest in Image._COMPLETED_CLONES
 
-    async def _get_clone_url(self):
+    async def _clone(self):
         from conducto.integrations import git
 
-        return await async_utils.eval_in_thread(git.url, self.copy_url)
-
-    async def _clone(self):
         # Only one clone() can run at a time on a single directory
         dest = self._get_clone_dest()
-        async with self._get_clone_lock(dest):
-            # headless builds need to git clone
-            url = await self._get_clone_url()
+        real_url = git.clone_url(self.copy_url)
+        fake_url = git.clone_url(self.copy_url, token=t.Token("{__conducto_token__}"))
 
+        async with self._get_clone_lock(dest):
+            outputs = []
             if os.path.exists(dest):
-                out1, err1 = await async_utils.run_and_check("git", "-C", dest, "fetch")
-                out2, err2 = await async_utils.run_and_check(
-                    "git", "-C", dest, "reset", "--hard", f"origin/{self.copy_branch}"
+                await async_utils.run_and_check(
+                    "git", "-C", dest, "config", "remote.origin.url", real_url
                 )
-                out = b"\n\n".join(o for o in [out1, out2] if o)
-                err = b"\n\n".join(e for e in [err1, err2] if e)
+                outputs.append(
+                    await async_utils.run_and_check("git", "-C", dest, "fetch")
+                )
+                outputs.append(
+                    await async_utils.run_and_check(
+                        "git",
+                        "-C",
+                        dest,
+                        "reset",
+                        "--hard",
+                        f"origin/{self.copy_branch}",
+                    )
+                )
             else:
-                out, err = await async_utils.run_and_check(
-                    "git",
-                    "clone",
-                    "--single-branch",
-                    "--branch",
-                    self.copy_branch,
-                    url,
-                    dest,
+                outputs.append(
+                    await async_utils.run_and_check(
+                        "git",
+                        "clone",
+                        "--single-branch",
+                        "--branch",
+                        self.copy_branch,
+                        real_url,
+                        dest,
+                    )
                 )
+
+        outputs.append(
+            await async_utils.run_and_check(
+                "git", "-C", dest, "config", "remote.origin.url", fake_url,
+            )
+        )
+        out = b"\n\n".join(o for o, e in outputs if o)
+        err = b"\n\n".join(e for o, e in outputs if e)
 
         # Mark that this has been finished
         Image._COMPLETED_CLONES.add(dest)

@@ -81,7 +81,7 @@ def get_param(payload, param, default=None):
     return default
 
 
-def start_container(payload, live):
+def start_container(payload, live, token):
     import random
     from rich.console import Console
 
@@ -142,6 +142,15 @@ def start_container(payload, live):
 
     subprocess.Popen(command, shell=True)
     time.sleep(1)
+    if not live:
+        for internal in image["path_map"].values():
+            if internal == constants.ConductoPaths.COPY_LOCATION:
+                execute_in(
+                    container_name,
+                    f"sed -i 's/{{__conducto_token__}}/{token}/' {internal}/.git/config || true",
+                )
+                break
+
     return container_name
 
 
@@ -355,7 +364,7 @@ async def _debug(id, node, live, timestamp):
             )
             sys.exit(1)
 
-    container_name = start_container(payload, live)
+    container_name = start_container(payload, live, token)
     if not live:
         print_editor_commands(container_name)
     dump_command(container_name, get_param(payload, "commandSummary"), live)

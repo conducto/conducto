@@ -143,6 +143,16 @@ class Pipeline:
             # TODO: think about error
             pass
 
+    def setcheck_runthrottle(
+        self, pipeline_id: t.PipelineId, token: t.Token = None,
+    ):
+        headers = api_utils.get_auth_headers(token)
+        response = request_utils.post(
+            self.url + f"/program/program/{pipeline_id}/setcheck-runthrottle",
+            headers=headers,
+        )
+        return api_utils.get_data(response)
+
     def get_history(self, params: dict, token: t.Token = None):
         headers = api_utils.get_auth_headers(token)
         response = request_utils.get(

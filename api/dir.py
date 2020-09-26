@@ -2,7 +2,7 @@ import typing
 import json
 import time
 from .. import api
-from conducto.shared import types as t, request_utils, exceptions
+from conducto.shared import types as t, request_utils
 from http import HTTPStatus as hs
 from . import api_utils
 
@@ -56,10 +56,13 @@ class Dir:
 
         response = request_utils.get(self.url + f"/dir/user/{user_id}", headers=headers)
 
-        if response.status_code == 404:
-            raise exceptions.ClientError(
-                status_code=404,
-                message=f"No user information found.  Please complete registration at {self.url}/app",
+        if response.status_code == hs.NOT_FOUND:
+            message = f"No user information found.  Please complete registration at {self.url}/app"
+            raise api_utils.InvalidResponse(
+                message,
+                status_code=response.status_code,
+                url=response.url,
+                content_type=None,
             )
         return api_utils.get_data(response)
 
@@ -76,10 +79,13 @@ class Dir:
 
         response = request_utils.get(self.url + f"/dir/org/by_user", headers=headers)
 
-        if response.status_code == 404:
-            raise exceptions.ClientError(
-                status_code=404,
-                message=f"No user information found.  Please complete registration at {self.url}/app",
+        if response.status_code == hs.NOT_FOUND:
+            message = f"No user information found.  Please complete registration at {self.url}/app"
+            raise api_utils.InvalidResponse(
+                message,
+                status_code=response.status_code,
+                url=response.url,
+                content_type=None,
             )
         return api_utils.get_data(response)
 

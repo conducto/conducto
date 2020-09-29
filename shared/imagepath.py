@@ -137,18 +137,9 @@ class Path:
                 # host `/` is mounted at `/mnt/external`
                 return Path.PATH_PREFIX + hostpath
         else:
-            import conducto.internal.host_detection as hostdet
+            return self.to_worker_mount()
 
-            hostpath = self.to_docker_host()
-
-            # this results in a unix host path ...
-            if hostdet.is_wsl1() or hostdet.is_windows():
-                # ... or a docker-friendly windows path
-                hostpath = self._windows_docker_path(hostpath)
-
-            return hostpath
-
-    def to_worker_mount(self, *, pipeline_id=None, gitroot=None) -> str:
+    def to_worker_mount(self) -> str:
         # This converts a path from a serialization to what a worker will see when
         # running it. It will return a valid path supposing that the host machine's
         # directory structure matches what was at the point of pipeline creation.  No

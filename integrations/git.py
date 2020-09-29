@@ -90,7 +90,7 @@ def get_log_diff(
     formatted_lines = []
     for line in lines:
         parts = line.split("|")
-        name = parts[2].replace("[", "\[").replace("]", "\]")
+        name = parts[2].replace("[", "\\[").replace("]", "\\]")
         refs = f"_{parts[3]}_" if len(parts[3]) else ""
         if log_type == LogType.MARKDOWN:
             formatted_line = (
@@ -160,7 +160,7 @@ def _parse_github_url(url):
      - git@github.com-user/conducto/super.git
     Look for "github.com/{owner}/{repo}.git" or "github.com:{owner}/{repo}.git" or "github.com-user:{owner}/{repo}.git"
     """
-    m = re.search("github\.com(?:-.*?)?[/:]([^/]+)/(.+?)\.git$", url)
+    m = re.search(r"github\.com(?:-.*?)?[/:]([^/]+)/(.+?)\.git$", url)
     owner, repo = m.group(1, 2)
     return owner, repo
 

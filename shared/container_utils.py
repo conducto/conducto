@@ -140,17 +140,21 @@ def get_current_container_id():
     # If, and only if, we find docker as a cgroup owner, parse the
     # container id from the ownership list.
     try:
+        # Inside a container will look something like this:
+        # 1:name=systemd:/docker/8780f2179bc7cbff4cc0972db8cffc2acf107ad06a11820c74f0165f21b98cbf
+        # Outside, something like this:
+        # 1:name=systemd:/init.scope
         with open("/proc/1/cgroup") as cgroup:
-            first_resource = cgroup.read().splitlines()[-1]
-            # Inside a container will look something like this:
-            # 1:name=systemd:/docker/8780f2179bc7cbff4cc0972db8cffc2acf107ad06a11820c74f0165f21b98cbf
-            # Outside, something like this:
-            # 1:name=systemd:/init.scope
-            return (
-                first_resource.split("/")[-1].strip()
-                if "docker" in first_resource
-                else ""
-            )
+            # Different distros have different resource group orders, not all of which are
+            # expected to be owned by docker.
+            docker_lines = [
+                line for line in cgroup.read().splitlines() if "docker" in line
+            ]
+            if len(docker_lines) > 0:
+                # The docker container ID is the last token in the resource line
+                return docker_lines[0].split("/")[-1].strip()
+            # Docker doesn't own any resources, so we must not be in a container
+            return ""
     # Allow errors to bubble up, except if we don't find the cgroups for /proc/1.
     # In that case, we can't be in a container.
     except FileNotFoundError:

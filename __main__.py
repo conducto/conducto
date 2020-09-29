@@ -48,7 +48,7 @@ def show(id, app=method._get_default_app(), shell=method._get_default_shell()):
                 "This is likely because it is local to another computer."
             )
             host = pipeline["meta"].get("hostname", None)
-            if host != None:
+            if host is not None:
                 m += f"  Try waking it from '{host}' with conducto show."
             m += "  For further assistance, contact us on Slack at ConductoHQ."
 
@@ -150,7 +150,7 @@ def dump_serialization(id, outfile=None):
 
     string = gzip.decompress(base64.b64decode(serialization))
     data = json.loads(string)
-    if outfile == None:
+    if outfile is None:
         print(json.dumps(data, indent=4, sort_keys=True))
     else:
         with open(outfile, "w") as f2:

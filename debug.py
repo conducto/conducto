@@ -133,8 +133,8 @@ def start_container(payload, live, token):
 
             mount = os.path.normpath(external.to_docker_mount())
             console.print(
-                f"Mounting [bold black]{mount}[/bold black] "
-                f"at [bold black]{internal}[/bold black]"
+                f"Mounting [bold blue]{mount}[/bold blue] "
+                f"at [bold blue]{internal}[/bold blue]"
             )
             options.append(f"-v {mount}:{internal}")
 
@@ -261,15 +261,10 @@ def print_editor_commands(container_name):
 
 def start_shell(container_name, env_list):
     cmd = ["docker", "exec", "-it", *env_list, container_name]
-    subp = subprocess.Popen(
-        ["docker", "exec", container_name, "/bin/sh"], stdout=NULL, stderr=NULL
-    )
-    subp.wait()
-    has_bash = subp.returncode == 0
-    if has_bash:
-        subprocess.call(cmd + ["/bin/bash"])
-    else:
-        subprocess.call(cmd + ["/bin/sh"])
+    # Container debug should use the same shell that the worker uses, so scripts and commands
+    # behave identically. Currently, the worker uses "/bin/sh" as a result of the
+    # asyncio.create_subprocess_shell implementation.
+    subprocess.call(cmd + ["/bin/sh"])
     subprocess.call(["docker", "kill", container_name])
     subprocess.call(["docker", "rm", container_name], stdout=NULL, stderr=NULL)
 

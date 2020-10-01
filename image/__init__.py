@@ -496,9 +496,10 @@ class Image:
         else:
             result = imagepath.Path.from_localhost(p)
 
-        if named_shares:
-            compare = result.to_docker_host_path()
+        # this is needful for windows & wsl1 (a no-op otherwise)
+        result = result.to_docker_host_path()
 
+        if named_shares:
             # iterate through named shares looking for a match in this org
             conf = conducto.api.Config()
             shares = conf.get_named_share_mapping(conf.default_profile)
@@ -506,7 +507,7 @@ class Image:
             for name, paths in shares.items():
                 for path in paths:
                     path = imagepath.Path.from_dockerhost(path)
-                    if compare.is_subdir_of(path):
+                    if result.is_subdir_of(path):
                         # We have recognized this as a share, so annotate result
                         # with the discovered path.
                         result = result.mark_named_share(name, path.to_docker_host())
@@ -838,7 +839,7 @@ class Image:
         build_args = []
         if self.docker_build_args is not None:
             for k, v in self.docker_build_args.items():
-                build_args += ["--build-arg", "{}={}".format(k, v)]
+                build_args += ["--build-arg", f"{k}={v}"]
 
         out, err = await async_utils.run_and_check(
             "docker",

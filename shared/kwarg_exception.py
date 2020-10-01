@@ -132,7 +132,7 @@ class KwargException(Exception):
             return message
 
         tab = " " * 4
-        sep = "\n{}".format(tab)
+        sep = f"\n{tab}"
         indented = lambda t: tab + sep.join(pprint.pformat(t).splitlines())
 
         # Until Python 3.6, kwargs does not maintain specification order
@@ -169,7 +169,7 @@ def appendContext(exc, **kwargs):
 
     """
     if not isinstance(exc, BaseException):
-        msg = "exc must be an exception type. Found: {}".format(type(exc))
+        msg = f"exc must be an exception type. Found: {type(exc)}"
         raise TypeError(msg)
 
     if not hasattr(exc, EXC_CTX_KEY):

@@ -60,9 +60,7 @@ class Color:
         try:
             return Color.MAP[color.lower()]
         except KeyError:
-            msg = "Unrecognized color code: {}. Known colors are: {}".format(
-                color, Color.MAP
-            )
+            msg = f"Unrecognized color code: {color}. Known colors are: {Color.MAP}"
             raise Exception(msg)
 
 
@@ -417,7 +415,7 @@ class base_logger(object):
 
             # Add timestamp
             t = time.time()
-            millis = ("%.3f" % (t % 1))[2:]
+            millis = f"{t % 1:.3f}"[2:]
             ts = time.strftime("%m/%d/%Y %H:%M:%S", time.localtime(t)) + "." + millis
             if not plain and timecolor is not None:
                 tsStr = format(ts, timecolor)
@@ -481,7 +479,7 @@ class base_logger(object):
                 else:
                     # In fixed-width mode, truncate the file name or add padding to fit
                     # the assigned space.
-                    fileDisplay = "{:<12s}".format(f[:12])
+                    fileDisplay = f"{f[:12]:<12s}"
 
                 if nofw:
                     # In non-fixed-width mode, display the entire method name, no padding
@@ -489,22 +487,22 @@ class base_logger(object):
                 else:
                     # In fixed-width mode, truncate the method name or add padding to fit
                     # the assigned space. Right align to be aesthetic.
-                    methodDisplay = "{:>12s}".format(method[:12])
+                    methodDisplay = f"{method[:12]:>12s}"
 
                 # Finalize display of line number.
                 if nofw:
                     # In non-fixed-width mode, display the line number, no padding.
-                    lineDisplay = "{:d}".format(line)
+                    lineDisplay = f"{line:d}"
                 else:
                     # In fixed-width mode, pad all line numbers to 4 places and hope that
                     # we never see a line >= 10000.
-                    lineDisplay = "{:4d}".format(line)
+                    lineDisplay = f"{line:4d}"
 
-                frameMarkUp = "[{}".format(fileDisplay)
+                frameMarkUp = f"[{fileDisplay}"
                 if not noline:
-                    frameMarkUp += ":{}".format(lineDisplay)
+                    frameMarkUp += f":{lineDisplay}"
                 if not nomethod:
-                    frameMarkUp += ":{}".format(methodDisplay)
+                    frameMarkUp += f":{methodDisplay}"
                 frameMarkUp += "]"
 
                 if not plain and framecolor is not None:
@@ -516,7 +514,7 @@ class base_logger(object):
                 scaffoldPieces.append(frameStr)
 
             if level is not None and not nolevel:
-                scaffoldPieces.append("[{:<5s}]".format(base_logger.NAMES[level]))
+                scaffoldPieces.append(f"[{base_logger.NAMES[level]:<5s}]")
 
             # Join the scaffold pieces
             scaffold.write(" ".join(scaffoldPieces))
@@ -753,15 +751,13 @@ def addVerbosity(parser):
         default = getLogLevel()
 
         grp = parser.add_option_group(
-            "Verbosity control. Log levels: {}".format(base_logger.NAMES)
+            f"Verbosity control. Log levels: {base_logger.NAMES}"
         )
         grp.add_option(
             "--loglevel",
             action="callback",
             callback=setr,
-            help="Set logging verbosity by number or keyword. default: {}.".format(
-                default
-            ),
+            help=f"Set logging verbosity by number or keyword. default: {default}.",
             dest="loglevel",
             type=str,
             default=default,
@@ -821,14 +817,12 @@ def addVerbosity(parser):
         default = getLogLevel()
 
         grp = parser.add_argument_group(
-            "Verbosity control. Log levels: {}".format(base_logger.NAMES)
+            f"Verbosity control. Log levels: {base_logger.NAMES}"
         )
         grp.add_argument(
             "--loglevel",
             action=Setr,
-            help="Set logging verbosity by number or keyword. default: {}.".format(
-                default
-            ),
+            help=f"Set logging verbosity by number or keyword. default: {default}.",
             dest="loglevel",
             default=default,
         )
@@ -840,7 +834,7 @@ def addVerbosity(parser):
         )
     else:
         raise Exception(
-            "Cannot add verbosity options to parser of type: {}".format(type(parser))
+            f"Cannot add verbosity options to parser of type: {type(parser)}"
         )
 
 

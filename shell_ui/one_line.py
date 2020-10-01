@@ -170,8 +170,8 @@ class KeyMode(object):
 
     def help(self):
         if self.msg and self.help_clauses:
-            return "[{} {}]".format(self.msg, "; ".join(self.help_clauses))
+            return f"[{self.msg} {'; '.join(self.help_clauses)}]"
         elif self.msg:
-            return "[{}]".format(self.msg)
+            return f"[{self.msg}]"
         else:
-            return "[{}]".format("; ".join(self.help_clauses))
+            return f"[{'; '.join(self.help_clauses)}]"

@@ -301,7 +301,12 @@ def profile_start_agent(id=None):
 
     token = api.Auth().get_token_from_shell()
 
-    agent_utils.launch_agent(token=token)
+    start_status = agent_utils.launch_agent(token=token)
+
+    if start_status.startswith("running"):
+        print(f"Agent for profile {co.api.Config().default_profile} is already running")
+    else:
+        print(f"Agent launched for profile {co.api.Config().default_profile}")
 
 
 def profile_stop_agent(id=None):

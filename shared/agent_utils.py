@@ -1,4 +1,3 @@
-import hashlib
 import os
 import re
 import pipes
@@ -14,15 +13,15 @@ def name():
     return f"conducto_agent_h{host_id}_p{profile_id}"
 
 
-def launch_agent(check_for_old=True, token=None):
+def launch_agent(check_for_old=True, token=None) -> str:
     inside_container = container_utils.get_current_container_id()
     container_name = name()
 
     running = container_utils.get_running_containers()
     if container_name in running:
-        return
+        return "running"
     if check_for_old and f"{container_name}-old" in running:
-        return
+        return "running-old"
 
     # TODO remove this check for prehost name around oct 2020
     host_id = co.api.Config().get_host_id()
@@ -150,9 +149,9 @@ def launch_agent(check_for_old=True, token=None):
     # second
     running = container_utils.get_running_containers()
     if container_name in running:
-        return
+        return "running"
     if check_for_old and f"{container_name}-old" in running:
-        return
+        return "running-old"
 
     try:
         client_utils.subprocess_run(
@@ -166,3 +165,5 @@ def launch_agent(check_for_old=True, token=None):
             pass
         else:
             raise
+
+    return "started"

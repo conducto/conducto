@@ -112,7 +112,7 @@ def get_auth_headers(token: t.Token = None, refresh=True, force_refresh=False):
             )
     return {
         "content-type": "application/json",
-        "Authorization": "Bearer {}".format(token),
+        "Authorization": f"Bearer {token}",
     }
 
 

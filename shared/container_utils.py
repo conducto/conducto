@@ -47,7 +47,7 @@ def get_current_container_mounts():
         stderr=subprocess.DEVNULL,
     )
     mount_data, err = subp.communicate()
-    log.log(f"Got {mount_data} {err}")
+    log.debug(f"Got {mount_data} {err}")
     if subp.returncode == 0:
         return json.loads(mount_data)
     else:
@@ -102,7 +102,7 @@ def get_external_conducto_dir(from_container):
                 source = source[len("/host_mnt") :]
             if result.startswith(mount["Destination"]):
                 result = result.replace(mount["Destination"], source, 1)
-                log.log(f"Mounting to {result}")
+                log.debug(f"Mounting to {result}")
                 break
     else:
         result = imagepath.Path.from_localhost(result)

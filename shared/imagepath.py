@@ -156,6 +156,17 @@ class Path:
 
         return hostpath
 
+    @staticmethod
+    def to_unix_relpath(parent, child):
+        """
+        Compute the relative path assuming that `child.is_subdir_of(parent)`
+        returns True.
+        """
+
+        ptail, ctail = Path.find_last_common_mark(parent, child)
+        assert ctail.startswith(ptail)
+        return ctail[len(ptail) :].lstrip(child._pathsep).replace(child._pathsep, "/")
+
     def to_docker_host(self) -> str:
         if self._type == "dockerhost":
             return self._value
@@ -285,6 +296,23 @@ class Path:
         self._marks = [(0, rootdict)]
         return self
 
+    @staticmethod
+    def find_last_common_mark(path1, path2):
+        path1_tail = path1._value
+        path2_tail = path2._value
+        for path2_idx, path2_mark in reversed(path2._marks):
+            found_match = False
+            for path1_idx, path1_mark in reversed(path1._marks):
+                if path2_mark == path1_mark:
+                    found_match = True
+                    break
+            if found_match:
+                path1_tail = path1._value[path1_idx:].lstrip(path1._pathsep)
+                path2_tail = path2._value[path2_idx:].lstrip(path2._pathsep)
+                break
+
+        return path1_tail, path2_tail
+
     def is_subdir_of(self, parent: "Path") -> bool:
         import conducto.internal.host_detection as hostdet
 
@@ -303,18 +331,7 @@ class Path:
         ), "cannot compare paths with different slashes"
 
         # find common marks -- either gitroot or shares -- and only compare tails
-        self_tail = self._value
-        parent_tail = parent._value
-        for parent_idx, parent_mark in reversed(parent._marks):
-            found_match = False
-            for self_idx, self_mark in reversed(self._marks):
-                if parent_mark == self_mark:
-                    found_match = True
-                    break
-            if found_match:
-                self_tail = self._value[self_idx:].lstrip(self._pathsep)
-                parent_tail = parent._value[parent_idx:].lstrip(parent._pathsep)
-                break
+        self_tail, parent_tail = Path.find_last_common_mark(self, parent)
 
         if self._pathsep == "\\":
             import ntpath
@@ -507,7 +524,7 @@ class Path:
             )
             path = input("path:  ")
             if path == "":
-                raise RuntimeError("error shareing directories")
+                raise RuntimeError("error sharing directories")
             conf.register_named_share(conf.default_profile, parsed.name, path)
 
             sharepath = Path.from_dockerhost(path)

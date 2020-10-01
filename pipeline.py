@@ -37,7 +37,7 @@ def load_node(**kwargs):
     elif kwargs["type"] == "Parallel":
         return Parallel(**kwargs)
     else:
-        raise TypeError("Type {} not a valid node type".format(kwargs["type"]))
+        raise TypeError(f"Type {kwargs['type']} not a valid node type")
 
 
 class Node:
@@ -932,12 +932,10 @@ class Exec(Node):
                     if not path.is_subdir_of(external):
                         continue
 
-                    path = path.to_worker_mount()
-                    external = external.to_worker_mount()
+                    relative = imagepath.Path.to_unix_relpath(external, path)
 
                     # If so, calculate the corresponding internal path
                     internal = os.path.normpath(internal.rstrip("/"))
-                    relative = os.path.relpath(path, external)
                     new_path = os.path.join(internal, relative)
 
                     # As a convenience, if we `docker_auto_workdir` then we know the workdir and

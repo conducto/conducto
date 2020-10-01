@@ -172,7 +172,7 @@ class _Args(object):
         for dest, arguments in sorted(byDest.items()):
             log.debug("Adding mutually exclusive group:", dest)
             grp = parser.add_argument_group(
-                destHelp.get(dest, "Options for specifying {}".format(dest))
+                destHelp.get(dest, f"Options for specifying {dest}")
             )
             exgrp = grp.add_mutually_exclusive_group()
 
@@ -278,14 +278,14 @@ class _Args(object):
             if log.info.applies():
                 # Only provide more info if more verbose help is requested
                 if arg.help:
-                    msgParts.add("{}({})".format(_prettyFuncName(src), msg))
+                    msgParts.add(f"{_prettyFuncName(src)}({msg})")
                 else:
                     msgParts.add(_prettyFuncName(src))
 
         msgParts = sorted(msgParts)
 
         if arg.default not in (None, NO_DEFAULT, CALLEE_ARG, MANUAL_ARG):
-            msgParts = ["default: {}".format(arg.default)] + msgParts
+            msgParts = [f"default: {arg.default}"] + msgParts
 
         if not msgParts:
             return arg.help
@@ -306,7 +306,7 @@ def _prettyFuncName(func):
     if func.__module__ == "__main__":
         name = func.__name__
     else:
-        name = "{}.{}".format(func.__module__, func.__name__)
+        name = f"{func.__module__}.{func.__name__}"
     return log.format(name, color=log.Color.GRAY)
 
 
@@ -321,9 +321,7 @@ class _FuncArgs(_Args):
         super(_FuncArgs, self).__init__()
 
     def __repr__(self):
-        return "<_FuncArgs: {}({})>".format(
-            self.function.__name__, ", ".join(self.args)
-        )
+        return f"<_FuncArgs: {self.function.__name__}({', '.join(self.args)})>"
 
     @staticmethod
     def FromFunction(function):
@@ -473,23 +471,23 @@ class Base(object):
         if self.realkey is not None:
             return self.realkey
         else:
-            return "--{}".format(self.name)
+            return f"--{self.name}"
 
     def __repr__(self):
-        return "<{}: {}>".format(self.__class__.__name__, self.pretty())
+        return f"<{self.__class__.__name__}: {self.pretty()}>"
 
     def pretty(self):
         prettyParts = [self.name]
         if self.default != NO_DEFAULT:
-            prettyParts.append("default={}".format(self.default))
+            prettyParts.append(f"default={self.default}")
         if self.help is not None:
-            prettyParts.append("help={}".format(self.help))
+            prettyParts.append(f"help={self.help}")
         if self.source is not None:
-            prettyParts.append("source={}".format(self.source))
+            prettyParts.append(f"source={self.source}")
         if self.dest is not None:
-            prettyParts.append("dest={}".format(self.dest))
+            prettyParts.append(f"dest={self.dest}")
         if self.type is not None:
-            prettyParts.append("type={}".format(self.type))
+            prettyParts.append(f"type={self.type}")
         return ", ".join(prettyParts)
 
     def formatArg(self, value, printDefaults=False, forceUserSpecified=False):
@@ -504,7 +502,7 @@ class Base(object):
         base = self.getKey()
 
         if (value != self.default) or printDefaults:
-            return "%s=%s" % (base, pipes.quote(self.formatAndValidateCL(value)))
+            return f"{base}={pipes.quote(self.formatAndValidateCL(value))}"
         else:
             return ""
 
@@ -516,12 +514,12 @@ class Base(object):
                 self.name,
                 "was given value:",
                 value,
-                "({})".format(type(value)),
+                f"({type(value)})",
                 ", is serialized to",
                 retVal,
                 " but it deserialized to",
                 parsed,
-                "({})".format(repr(parsed)),
+                f"({repr(parsed)})",
             )
         return retVal
 
@@ -535,7 +533,7 @@ class Base(object):
         try:
             return t.deserialize(self.type or str, value)
         except ValueError as e:
-            e.args += ("parameter: '{}'".format(self.name),)
+            e.args += (f"parameter: '{self.name}'",)
             raise e
 
     def helpMsg(self):

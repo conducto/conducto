@@ -43,7 +43,7 @@ def makeyyyymmnodes(baseNode, yyyymms, makeLeafNode=False, reverse=True, nodeTyp
         if len(values) < 10:
             return yyyymm
         else:
-            return "%s/%s" % (str(yyyymm)[:4], yyyymm)
+            return f"{str(yyyymm)[:4]}/{yyyymm}"
 
     return makenestednodes(
         baseNode,
@@ -64,9 +64,9 @@ def makedatenodes(baseNode, dates, makeLeafNode=False, reverse=True, nodeType=No
         if len(values) <= 10:
             return str(date)
         elif len(yearMonths) < 10:
-            return "%s/%s" % (str(date)[:7], str(date))
+            return f"{str(date)[:7]}/{str(date)}"
         else:
-            return "%s/%s/%s" % (str(date)[:4], str(date)[:7], str(date))
+            return f"{str(date)[:4]}/{str(date)[:7]}/{str(date)}"
 
     return makenestednodes(
         baseNode,

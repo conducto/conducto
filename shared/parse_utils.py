@@ -36,16 +36,16 @@ def duration_string(duration) -> float:
     pattern = re.compile(r"([\d.]+)([a-zµμ]+)")
     matches = pattern.findall(duration)
     if not len(matches):
-        raise ValueError("Invalid duration {}".format(duration))
+        raise ValueError(f"Invalid duration {duration}")
 
     total = 0
 
     for (value, unit) in matches:
         if unit not in units:
-            raise ValueError("Unknown unit {} in duration {}".format(unit, duration))
+            raise ValueError(f"Unknown unit {unit} in duration {duration}")
         try:
             total += float(value) * units[unit]
         except Exception:
-            raise ValueError("Invalid value {} in duration {}".format(value, duration))
+            raise ValueError(f"Invalid value {value} in duration {duration}")
 
     return total / _second_size

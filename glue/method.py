@@ -184,9 +184,9 @@ class Wrapper(object):
                 parts.append(f"--no-{k}")
                 continue
             if client_utils.isiterable(v):
-                parts += ["--{}={}".format(k, t.List.join(map(t.serialize, v)))]
+                parts += [f"--{k}={t.List.join(map(t.serialize, v))}"]
             else:
-                parts += ["--{}={}".format(k, t.serialize(v))]
+                parts += [f"--{k}={t.serialize(v)}"]
         quoted = [shlex.quote(part) for part in parts]
 
         serialized = f"__conducto_path:{ctxpath.linear()}:endpath__"
@@ -236,9 +236,9 @@ class Wrapper(object):
         # and not all parameters are present.
         unknownKeys = set(argVars) - kwargs.keys()
         if unknownKeys:
-            msg = ["Missing argments for: {}".format(self.pretty())]
+            msg = [f"Missing argments for: {self.pretty()}"]
             for key in unknownKeys:
-                msg.append("  Please specify: {}".format(log.format(key, color="r")))
+                msg.append(f"  Please specify: {log.format(key, color='r')}")
             # msg.append("Current state:")
             # msg.append(state.pretty(printif=lambda sv: sv.name in args.keys()))
             raise NodeMethodError("\n".join(msg))

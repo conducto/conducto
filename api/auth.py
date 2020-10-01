@@ -128,7 +128,10 @@ class Auth:
                         self.config.set_profile_general(
                             self.config.default_profile, "token", new_token
                         )
-                    return new_token
+                        token = new_token
+                    # now, we continue with the refreshed token possibly
+                    # writing a brand new profile (e.g. from the copied
+                    # `start-agent` command from the app)
 
         # If no token by now, prompt for login.
         if not token:

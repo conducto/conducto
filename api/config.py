@@ -225,10 +225,7 @@ commands:
                 if new_token is None:
                     raise PermissionError("Expired token in Config.TOKEN")
                 if Config.TOKEN != new_token:
-                    claims = auth.get_unverified_claims(new_token)
-                    log.debug(
-                        f'Just refreshed token from Config.TOKEN with new expiration time of {time.ctime(claims["exp"])}'
-                    )
+                    Config._log_new_expiration_time(auth, new_token)
                     Config.TOKEN = new_token
             return Config.TOKEN
 
@@ -242,10 +239,7 @@ commands:
                 if new_token is None:
                     raise PermissionError("Expired token in CONDUCTO_TOKEN")
                 if os.environ["CONDUCTO_TOKEN"] != new_token:
-                    claims = auth.get_unverified_claims(new_token)
-                    log.debug(
-                        f'Just refreshed token from CONDUCTO_TOKEN with new expiration time of {time.ctime(claims["exp"])}'
-                    )
+                    Config._log_new_expiration_time(auth, new_token)
                     os.environ["CONDUCTO_TOKEN"] = new_token
             return os.environ["CONDUCTO_TOKEN"]
 
@@ -263,10 +257,7 @@ commands:
                 if new_token is None:
                     raise PermissionError("Expired token in config")
                 if token != new_token:
-                    claims = auth.get_unverified_claims(new_token)
-                    log.debug(
-                        f'Just refreshed token from config with new expiration time of {time.ctime(claims["exp"])}'
-                    )
+                    Config._log_new_expiration_time(auth, new_token)
                     self.set_profile_general(self.default_profile, "token", new_token)
                 return new_token
             return token
@@ -445,16 +436,23 @@ commands:
         profile = self.get_profile_id(url, org_id, email)
         profile_sections = list(self.profile_sections())
 
-        profdir = constants.ConductoPaths.get_profile_base_dir(profile=profile)
-        conffile = os.path.join(profdir, "config")
-        profconfig = configparser.ConfigParser()
+        # read existing or blank profile
+        profconfig = self.get_profile_config(profile)
+
         if not profconfig.has_section("general"):
             profconfig.add_section("general")
         profconfig.set("general", "url", url)
         profconfig.set("general", "org_id", org_id)
         profconfig.set("general", "email", email)
         profconfig.set("general", "token", token)
-        profconfig.set("general", "host_id", self._generate_host_id(profile))
+        try:
+            profconfig.get("general", "host_id")
+        except configparser.NoOptionError:
+            # only generate (a new) host_id if there is not one currently
+            profconfig.set("general", "host_id", self._generate_host_id(profile))
+
+        profdir = constants.ConductoPaths.get_profile_base_dir(profile=profile)
+        conffile = os.path.join(profdir, "config")
         os.makedirs(profdir, exist_ok=True)
         self._atomic_write_config(profconfig, conffile)
 
@@ -506,6 +504,14 @@ commands:
         config = configparser.ConfigParser()
         config.read(filename)
         return config
+
+    @staticmethod
+    def _log_new_expiration_time(auth, token):
+        claims = auth.get_unverified_claims(token)
+        expiration_time = time.ctime(claims["exp"])
+        log.debug(
+            f"Just refreshed token from Config.TOKEN with new expiration time of {expiration_time}"
+        )
 
 
 AsyncConfig = api_utils.async_helper(Config)

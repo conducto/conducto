@@ -143,7 +143,8 @@ def start_container(payload, live, token):
     subprocess.Popen(command, shell=True)
     time.sleep(1)
     if not live:
-        for internal in image["path_map"].values():
+        path_map = image["path_map"] or {}
+        for internal in path_map.values():
             if internal == constants.ConductoPaths.COPY_LOCATION:
                 execute_in(
                     container_name,
@@ -154,7 +155,7 @@ def start_container(payload, live, token):
     return container_name
 
 
-def dump_command(container_name, command, live):
+def dump_command(container_name, command, shell):
     # Create in-memory tar file since docker will take that on stdin with no
     # tempfile needed.
     tario = io.BytesIO()
@@ -173,7 +174,11 @@ def dump_command(container_name, command, live):
         raise RuntimeError(f"error placing cmd.conducto: ({stderr})")
 
     execute_in(container_name, f"chmod u+x /cmd.conducto")
-    print(f"Execute command by running {format('sh /cmd.conducto', color='cyan')}")
+
+    shell_alias = {"/bin/sh": "sh", "/bin/bash": "bash"}.get(shell, shell)
+    print(
+        f"Execute command by running {format(f'{shell_alias} /cmd.conducto', color='cyan')}"
+    )
 
 
 @functools.lru_cache()
@@ -230,9 +235,14 @@ def get_linux_flavor(container_name):
 
 
 def execute_in(container_name, command):
-    return subprocess.check_output(
-        f"docker exec {container_name} {command}", shell=True
+    result = subprocess.run(
+        f"docker exec {container_name} {command}",
+        shell=True,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
+    return result.stdout
 
 
 def print_editor_commands(container_name):
@@ -259,12 +269,8 @@ def print_editor_commands(container_name):
     print()
 
 
-def start_shell(container_name, env_list):
-    cmd = ["docker", "exec", "-it", *env_list, container_name]
-    # Container debug should use the same shell that the worker uses, so scripts and commands
-    # behave identically. Currently, the worker uses "/bin/sh" as a result of the
-    # asyncio.create_subprocess_shell implementation.
-    subprocess.call(cmd + ["/bin/sh"])
+def start_shell(container_name, env_list, shell):
+    subprocess.call(["docker", "exec", "-it", *env_list, container_name, shell])
     subprocess.call(["docker", "kill", container_name])
     subprocess.call(["docker", "rm", container_name], stdout=NULL, stderr=NULL)
 
@@ -362,9 +368,11 @@ async def _debug(id, node, live, timestamp):
     container_name = start_container(payload, live, token)
     if not live:
         print_editor_commands(container_name)
-    dump_command(container_name, get_param(payload, "commandSummary"), live)
 
-    start_shell(container_name, env_list)
+    shell = get_param(payload, "image", default={}).get("shell", "/bin/sh")
+
+    dump_command(container_name, get_param(payload, "commandSummary"), shell)
+    start_shell(container_name, env_list, shell)
 
 
 async def debug(id, node, timestamp=None):

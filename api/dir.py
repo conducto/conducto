@@ -141,5 +141,32 @@ class Dir:
         )
         return api_utils.get_data(response)
 
+    def create_integration_user(
+        self, token: t.Token, org_id: t.OrgId, name: str, integration_id: int
+    ):
+        response = request_utils.post(
+            f"{self.url}/dir/org/{org_id}/integration",
+            headers=api_utils.get_auth_headers(token),
+            data={"name": name, "integration_id": integration_id},
+        )
+        result = api_utils.get_data(response)
+        return result["email"], result["password"]
+
+    def delete_integration_user(
+        self, token: t.Token, org_id: t.OrgId, email: str, password: str
+    ):
+        response = request_utils.post(
+            f"{self.url}/dir/org/{org_id}/integration/delete",
+            headers=api_utils.get_auth_headers(token),
+            data={"email": email, "password": password},
+        )
+        try:
+            api_utils.get_data(response)
+        except api_utils.InvalidResponse as e:
+            if e.status_code == hs.NOT_FOUND:
+                pass
+            else:
+                raise
+
 
 AsyncDir = api_utils.async_helper(Dir)

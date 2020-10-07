@@ -1,6 +1,17 @@
 import os
 
 
+def is_windows():
+    # this method wraps host_detection since it is not packaged into all of our
+    # docker containers
+    try:
+        import conducto.internal.host_detection as hostdet
+
+        return hostdet.is_windows()
+    except ImportError:
+        return False
+
+
 def makedirs(path, mode=0o777, exist_ok=False):
     """
     Clone of os.makedirs but with owner management.
@@ -17,6 +28,9 @@ def makedirs(path, mode=0o777, exist_ok=False):
     # parents have been created they will not receive the chown post
     # processing.
     os.makedirs(path, mode, exist_ok)
+
+    if is_windows():
+        return
 
     do_set, uid, gid = outer_set()
     if do_set:
@@ -38,6 +52,8 @@ def outer_set():
 
 
 def outer_chown(path):
+    if is_windows():
+        return
     do_set, uid, gid = outer_set()
     if do_set:
         os.chown(path, uid, gid)

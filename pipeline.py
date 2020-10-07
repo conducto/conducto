@@ -609,30 +609,6 @@ class Node:
             gzip.compress(output.encode(), compresslevel=3)
         ).decode()
 
-    @staticmethod
-    def deserialize(string):
-        string = gzip.decompress(base64.b64decode(string))
-        data = json.loads(string)
-        nodes = {i["id"]: load_node(**i) for i in data["nodes"]}
-
-        for i in data["nodes"]:
-            for event, cb_literal in i.get("callbacks", []):
-                cb, cb_args = cb_literal
-                kwargs = {
-                    k: nodes[cb_args[k]] for k in cb_args.get("__node_args__", [])
-                }
-                cb = callback.base(cb, **kwargs)
-                nodes[i["id"]]._callbacks.append((event, cb))
-
-        for parent, child, name in data["edges"]:
-            nodes[parent][name] = nodes[child]
-
-        root = nodes[data["nodes"][0]["id"]]
-        root.token = data.get("token")
-        root._autorun = data.get("autorun", False)
-        root._sleep_when_done = data.get("sleep_when_done", False)
-        return root
-
     # returns a stream in topological order
     def stream(self, reverse=False):
         """

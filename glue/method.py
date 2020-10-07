@@ -30,6 +30,9 @@ CONDUCTO_ARGS = [
     "app",
     "sleep_when_done",
     "public",
+    "pipeline_id",
+    "title",
+    "doc",
 ]
 
 OPS = {"||", "&&", "!=", "==", "(", ")", "!"}
@@ -51,9 +54,7 @@ def Lazy(command_or_func, *args, **kwargs) -> pipeline.Node:
     first, **`Generate`**, runs `func(*args, **kwargs)` and prints out the
     resulting pipeline. The second, **`Execute`**, imports that pipeline into the
     current one and runs it.
-
     :param command_or_func: A shell command to execute or a python callable
-
     If a Python callable is specified for the command the `args` and `kwargs`
     are serialized and a `conducto` command line is constructed to launch the
     function for that node in the pipeline.
@@ -584,7 +585,9 @@ def _get_state(callFunc, remainder):
         called_func_returns_node = False
 
     parser.add_argument("--profile")
+
     if called_func_returns_node:
+        parser.add_argument("--pipeline_id")
         _add_argparse_options_for_node(parser)
 
     args, kwargs = _parse_args(parser, remainder)
@@ -633,6 +636,8 @@ def _add_argparse_options_for_node(parser):
     _bool_mutex_group(parser, "app", default=_get_default_app())
     parser.add_argument("--sleep-when-done", action="store_true")
     parser.add_argument("--public", action="store_true")
+    parser.add_argument("--title")
+    parser.add_argument("--doc")
 
 
 def _parse_args(parser, argv):
@@ -806,12 +811,20 @@ def _parse_config_args_from_cmdline(argv):
             basekey = key[2:].replace("-", "_")
 
             if basekey in CONDUCTO_ARGS:
-                if value is not None:
-                    raise ValueError(
-                        f"Invalid argument '{arg}'. --{key} takes no argument."
-                    )
-                conducto_kwargs[basekey] = True
-                i += 1
+                if basekey not in ["pipeline_id", "title", "doc"]:
+                    if value is not None:
+                        raise ValueError(
+                            f"Invalid argument '{arg}'. --{key} takes no argument."
+                        )
+                    conducto_kwargs[basekey] = True
+                    i += 1
+                elif value is None:
+                    value = argv[i + 1]
+                    conducto_kwargs[basekey] = value
+                    i += 2
+                else:
+                    conducto_kwargs[basekey] = value
+                    i += 1
             elif basekey in ("no_shell", "no_app"):
                 if value is not None:
                     raise ValueError(
@@ -843,6 +856,7 @@ def run_cfg(
     *,
     callback_after_create_before_build: typing.Callable = None,
     substitutions: dict = None,
+    slack_doc=None,
 ):
 
     import conducto as co
@@ -899,6 +913,7 @@ def run_cfg(
     command_template = section["command"]
     image_kwargs = _parse_image_kwargs_from_config_section(section)
     conducto_kwargs, cmdline_substitutions = _parse_config_args_from_cmdline(remainder)
+    slack_channel = section.get("slack_channel")
 
     if substitutions is None:
         substitutions = cmdline_substitutions
@@ -933,8 +948,29 @@ def run_cfg(
     command = command_template.format(**substitutions)
 
     output = co.Lazy(command)
-    output.title = _get_default_title(None, default_was_used=False)
     output.tags = tags
+
+    output.title = conducto_kwargs.pop("title", None) or output.title
+    if output.title is None:
+        output.title = _get_default_title(None, default_was_used=False)
+
+    output.doc = conducto_kwargs.pop("doc", None) or output.doc
+
+    output["Generate"].env = {
+        "CONDUCTO_PARENT_TITLE": output.title,
+        "CONDUCTO_PARENT_DOC": output.doc,
+    }
+
+    if slack_channel is not None:
+        running_callback = callback.slack_status(
+            recipient=slack_channel, message=slack_doc, node_summary=False
+        )
+        done_error_callback = callback.slack_status(
+            recipient=slack_channel, message=slack_doc, node_summary=True
+        )
+        output.on_running(running_callback)
+        output.on_done(done_error_callback)
+        output.on_error(done_error_callback)
 
     # Normally `co.Image` looks through the stack to infer the repo, but the stack
     # doesn't go through the CFG file. Specify `_CONTEXT` as a workaround.
@@ -974,6 +1010,66 @@ def run_cfg(
         print(output.pretty(strict=False))
 
 
+def _get_pipeline_validated(token, pipeline_id):
+    try:
+        pipeline = api.Pipeline().get(pipeline_id, token=token)
+    except api.InvalidResponse as e:
+        if "not found" in str(e):
+            print(str(e), file=sys.stderr)
+            sys.exit(1)
+        else:
+            raise
+
+    return pipeline
+
+
+def return_serialization(pipeline_id):
+    token = api.Auth().get_token_from_shell(force=True)
+    pipeline = _get_pipeline_validated(token, pipeline_id)
+
+    status = pipeline["status"]
+    pl = constants.PipelineLifecycle
+    if status in pl.local:
+        local_basedir = constants.ConductoPaths.get_profile_base_dir()
+        cpser = constants.ConductoPaths.SERIALIZATION
+        serialization_path = f"{local_basedir}/pipelines/{pipeline_id}/{cpser}"
+
+        with open(serialization_path, "rb") as f:
+            serialization = f.read()
+    else:
+        import conducto.api.pipeline as pipemod
+
+        serialization = pipemod.get_serialization_s3(token, pipeline["program_path"])
+    return serialization
+
+
+async def update_serialization(
+    serialization, pipeline_id, token=None,
+):
+    if not token:
+        token = api.Auth().get_token_from_shell()
+    pipeline = _get_pipeline_validated(token, pipeline_id)
+    status = pipeline["status"]
+    pl = constants.PipelineLifecycle
+
+    if status in pl.local:
+        # Write serialization to ~/.conducto/
+        local_progdir = constants.ConductoPaths.get_local_path(pipeline_id)
+        os.makedirs(local_progdir, exist_ok=True)
+        serialization_path = os.path.join(
+            local_progdir, constants.ConductoPaths.SERIALIZATION
+        )
+
+        with open(serialization_path, "w") as f:
+            f.write(serialization)
+    else:
+        pipeline_api = api.Pipeline()
+        pipeline_api.save_serialization(pipeline_id, serialization, token=token)
+
+    websocket = await api.connect_to_pipeline(pipeline_id, token)
+    await websocket.send(json.dumps({"type": "UPDATE_SERIALIZATION", "payload": None}))
+
+
 def main(
     variables=None,
     default=None,
@@ -989,11 +1085,9 @@ def main(
 ):
     """
     Command-line helper that allows you from the shell to easily execute methods that return Conducto nodes.
-
     :param default:  Specify a method that is the default to run if the user doesn't specify one on the command line.
     :param image: Specify a default docker image for the pipeline. (See also :py:class:`conducto.Image`).
     :param env, cpu, mem, requires_docker: Computational attributes to set on any Node called through `co.main`.
-
     See :ref:`Node Methods and Attributes` for more details.
     """
 
@@ -1085,26 +1179,36 @@ def main(
                     )
                 setattr(output, key, value)
 
+        # Set the title on the Node
+        output.title = conducto_state.pop("title") or output.title
+        if output.title is None:
+            output.title = _get_default_title(callFunc.__name__, default_was_used)
+
         # Set the doc on the Node
+        output.doc = conducto_state.pop("doc") or output.doc
         if output.doc is None and callFunc.__doc__ is not None:
             output.doc = log.unindent(callFunc.__doc__)
 
         # Read command-line args
         is_cloud = conducto_state.pop("cloud")
         is_local = conducto_state.pop("local")
-        will_build = is_cloud or is_local
+        pipeline_id = conducto_state.pop("pipeline_id")
+        will_build = is_cloud or is_local or pipeline_id
 
         simplify_attributes(output)
 
         if will_build:
-            if output.title is None:
-                output.title = _get_default_title(callFunc.__name__, default_was_used)
             BM = constants.BuildMode
             try:
-                output._build(
-                    build_mode=BM.LOCAL if is_local else BM.DEPLOY_TO_CLOUD,
-                    **conducto_state,
-                )
+                if pipeline_id:
+                    asyncio.get_event_loop().run_until_complete(
+                        update_serialization(output.serialize(), pipeline_id,)
+                    )
+                else:
+                    output._build(
+                        build_mode=BM.LOCAL if is_local else BM.DEPLOY_TO_CLOUD,
+                        **conducto_state,
+                    )
             except api.UserInputValidation as e:
                 print(str(e), file=sys.stderr)
                 sys.exit(1)

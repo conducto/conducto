@@ -152,6 +152,9 @@ class Image:
     :param reqs_packages: List of packages to install with the appropriate Linux package
         manager for this image's flavor.
     :param reqs_docker: `bool` for whether to install Docker.
+    :param shell: Which shell to use in this container. Defaults to `co.Image.AUTO` to
+        auto-detect. `AUTO` will prefer `/bin/bash` when available, and fall back to
+        `/bin/sh` otherwise.
     :param name: Name this `Image` so other Nodes can reference it by name. If
         no name is given, one will automatically be generated from a list of
         our favorite Pokemon. I choose you, angry-bulbasaur!
@@ -161,6 +164,8 @@ class Image:
     _CONTEXT = None
     _CLONE_LOCKS = {}
     _COMPLETED_CLONES = set()
+
+    AUTO = "__auto__"
 
     def __init__(
         self,
@@ -178,6 +183,7 @@ class Image:
         reqs_packages=None,
         reqs_docker=False,
         path_map=None,
+        shell=AUTO,
         name=None,
         git_urls=None,
         **kwargs,
@@ -227,6 +233,7 @@ class Image:
         self.reqs_packages = reqs_packages
         self.reqs_docker = reqs_docker
         self.path_map = path_map or {}
+        self.shell = shell
         if self.path_map:
             # on deserialize pathmaps are strings but they may also be strings when
             # being passed from the user.
@@ -420,24 +427,28 @@ class Image:
             "reqs_packages": self.reqs_packages,
             "reqs_docker": self.reqs_docker,
             "path_map": self._serialize_pathmap(self.path_map),
+            "shell": self.shell,
         }
 
-    def to_raw_image(self):
-        return {
-            "image": self.image,
-            "dockerfile": self._serialize_path(self.dockerfile),
-            "docker_build_args": self.docker_build_args,
-            "docker_auto_workdir": self.docker_auto_workdir,
-            "context": self._serialize_path(self.context),
-            "copy_repo": self.copy_repo,
-            "copy_dir": self._serialize_path(self.copy_dir),
-            "copy_url": self.copy_url,
-            "copy_branch": self.copy_branch,
-            "reqs_py": self.reqs_py,
-            "reqs_packages": self.reqs_packages,
-            "reqs_docker": self.reqs_docker,
-            "path_map": self._serialize_pathmap(self.path_map),
-        }
+    def to_update_dict(self):
+        """
+        Return a dict of variables to be updated when the Agent is done building this
+        Image. When `shell` is set to AUTO it gets updated during the build process. The
+        Agent calls this method to report the changes back to the Manager so that the
+        Worker can use the auto-determined `shell` when launching Tasks.
+        """
+        return {"shell": self.shell}
+
+    def _get_image_tag(self):
+        # Use the serialization of the image. Omit 'name' because there may be several
+        # different named images that share a single underlying Docker image. Omit
+        # 'shell' because it can change during the build process if the user specifies
+        # AUTO.
+        d = self.to_dict()
+        del d["name"]
+        del d["shell"]
+        key = json.dumps(d).encode()
+        return hashlib.md5(key).hexdigest()
 
     def _get_contextual_path_helper(
         self, p: typing.Union[imagepath.Path, dict, str], **kwargs
@@ -537,34 +548,27 @@ class Image:
     @property
     def name_built(self):
         if self.needs_building():
-            key = json.dumps(self.to_raw_image()).encode()
-            tag = hashlib.md5(key).hexdigest()
-            return f"conducto_built:{self._pipeline_id}_{tag}"
+            return f"conducto_built:{self._pipeline_id}_{self._get_image_tag()}"
         else:
             return self.image
 
     @property
     def name_installed(self):
         if self.needs_installing():
-            key = json.dumps(self.to_raw_image()).encode()
-            tag = hashlib.md5(key).hexdigest()
-            return f"conducto_installed:{self._pipeline_id}_{tag}"
+            return f"conducto_installed:{self._pipeline_id}_{self._get_image_tag()}"
         else:
             return self.name_built
 
     @property
     def name_copied(self):
         if self.needs_copying():
-            key = json.dumps(self.to_raw_image()).encode()
-            tag = hashlib.md5(key).hexdigest()
-            return f"conducto_copied:{self._pipeline_id}_{tag}"
+            return f"conducto_copied:{self._pipeline_id}_{self._get_image_tag()}"
         else:
             return self.name_installed
 
     @property
     def name_local_extended(self):
-        tag = hashlib.md5(self.name_copied.encode()).hexdigest()
-        return f"conducto_extended:{self._pipeline_id}_{tag}"
+        return f"conducto_extended:{self._pipeline_id}_{self._get_image_tag()}"
 
     @property
     def name_cloud_extended(self):
@@ -573,8 +577,7 @@ class Image:
         if self._pipeline_id is None:
             raise ValueError("Must specify pipeline_id before pushing to cloud")
         docker_domain = api.Config().get_docker_domain()
-        tag = hashlib.md5(self.name_copied.encode()).hexdigest()
-        return f"{docker_domain}/{self._pipeline_id}:{tag}"
+        return f"{docker_domain}/{self._pipeline_id}:{self._get_image_tag()}"
 
     @property
     def status(self):
@@ -952,6 +955,9 @@ class Image:
         return out, err
 
     async def _extend(self):
+        if self.shell == Image.AUTO:
+            self.shell = await dockerfile_mod.get_shell(self.name_copied)
+
         # Writes Dockerfile that extends user-provided image.
         text, worker_image = await dockerfile_mod.text_for_extend(self.name_copied)
         if "/" in worker_image:

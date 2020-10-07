@@ -4,23 +4,11 @@ import os.path
 import importlib.util
 import conducto as co
 from conducto.shared import constants
+from conducto import api
 from conducto.contrib.discover.cli import discover_cli
 from conducto.debug import debug, livedebug
 from conducto.glue import method
 import asyncio
-
-
-def _get_pipeline_validated(token, pipeline_id):
-    try:
-        pipeline = co.api.Pipeline().get(pipeline_id, token=token)
-    except co.api.InvalidResponse as e:
-        if "not found" in str(e):
-            print(str(e), file=sys.stderr)
-            sys.exit(1)
-        else:
-            raise
-
-    return pipeline
 
 
 def show(id, app=method._get_default_app(), shell=method._get_default_shell()):
@@ -33,7 +21,7 @@ def show(id, app=method._get_default_app(), shell=method._get_default_shell()):
 
     pipeline_id = id
     token = co.api.Auth().get_token_from_shell(force=True)
-    pipeline = _get_pipeline_validated(token, pipeline_id)
+    pipeline = method._get_pipeline_validated(token, pipeline_id)
     perms = co.api.Pipeline().perms(pipeline_id, token=token)
 
     status = pipeline["status"]
@@ -95,7 +83,7 @@ def show(id, app=method._get_default_app(), shell=method._get_default_shell()):
 async def sleep(id):
     pipeline_id = id
     token = co.api.Auth().get_token_from_shell(force=True)
-    pipeline = _get_pipeline_validated(token, pipeline_id)
+    pipeline = method._get_pipeline_validated(token, pipeline_id)
 
     status = pipeline["status"]
     pl = constants.PipelineLifecycle
@@ -127,28 +115,10 @@ async def sleep(id):
 
 
 def dump_serialization(id, outfile=None):
-    pipeline_id = id
-    token = co.api.Auth().get_token_from_shell(force=True)
-    pipeline = _get_pipeline_validated(token, pipeline_id)
-
-    status = pipeline["status"]
-    pl = constants.PipelineLifecycle
-    if status in pl.local:
-        local_basedir = constants.ConductoPaths.get_profile_base_dir()
-        cpser = constants.ConductoPaths.SERIALIZATION
-        serialization_path = f"{local_basedir}/pipelines/{pipeline_id}/{cpser}"
-
-        with open(serialization_path, "rb") as f:
-            serialization = f.read()
-    else:
-        import conducto.api.pipeline as pipemod
-
-        serialization = pipemod.get_serialization_s3(token, pipeline["program_path"])
-
     import gzip
     import base64
 
-    string = gzip.decompress(base64.b64decode(serialization))
+    string = gzip.decompress(base64.b64decode(method.return_serialization(id)))
     data = json.loads(string)
     if outfile is None:
         print(json.dumps(data, indent=4, sort_keys=True))
@@ -171,6 +141,25 @@ def _load_file_module(filename):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def iterate(file_to_execute, pipeline_id):
+    from importlib import reload
+
+    while True:
+        try:
+            module = _load_file_module(file_to_execute)
+            module = reload(module)
+            variables = {k: getattr(module, k) for k in dir(module)}
+            co.main(
+                variables=variables,
+                argv=[f"--pipeline_id={pipeline_id}", "--local"],
+                filename=file_to_execute,
+            )
+        except:
+            import traceback
+
+            traceback.print_exc()
 
 
 def main():
@@ -198,19 +187,40 @@ def main():
         }
         co.main(variables=variables)
     else:
-        file_to_execute, *arguments = args
 
-        if not os.path.exists(file_to_execute):
-            print(f"No such file or directory: '{file_to_execute}'", file=sys.stderr)
-            sys.exit(1)
+        def step():
+            file_to_execute, *arguments = args
 
-        if file_to_execute.endswith(".cfg"):
-            with open(file_to_execute) as f:
-                co.glue.run_cfg(f, arguments)
+            if not os.path.exists(file_to_execute):
+                print(
+                    f"No such file or directory: '{file_to_execute}'", file=sys.stderr
+                )
+                sys.exit(1)
+
+            if file_to_execute.endswith(".cfg"):
+                with open(file_to_execute) as f:
+                    co.glue.run_cfg(f, arguments)
+            else:
+                module = _load_file_module(file_to_execute)
+                variables = {k: getattr(module, k) for k in dir(module)}
+                co.main(variables=variables, argv=arguments, filename=file_to_execute)
+
+        if os.getenv("CONDUCTO_ITERATE"):
+            import time
+
+            while True:
+                try:
+                    step()
+                except KeyboardInterrupt:
+                    exit(1)
+                except:
+                    import traceback
+
+                    traceback.print_exc()
+                time.sleep(1)
+
         else:
-            module = _load_file_module(file_to_execute)
-            variables = {k: getattr(module, k) for k in dir(module)}
-            co.main(variables=variables, argv=arguments, filename=file_to_execute)
+            step()
 
 
 if __name__ == "__main__":

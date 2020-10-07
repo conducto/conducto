@@ -284,10 +284,34 @@ class UnsupportedPythonException(Exception):
     pass
 
 
-# Note: we don't need caching here except on get_python_version
+class UnsupportedShellException(Exception):
+    pass
+
+
+# Note: we don't need caching here except on get_python_version and get_shell
 # because we already have caching mechanisms above
 # each image gets their .build called once, and everything below _get_python_version
 # is called just once per name_copied
+async def get_shell(user_image):
+    cache = get_shell._cache = getattr(get_shell, "cache", {})
+    if user_image in cache:
+        return cache[user_image]
+
+    shells = ["/bin/bash", "/bin/ash", "/bin/zsh", "/bin/sh"]
+    for shell in shells:
+        try:
+            await async_utils.run_and_check(
+                "docker", "run", "--rm", "--entrypoint", shell, user_image, "-c", "true"
+            )
+        except subprocess.CalledProcessError:
+            pass
+        else:
+            cache[user_image] = shell
+            return shell
+    raise UnsupportedShellException(
+        f"Could not auto-determine correct shell to use. Tried {shells} but none were "
+        f"available"
+    )
 
 
 async def get_python_version(user_image):

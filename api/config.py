@@ -453,7 +453,7 @@ commands:
 
         profdir = constants.ConductoPaths.get_profile_base_dir(profile=profile)
         conffile = os.path.join(profdir, "config")
-        os.makedirs(profdir, exist_ok=True)
+        path_utils.makedirs(profdir, exist_ok=True)
         self._atomic_write_config(profconfig, conffile)
 
         assert default in (True, False, "first")
@@ -482,21 +482,13 @@ commands:
 
     @staticmethod
     def _atomic_write_config(config, filename):
-        try:
-            import conducto.internal.host_detection as hostdet
-
-            is_windows = hostdet.is_windows()
-        except ImportError:
-            is_windows = False
-
         cwd = os.path.dirname(filename)
-        os.makedirs(cwd, exist_ok=True)
+        path_utils.makedirs(cwd, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             mode="w", delete=False, prefix=".config.", dir=cwd
         ) as temp_file:
             config.write(temp_file)
-        if not is_windows:
-            path_utils.outer_chown(temp_file.name)
+        path_utils.outer_chown(temp_file.name)
         os.replace(temp_file.name, filename)
 
     @staticmethod

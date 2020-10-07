@@ -10,8 +10,7 @@ class base:
         d = {}
         for k, v in self.kwargs.items():
             if isinstance(v, pipeline.Node):
-                d.setdefault("__node_args__", []).append(k)
-                d[k] = v
+                d[k] = str(v)
             else:
                 d[k] = v
         return [self.name, d]
@@ -67,6 +66,7 @@ def email(to=None, cc=None):
     return base("email", to=to, cc=cc)
 
 
+# TODO: remove this in a few days (10/3/2020)
 def slack(to, token, message=None, node_summary=False):
     """
     Post a summary of the node in the specified slack channel.

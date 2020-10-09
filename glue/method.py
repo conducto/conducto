@@ -752,7 +752,7 @@ def evaluate_filter(s, substitutions):
     s = s.format(**substitutions)
     reg = re.compile(r"(\|\||&&|==|!=|!|\(|\))")
 
-    tokens = [i.strip() for i in reg.split(s) if i.strip()]
+    tokens = [i.strip() for i in reg.split(s)]
     mapping = []
 
     class SafeEvalContainer:
@@ -787,9 +787,10 @@ def evaluate_filter(s, substitutions):
         else:
             raise Exception
     try:
-        return bool(eval(" ".join(tokens)))
+        expr = " ".join(tokens)
+        return bool(eval(expr))
     except:
-        raise NotImplementedError("Error message for when evaluating filter fails")
+        raise SyntaxError(f"Cannot evaluate filter expression: {expr}, tokens={tokens}")
 
 
 def _parse_config_args_from_cmdline(argv):
@@ -845,7 +846,7 @@ def _parse_config_args_from_cmdline(argv):
 
 
 def run_cfg(
-    file: typing.IO,
+    config_file: typing.IO,
     argv,
     copy_url=None,
     copy_branch=None,
@@ -855,15 +856,13 @@ def run_cfg(
     unique_tag=None,
     *,
     callback_after_create_before_build: typing.Callable = None,
+    callback_on_event_deferred: typing.Callable = None,
     substitutions: dict = None,
     slack_doc=None,
 ):
-
-    import conducto as co
-
     # Read the config file
     cp = configparser.ConfigParser()
-    cp.read_file(file)
+    cp.read_file(config_file)
 
     if not argv:
         # TODO: Make better exception for invalid command
@@ -877,12 +876,87 @@ def run_cfg(
             idx = i
             break
 
-    method = " ".join(argv[:idx])
+    config_event = " ".join(argv[:idx])
     remainder = argv[idx:]
 
-    if method not in cp:
-        raise NotImplementedError("Make better exception for invalid command")
-    section = cp[method]
+    # First look for an exact match of the config event.
+    if config_event in cp.sections():
+        return run_cfg_section(
+            section=cp[config_event],
+            section_name=config_event,
+            argv=remainder,
+            config_file=config_file,
+            copy_url=copy_url,
+            copy_branch=copy_branch,
+            git_urls=git_urls,
+            token=token,
+            tags=tags,
+            unique_tag=unique_tag,
+            callback_after_create_before_build=callback_after_create_before_build,
+            callback_on_event_deferred=callback_on_event_deferred,
+            substitutions=substitutions,
+            slack_doc=slack_doc,
+        )
+
+    # Try every section that matches or starts with the config_event.
+    # If no exact match, try sections that start with config_event and
+    # return the first one to successfully launch a pipeline.
+    for section in cp.sections():
+        if section.startswith(f"{config_event} "):
+            # Try to run section.
+            pipeline_id = run_cfg_section(
+                section=cp[section],
+                section_name=section,
+                config_file=config_file,
+                argv=remainder,
+                copy_url=copy_url,
+                copy_branch=copy_branch,
+                git_urls=git_urls,
+                token=token,
+                tags=tags,
+                unique_tag=unique_tag,
+                callback_after_create_before_build=callback_after_create_before_build,
+                callback_on_event_deferred=callback_on_event_deferred,
+                substitutions=substitutions,
+                slack_doc=slack_doc,
+            )
+            # If successful, return the result. Otherwise keep trying.
+            if pipeline_id is not None:
+                log.log(
+                    f"Successfully launched pipeline {pipeline_id} for config section {section}"
+                )
+                return pipeline_id
+
+    # No success. Gracefully log a message if the config_event is an expected
+    # event that is just not configured. Otherwise, raise an exception.
+    for valid_config_event in constants.CONFIG_EVENTS.events:
+        if config_event == valid_config_event or config_event.startswith(
+            f"{valid_config_event} "
+        ):
+            log.log(f"No pipeline launch, no config section for event {config_event}")
+            return None
+
+    raise NameError(f"Invalid config section: {config_event}")
+
+
+def run_cfg_section(
+    section,
+    section_name,
+    config_file,
+    argv,
+    copy_url=None,
+    copy_branch=None,
+    git_urls=None,
+    token=None,
+    tags=None,
+    unique_tag=None,
+    *,
+    callback_after_create_before_build: typing.Callable = None,
+    callback_on_event_deferred: typing.Callable = None,
+    substitutions: dict = None,
+    slack_doc=None,
+):
+    import conducto as co
 
     # See if this user is already a running pipeline for this unique_tag
     if unique_tag is not None:
@@ -895,6 +969,9 @@ def run_cfg(
         if matches:
             dup_action = section.get("duplicate", fallback="SUPPRESS_NEW")
             if dup_action == "SUPPRESS_NEW":
+                log.log(
+                    f"No pipeline launch, suppressing duplicates for unique_tag={unique_tag}"
+                )
                 return None
             elif dup_action == "ALLOW":
                 pass
@@ -904,15 +981,32 @@ def run_cfg(
                     f"Sleeping pipelines due to conflict with unique_tag={unique_tag}. Pipelines: {ids}"
                 )
                 pipe_api.sleep(pipeline_ids=ids, cloud=True, local=True)
+            elif dup_action == "DEFER":
+                if callback_on_event_deferred:
+                    log.log(
+                        f"Existing pipeline found for unique_tag={unique_tag}, deferring subsequent launch"
+                    )
+                    callback_on_event_deferred()
+                else:
+                    log.log(
+                        f"No pipeline launch or deferred, suppressing duplicates for unique_tag={unique_tag}"
+                    )
+                return None
 
-        # Add unique_tag to the list of tags
-        tags = (tags or []) + [unique_tag]
+        # Add unique_tag to the list of tags.
+        tags = [] if tags is None else tags.copy()
+        tags.append(unique_tag)
+
+        # Add section tag to the list of tags.
+        section_tag = "/".join(section_name.split(" "))
+        tags.append(f"conducto/cfg/{section_tag}")
+
         tags = sorted(set(tags))
 
     # Parse the command template. Find which variables need to be passed.
     command_template = section["command"]
     image_kwargs = _parse_image_kwargs_from_config_section(section)
-    conducto_kwargs, cmdline_substitutions = _parse_config_args_from_cmdline(remainder)
+    conducto_kwargs, cmdline_substitutions = _parse_config_args_from_cmdline(argv)
     slack_channel = section.get("slack_channel")
 
     if substitutions is None:
@@ -939,10 +1033,11 @@ def run_cfg(
 
     # Build the output node
 
-    if section.get("filter") and not evaluate_filter(
-        section.get("filter"), substitutions
-    ):
-        log.log(f"No launch - filter evaluated as False")
+    section_filter = section.get("filter")
+    if section_filter and not evaluate_filter(section_filter, substitutions):
+        log.log(
+            f"No pipeline launch, {section_name} filter did not match: {section_filter}"
+        )
         return None
 
     command = command_template.format(**substitutions)
@@ -950,16 +1045,18 @@ def run_cfg(
     output = co.Lazy(command)
     output.tags = tags
 
+    output["Generate"].env = output["Generate"].env or {}
+
     output.title = conducto_kwargs.pop("title", None) or output.title
     if output.title is None:
         output.title = _get_default_title(None, default_was_used=False)
 
     output.doc = conducto_kwargs.pop("doc", None) or output.doc
 
-    output["Generate"].env = {
-        "CONDUCTO_PARENT_TITLE": output.title,
-        "CONDUCTO_PARENT_DOC": output.doc,
-    }
+    if output.title is not None:
+        output["Generate"].env["CONDUCTO_PARENT_TITLE"] = output.title
+    if output.doc is not None:
+        output["Generate"].env["CONDUCTO_PARENT_DOC"] = output.doc
 
     if slack_channel is not None:
         running_callback = callback.slack_status(
@@ -974,7 +1071,7 @@ def run_cfg(
 
     # Normally `co.Image` looks through the stack to infer the repo, but the stack
     # doesn't go through the CFG file. Specify `_CONTEXT` as a workaround.
-    co.Image._CONTEXT = file.name
+    co.Image._CONTEXT = config_file.name
     try:
         output.image = co.Image(
             copy_repo=True,
@@ -1001,6 +1098,8 @@ def run_cfg(
             token=token,
             **conducto_kwargs,
         )
+    elif t.Bool(os.getenv("CONDUCTO_GLUE_DEBUG")):
+        print(output.serialize(pretty=True))
     else:
         if t.Bool(os.getenv("__RUN_BY_WORKER__")):
             # Variable is set in conducto_worker/__main__.py to avoid
@@ -1212,6 +1311,8 @@ def main(
             except api.UserInputValidation as e:
                 print(str(e), file=sys.stderr)
                 sys.exit(1)
+        elif t.Bool(os.getenv("CONDUCTO_GLUE_DEBUG")):
+            print(output.serialize(pretty=True))
         else:
             if t.Bool(os.getenv("__RUN_BY_WORKER__")):
                 # Variable is set in conducto_worker/__main__.py to avoid

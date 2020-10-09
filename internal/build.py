@@ -32,7 +32,7 @@ def build(
     assert node.name == "/"
 
     const_ee = constants.ExecutionEnv
-    if const_ee.value() != const_ee.EXTERNAL:
+    if const_ee.value() not in const_ee.agent | {const_ee.EXTERNAL}:
         raise RuntimeError(
             "It is not supported to launch pipelines from with-in other pipelines. "
             "Consider using `co.Lazy` to compose pipelines dynamically."

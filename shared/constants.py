@@ -347,3 +347,13 @@ class Block:
     SIZE = 3600
     # how many seconds into block n + 1 do we start generating a snapshot for block n
     DELAY = 900
+
+
+class CONFIG_EVENTS:
+    PR = "pr"
+    PUSH = "push"
+    CREATE = "create"
+    DELETE = "delete"
+    CRON = "cron"
+
+    events = {PR, PUSH, CREATE, DELETE, CRON}

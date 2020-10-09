@@ -142,7 +142,7 @@ class Dir:
         return api_utils.get_data(response)
 
     def create_integration_user(
-        self, token: t.Token, org_id: t.OrgId, name: str, integration_id: int
+        self, token: t.Token, org_id: t.OrgId, name: str, integration_id: str
     ):
         response = request_utils.post(
             f"{self.url}/dir/org/{org_id}/integration",

@@ -81,9 +81,10 @@ def get_param(payload, param, default=None):
     return default
 
 
-def start_container(payload, live, token):
+def start_container(pipeline, payload, live, token):
     import random
     from rich.console import Console
+    from . import api
 
     console = Console()
 
@@ -96,7 +97,12 @@ def start_container(payload, live, token):
         )
 
     container_name = "conducto_debug_" + str(random.randrange(1 << 64))
-    print("Launching docker container...")
+
+    if "/" in image_name:
+        refresh_docker_image(image_name, console)
+
+    console.print("Launching docker container...")
+
     if live:
         console.print("Context will be mounted read-write")
         console.print(
@@ -110,8 +116,6 @@ def start_container(payload, live, token):
 
     options.append(f'--cpus {get_param(payload, "cpu")}')
     options.append(f'--memory {get_param(payload, "mem") * 1024**3}')
-
-    from . import api
 
     # TODO: Should actually pass these variables from manager, iff local
     local_basedir = constants.ConductoPaths.get_profile_base_dir()
@@ -138,6 +142,12 @@ def start_container(payload, live, token):
             )
             options.append(f"-v {mount}:{internal}")
 
+    if pipeline["user_id"] != api.Auth().get_user_id(token):
+        console.print(
+            "Debugging another user's command, so their secrets are not available. "
+            "This may cause unexpected behavior."
+        )
+
     command = f"docker run {' '.join(options)} --name={container_name} {image_name} tail -f /dev/null "
 
     subprocess.Popen(command, shell=True)
@@ -153,6 +163,25 @@ def start_container(payload, live, token):
                 break
 
     return container_name
+
+
+def refresh_docker_image(img, console):
+    try:
+        subprocess.check_call(["docker", "inspect", img], stdout=PIPE, stderr=PIPE)
+    except subprocess.CalledProcessError:
+        # Image not present so pull may take a while. Show the output of
+        # 'docker pull' so user knows to wait
+        console.print("Pulling docker image...")
+        print("\033[2m", end="", flush=True)
+        try:
+            subprocess.run(["docker", "pull", img])
+        finally:
+            print("\033[0m", end="", flush=True)
+    else:
+        # Image is present so we pull again to make sure we have the latest code. It
+        # should be fast so hide the output.
+        console.print("Refreshing docker image...")
+        subprocess.run(["docker", "pull", img], stdout=PIPE, stderr=PIPE)
 
 
 def dump_command(container_name, command, shell):
@@ -365,7 +394,7 @@ async def _debug(id, node, live, timestamp):
             )
             sys.exit(1)
 
-    container_name = start_container(payload, live, token)
+    container_name = start_container(pipeline, payload, live, token)
     if not live:
         print_editor_commands(container_name)
 

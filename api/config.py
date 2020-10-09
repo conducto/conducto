@@ -178,7 +178,9 @@ commands:
                 except subprocess.CalledProcessError:
                     raise RuntimeError(fallback_error)
             else:
-                os.mkdir(config_dir)
+                path_utils.makedirs(config_dir)
+        elif os.getenv("CONDUCTO_OUTER_OWNER") and os.stat(config_dir).st_uid == 0:
+            path_utils.outer_chown(config_dir)
         self._atomic_write_config(self.config, config_file)
 
     def _profile_general(self, profile) -> dict:
@@ -225,7 +227,7 @@ commands:
                 if new_token is None:
                     raise PermissionError("Expired token in Config.TOKEN")
                 if Config.TOKEN != new_token:
-                    Config._log_new_expiration_time(auth, new_token)
+                    Config._log_new_expiration_time(auth, new_token, loc="Config.TOKEN")
                     Config.TOKEN = new_token
             return Config.TOKEN
 
@@ -239,7 +241,9 @@ commands:
                 if new_token is None:
                     raise PermissionError("Expired token in CONDUCTO_TOKEN")
                 if os.environ["CONDUCTO_TOKEN"] != new_token:
-                    Config._log_new_expiration_time(auth, new_token)
+                    Config._log_new_expiration_time(
+                        auth, new_token, loc="CONDUCTO_TOKEN"
+                    )
                     os.environ["CONDUCTO_TOKEN"] = new_token
             return os.environ["CONDUCTO_TOKEN"]
 
@@ -257,7 +261,7 @@ commands:
                 if new_token is None:
                     raise PermissionError("Expired token in config")
                 if token != new_token:
-                    Config._log_new_expiration_time(auth, new_token)
+                    Config._log_new_expiration_time(auth, new_token, loc="config file")
                     self.set_profile_general(self.default_profile, "token", new_token)
                 return new_token
             return token
@@ -498,11 +502,11 @@ commands:
         return config
 
     @staticmethod
-    def _log_new_expiration_time(auth, token):
+    def _log_new_expiration_time(auth, token, loc):
         claims = auth.get_unverified_claims(token)
         expiration_time = time.ctime(claims["exp"])
         log.debug(
-            f"Just refreshed token from Config.TOKEN with new expiration time of {expiration_time}"
+            f"Just refreshed token from {loc} with new expiration time of {expiration_time}"
         )
 
 

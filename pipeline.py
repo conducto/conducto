@@ -4,9 +4,9 @@ import functools
 import gzip
 import shlex
 import inspect
-import itertools
 import json
 import os
+import pprint
 import re
 import traceback
 import typing
@@ -600,11 +600,9 @@ class Node:
                     return o.id
                 return o
 
-        if pretty:
-            import pprint
-
-            return pprint.pformat(res)
         output = json.dumps(res, cls=NodeEncoder)
+        if pretty:
+            return pprint.pformat(json.loads(output), width=200)
         return base64.b64encode(
             gzip.compress(output.encode(), compresslevel=3)
         ).decode()

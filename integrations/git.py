@@ -10,7 +10,7 @@ from conducto.shared import client_utils, imagepath, request_utils, types as t
 from ..api import api_utils
 
 
-_log_diff_dict = {}
+_log_diff_cache = {}
 
 
 class LogType(enum.Enum):
@@ -73,20 +73,15 @@ def get_log_diff(
     max_lines=None,
     git_dir=None,
 ) -> str:
-    git_root = _find_git_root(git_dir)
+    raw_diff = _get_log_diff_for_key("raw_diff", base_branch, current_branch, git_dir)
 
-    key = (base_branch, current_branch, git_root)
-    log_diff = _log_diff_dict.get(key)
-    if log_diff is None:
-        log_diff = _get_raw_log_diff(base_branch, current_branch, git_root)
-        _log_diff_dict[key] = log_diff
-    if log_diff == "":
+    if raw_diff == "":
         return ""
 
     if log_type == LogType.RAW:
-        return log_diff.replace("|", " ")
+        return raw_diff.replace("|", " ")
 
-    lines = log_diff.split("\n")
+    lines = raw_diff.split("\n")
     formatted_lines = []
     for line in lines:
         parts = line.split("|")
@@ -114,9 +109,42 @@ def get_log_diff(
     return "\n\n".join(formatted_lines)
 
 
+def get_num_commits(base_branch: str, current_branch: str = None, git_dir=None,) -> int:
+    return _get_log_diff_for_key("num_commits", base_branch, current_branch, git_dir)
+
+
+def get_num_commits_behind_base(
+    base_branch: str, current_branch: str = None, git_dir=None,
+) -> int:
+    return _get_log_diff_for_key(
+        "num_commits_behind_base", base_branch, current_branch, git_dir
+    )
+
+
+def get_last_shared_commit(
+    base_branch: str, current_branch: str = None, git_dir=None,
+) -> str:
+    return _get_log_diff_for_key(
+        "last_shared_commit", base_branch, current_branch, git_dir
+    )
+
+
 ############################################################
 # internal helpers
 ############################################################
+def _get_log_diff_for_key(
+    diff_key: str, base_branch: str, current_branch: str = None, git_dir=None,
+) -> str:
+    git_root = _find_git_root(git_dir)
+
+    key = (base_branch, current_branch, git_root)
+    log_diff = _log_diff_cache.get(key)
+    if log_diff is None:
+        log_diff = _get_raw_log_diff(base_branch, current_branch, git_root)
+        _log_diff_cache[key] = log_diff
+    return log_diff[diff_key]
+
+
 def _get_raw_log_diff(base_branch, current_branch, git_root):
     if "CONDUCTO_GIT_URL" in os.environ:
         client_utils.subprocess_run(
@@ -144,7 +172,44 @@ def _get_raw_log_diff(base_branch, current_branch, git_root):
         ],
         capture_output=True,
     )
-    return result.stdout.decode()
+    num_commits_including_behind = len(result.stdout.decode().split("\n"))
+
+    result = client_utils.subprocess_run(
+        [
+            "git",
+            "-C",
+            git_root,
+            "log",
+            "--abbrev-commit",
+            "--date=relative",
+            "--pretty=format:%h|%ad|[%an]|%d|%s",
+            f"origin/{base_branch}..origin/{current_branch}",
+        ],
+        capture_output=True,
+    )
+    raw_log_diff = result.stdout.decode()
+    num_commits = len(raw_log_diff.split("\n"))
+
+    num_commits_behind_base = num_commits_including_behind - num_commits
+    result = client_utils.subprocess_run(
+        [
+            "git",
+            "-C",
+            git_root,
+            "merge-base",
+            f"origin/{base_branch}",
+            f"origin/{current_branch}",
+        ],
+        capture_output=True,
+    )
+    last_shared_commit = result.stdout.decode()[:8]
+
+    return {
+        "raw_diff": raw_log_diff,
+        "num_commits": num_commits,
+        "num_commits_behind_base": num_commits_behind_base,
+        "last_shared_commit": last_shared_commit,
+    }
 
 
 def _is_github_url(url):

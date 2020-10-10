@@ -12,6 +12,7 @@ from conducto.shared import (
     constants,
     container_utils,
     agent_utils,
+    path_utils,
     log,
     resource_validation,
     types as t,
@@ -113,13 +114,14 @@ def launch_from_serialization(
 
         # Write serialization to ~/.conducto/
         local_progdir = constants.ConductoPaths.get_local_path(pipeline_id)
-        os.makedirs(local_progdir, exist_ok=True)
+        path_utils.makedirs(local_progdir, exist_ok=True)
         serialization_path = os.path.join(
             local_progdir, constants.ConductoPaths.SERIALIZATION
         )
 
         with open(serialization_path, "w") as f:
             f.write(serialization)
+        path_utils.outer_chown(serialization_path)
 
         api.Pipeline().update(
             pipeline_id, {"program_path": serialization_path}, token=token
@@ -245,7 +247,9 @@ def run_in_local_container(
             else:
                 raise
 
-    if not (hostdet.is_windows() or hostdet.is_wsl1()):
+    if os.getenv("CONDUCTO_OUTER_OWNER"):
+        outer_xid = os.getenv("CONDUCTO_OUTER_OWNER")
+    elif not (hostdet.is_windows() or hostdet.is_wsl1()):
         outer_xid = f"{os.getuid()}:{os.getgid()}"
     else:
         outer_xid = ""

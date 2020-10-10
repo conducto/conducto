@@ -10,12 +10,11 @@ import shlex
 import sys
 import types
 import typing
-import pathlib
 import fnmatch
 import re
 
 
-from ..shared import client_utils, constants, log, types as t, imagepath
+from ..shared import client_utils, constants, log, types as t, path_utils
 from .._version import __version__, __sha1__
 
 from .. import api, callback, image as image_mod, pipeline
@@ -1154,13 +1153,14 @@ async def update_serialization(
     if status in pl.local:
         # Write serialization to ~/.conducto/
         local_progdir = constants.ConductoPaths.get_local_path(pipeline_id)
-        os.makedirs(local_progdir, exist_ok=True)
+        path_utils.makedirs(local_progdir, exist_ok=True)
         serialization_path = os.path.join(
             local_progdir, constants.ConductoPaths.SERIALIZATION
         )
 
         with open(serialization_path, "w") as f:
             f.write(serialization)
+        path_utils.outer_chown(serialization_path)
     else:
         pipeline_api = api.Pipeline()
         pipeline_api.save_serialization(pipeline_id, serialization, token=token)

@@ -10,12 +10,11 @@ import shlex
 import sys
 import types
 import typing
-import pathlib
 import fnmatch
 import re
 
 
-from ..shared import client_utils, constants, log, types as t, imagepath
+from ..shared import client_utils, constants, log, types as t, path_utils
 from .._version import __version__, __sha1__
 
 from .. import api, callback, image as image_mod, pipeline
@@ -749,7 +748,11 @@ def _parse_image_kwargs_from_config_section(section):
 
 
 def evaluate_filter(s, substitutions):
-    s = s.format(**substitutions)
+    try:
+        s = s.format(**substitutions)
+    except KeyError as e:
+        log.error(f"Missing substitions for filter: {s}")
+        raise e
     reg = re.compile(r"(\|\||&&|==|!=|!|\(|\))")
 
     tokens = [i.strip() for i in reg.split(s)]
@@ -1040,7 +1043,11 @@ def run_cfg_section(
         )
         return None
 
-    command = command_template.format(**substitutions)
+    try:
+        command = command_template.format(**substitutions)
+    except KeyError as e:
+        log.error(f"Missing substitutions for command: {command_template}")
+        raise e
 
     output = co.Lazy(command)
     output.tags = tags
@@ -1154,13 +1161,14 @@ async def update_serialization(
     if status in pl.local:
         # Write serialization to ~/.conducto/
         local_progdir = constants.ConductoPaths.get_local_path(pipeline_id)
-        os.makedirs(local_progdir, exist_ok=True)
+        path_utils.makedirs(local_progdir, exist_ok=True)
         serialization_path = os.path.join(
             local_progdir, constants.ConductoPaths.SERIALIZATION
         )
 
         with open(serialization_path, "w") as f:
             f.write(serialization)
+        path_utils.outer_chown(serialization_path)
     else:
         pipeline_api = api.Pipeline()
         pipeline_api.save_serialization(pipeline_id, serialization, token=token)

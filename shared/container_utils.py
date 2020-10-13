@@ -39,20 +39,6 @@ def docker_available_drives():
 
 
 @functools.lru_cache(None)
-def is_docker_desktop():
-    subp = subprocess.Popen(
-        "docker info --format '{{json .}}'",
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )
-    info_txt, err = subp.communicate()
-
-    info = json.loads(info_txt)
-    return info["OperatingSystem"] == "Docker Desktop"
-
-
-@functools.lru_cache(None)
 def get_current_container_mounts():
     subp = subprocess.Popen(
         f"docker inspect -f '{{{{ json .Mounts }}}}' {get_current_container_id()}",
@@ -63,16 +49,7 @@ def get_current_container_mounts():
     mount_data, err = subp.communicate()
     log.debug(f"Got {mount_data} {err}")
     if subp.returncode == 0:
-        mount_list = json.loads(mount_data)
-
-        # if windows/mac (aka "Docker Desktop"), remove any leading '/host_mnt'
-        # docker VM paths
-        if is_docker_desktop():
-            for mount in mount_list:
-                if mount["Source"].startswith("/host_mnt/"):
-                    mount["Source"] = mount["Source"].replace("/host_mnt", "", 1)
-
-        return mount_list
+        return json.loads(mount_data)
     else:
         raise RuntimeError(
             r"error {subp.returncode} while getting current container mounts"
@@ -89,7 +66,10 @@ def get_whole_host_mounting_flags(from_container):
 
             drives = []
             for mount in mounts:
-                firstseg = mount["Source"].strip("/").split("/")[0]
+                source = mount["Source"]
+                if os.getenv("WINDOWS_HOST") and source.startswith("/host_mnt"):
+                    source = source[len("/host_mnt") :]
+                firstseg = source.strip("/").split("/")[0]
                 if len(firstseg) == 1:
                     drives.append(firstseg)
         else:
@@ -117,8 +97,11 @@ def get_external_conducto_dir(from_container):
         mounts = get_current_container_mounts()
 
         for mount in mounts:
+            source = mount["Source"]
+            if os.getenv("WINDOWS_HOST") and source.startswith("/host_mnt"):
+                source = source[len("/host_mnt") :]
             if result.startswith(mount["Destination"]):
-                result = result.replace(mount["Destination"], mount["Source"], 1)
+                result = result.replace(mount["Destination"], source, 1)
                 log.debug(f"Mounting to {result}")
                 break
     else:

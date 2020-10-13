@@ -5,12 +5,28 @@ must also be able to access the external .conducto directory.
 """
 
 import os
+import re
 import json
 import functools
 import subprocess
 
 from conducto.shared import async_utils, client_utils, constants, log, imagepath
 import conducto.internal.host_detection as hostdet
+
+
+@functools.lru_cache(None)
+def is_windows_by_host_mnt():
+    if os.getenv("WINDOWS_HOST"):
+        # if this check does not work to detect your windows, you can short-circuit it
+        return True
+
+    try:
+        kwargs = dict(check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        catwin = "docker run --rm -v /:/mnt/external alpine cat /mnt/external/host_mnt/c/Windows/win.ini"
+        proc = subprocess.run(catwin, shell=True, **kwargs)
+        return len(proc.stderr) == 0 and len(proc.stdout) > 0
+    except subprocess.CalledProcessError:
+        return False
 
 
 @functools.lru_cache(None)
@@ -55,7 +71,7 @@ def is_docker_desktop():
 @functools.lru_cache(None)
 def get_current_container_mounts():
     subp = subprocess.Popen(
-        f"docker inspect -f '{{{{ json .Mounts }}}}' {get_current_container_id()}",
+        f"docker inspect -f '{{{{ json . }}}}' {get_current_container_id()}",
         shell=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -63,11 +79,33 @@ def get_current_container_mounts():
     mount_data, err = subp.communicate()
     log.debug(f"Got {mount_data} {err}")
     if subp.returncode == 0:
-        mount_list = json.loads(mount_data)
+        inspect = json.loads(mount_data)
 
-        # if windows/mac (aka "Docker Desktop"), remove any leading '/host_mnt'
-        # docker VM paths
-        if is_docker_desktop():
+        mount_list = inspect["Mounts"]
+
+        labels = inspect["Config"]["Labels"]
+
+        if "desktop.docker.io/wsl-distro" in labels:
+            # This is WSL2 integrated distro; the actual mounts in the mount
+            # list are of the form [1] which appears fairly useless for our
+            # purposes.  The good news is that docker-desktop includes a bunch
+            # of labels on the image to fill the need.
+            # [1] /run/desktop/mnt/host/wsl/docker-desktop-bind-mounts/<distro>/<hexstring>
+
+            mount_list = []
+            for key in labels.keys():
+                m = re.match("^desktop.docker.io/(binds|mounts)/([0-9]+)/Source$", key)
+                if m:
+                    src = key
+                    # regex match guarantees this replace is only at the end
+                    dest = key.replace("Source", "Target")
+
+                    mount_list.append(
+                        {"Source": labels[src], "Destination": labels[dest]}
+                    )
+        elif is_docker_desktop():
+            # if windows/mac (aka "Docker Desktop"), remove any leading '/host_mnt'
+            # docker VM paths
             for mount in mount_list:
                 if mount["Source"].startswith("/host_mnt/"):
                     mount["Source"] = mount["Source"].replace("/host_mnt", "", 1)
@@ -83,7 +121,7 @@ def get_whole_host_mounting_flags(from_container):
     """
     Mount whole system read-only to enable rebuilding images as needed
     """
-    if hostdet.is_wsl1() or hostdet.is_windows() or os.getenv("WINDOWS_HOST"):
+    if hostdet.is_wsl1() or hostdet.is_windows() or is_windows_by_host_mnt():
         if from_container:
             mounts = get_current_container_mounts()
 
@@ -92,6 +130,11 @@ def get_whole_host_mounting_flags(from_container):
                 firstseg = mount["Source"].strip("/").split("/")[0]
                 if len(firstseg) == 1:
                     drives.append(firstseg)
+
+            if len(drives) == 0:
+                # probably didn't mount
+                if is_windows_by_host_mnt():
+                    drives = docker_available_drives()
         else:
             drives = docker_available_drives()
 

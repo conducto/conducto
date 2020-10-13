@@ -748,14 +748,13 @@ def _parse_image_kwargs_from_config_section(section):
 
 
 def evaluate_filter(s, substitutions):
-    try:
-        s = s.format(**substitutions)
-    except KeyError as e:
-        log.error(f"Missing substitions for filter: {s}")
-        raise e
+    # Apply substitions after splitting, because splitting can introduce empty
+    # strings that we need to filter out, but substitutions can also introduce
+    # empty strings that we need to retain.
     reg = re.compile(r"(\|\||&&|==|!=|!|\(|\))")
-
-    tokens = [i.strip() for i in reg.split(s)]
+    tokens = [
+        i.strip().format(**substitutions) for i in reg.split(s) if i.strip() != ""
+    ]
     mapping = []
 
     class SafeEvalContainer:
@@ -792,8 +791,10 @@ def evaluate_filter(s, substitutions):
     try:
         expr = " ".join(tokens)
         return bool(eval(expr))
-    except:
-        raise SyntaxError(f"Cannot evaluate filter expression: {expr}, tokens={tokens}")
+    except Exception as e:
+        raise SyntaxError(
+            f"Cannot evaluate filter expression: {expr}, tokens={tokens}, mapping={mapping}"
+        )
 
 
 def _parse_config_args_from_cmdline(argv):

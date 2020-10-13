@@ -218,6 +218,11 @@ class Path:
         return proc.stdout.decode("utf-8").strip()
 
     @staticmethod
+    def _windows_drive_path(path) -> str:
+        winpath = path.replace("/", "\\")
+        return f"{winpath[1].upper()}:{winpath[2:]}"
+
+    @staticmethod
     def _windows_docker_path(path) -> str:
         """
         Returns the windows path with forward slashes.  This is the format docker

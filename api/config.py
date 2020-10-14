@@ -2,6 +2,7 @@ import configparser
 import hashlib
 import json
 import os
+import re
 import secrets
 import subprocess
 import time
@@ -199,19 +200,31 @@ commands:
     ############################################################
     # specific methods
     ############################################################
-    def get_url(self):
+    def get_url(self, pretty=False):
         if "CONDUCTO_URL" in os.environ and os.environ["CONDUCTO_URL"]:
-            return os.environ["CONDUCTO_URL"]
+            result = os.environ["CONDUCTO_URL"]
         elif self.default_profile and os.path.exists(
             self._get_profile_config_file(self.default_profile)
         ):
-            return self._profile_general(self.default_profile)["url"]
+            result = self._profile_general(self.default_profile)["url"]
         else:
-            return "https://conducto.com"
+            result = "https://www.conducto.com"
+
+        if pretty:
+            # wwwx*.conducto* -> www.conducto*
+            # sandboxx*.conducto* -> sandbox.conducto*
+            # testx*.conducto* -> test.conducto*
+            res = urllib.parse.urlparse(result)
+            m = re.search("^(www|sandbox|test).*\.(conducto\.(?:com|io))$", res.netloc)
+            if m:
+                netloc = f"{m.group(1)}.{m.group(2)}"
+                return res._replace(netloc=netloc).geturl()
+
+        return result
 
     def get_docker_domain(self):
         url = self.get_url()
-        if url == "https://conducto.com":
+        if url in ("https://conducto.com", "https://www.conducto.com"):
             return "docker.conducto.com"
         else:
             docker_url = url.replace(".conducto.", "-docker.conducto.", 1)

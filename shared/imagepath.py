@@ -14,6 +14,24 @@ Sharedpath = collections.namedtuple("Sharedpath", ["name", "hint", "tail"])
 # import conducto.internal.host_detection as hostdet
 
 
+def is_subdir_of(ospath, parent, child):
+    """
+
+    >>> is_subdir_of(os.path, "/a/b/c", "/a/b/c/d")
+    True
+    >>> is_subdir_of(os.path, "/a/b/c", "/a/b/d")
+    False
+    >>> is_subdir_of(os.path, "/a/b/c", "/a/b/c/../d")
+    False
+    """
+
+    nparent = ospath.normpath(parent.rstrip(ospath.sep))
+    nchild = ospath.normpath(child)
+
+    common = ospath.commonpath([nparent, nchild])
+    return nparent == common
+
+
 class Path:
     """
     This represents a path to a file or directory available to a pipeline

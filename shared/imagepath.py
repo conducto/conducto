@@ -153,7 +153,28 @@ class Path:
                     hostpath = self._windows_docker_path(hostpath)
 
                 # host `/` is mounted at `/mnt/external`
-                return Path.PATH_PREFIX + hostpath
+                path = Path.PATH_PREFIX + hostpath
+                bugpath = Path.PATH_PREFIX + "/host_mnt" + hostpath
+
+                # Docker Desktop for Mac 2.4.0 uses gRPC FUSE for sharing files between
+                # the container and the desktop. It has a bug that inserts an extra
+                # 'host_mnt' in the paths, and there is another bug that brings
+                # performance to zero. Error if we're in that state. Stupid Docker
+                # Desktop.
+                if not os.path.exists(path) and os.path.exists(bugpath):
+                    raise Exception(
+                        """
+    The latest Docker Desktop for Mac (v2.4.0) has a bug with gRPC FUSE that breaks
+    Conducto. Please disable it by going to 'Docker Desktop > Preferences' and
+    uncheck 'Use gRPC FUSE for file sharing'. This will kill all Docker containers,
+    so you may have to restart your pipeline.
+
+    If you're not on Docker Desktop for Mac v2.4, please let us know that you saw
+    this error because that means it is more widespread than we believed.
+"""
+                    )
+                else:
+                    return path
         else:
             return self.to_worker_mount()
 

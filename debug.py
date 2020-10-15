@@ -10,7 +10,7 @@ import time
 import tarfile
 import io
 from conducto.shared.log import format
-from conducto.shared import constants, imagepath
+from conducto.shared import constants, container_utils, imagepath
 import conducto.internal.host_detection as hostdet
 
 NULL = subprocess.DEVNULL
@@ -98,8 +98,7 @@ def start_container(pipeline, payload, live, token):
 
     container_name = "conducto_debug_" + str(random.randrange(1 << 64))
 
-    if "/" in image_name:
-        refresh_docker_image(image_name, console)
+    container_utils.refresh_image(image_name, verbose=True)
 
     console.print("Launching docker container...")
 
@@ -163,25 +162,6 @@ def start_container(pipeline, payload, live, token):
                 break
 
     return container_name
-
-
-def refresh_docker_image(img, console):
-    try:
-        subprocess.check_call(["docker", "inspect", img], stdout=PIPE, stderr=PIPE)
-    except subprocess.CalledProcessError:
-        # Image not present so pull may take a while. Show the output of
-        # 'docker pull' so user knows to wait
-        console.print("Pulling docker image...")
-        print("\033[2m", end="", flush=True)
-        try:
-            subprocess.run(["docker", "pull", img])
-        finally:
-            print("\033[0m", end="", flush=True)
-    else:
-        # Image is present so we pull again to make sure we have the latest code. It
-        # should be fast so hide the output.
-        console.print("Refreshing docker image...")
-        subprocess.run(["docker", "pull", img], stdout=PIPE, stderr=PIPE)
 
 
 def dump_command(container_name, command, shell):

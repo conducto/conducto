@@ -9,9 +9,34 @@ import re
 import json
 import functools
 import subprocess
+from subprocess import DEVNULL, PIPE
 
 from conducto.shared import async_utils, client_utils, constants, log, imagepath
 import conducto.internal.host_detection as hostdet
+
+
+def refresh_image(img, verbose=False):
+    # If the image is local, there's nothing to refresh.
+    if "/" not in img:
+        return
+
+    try:
+        subprocess.check_call(["docker", "inspect", img], stdout=PIPE, stderr=PIPE)
+    except subprocess.CalledProcessError:
+        # Image not present so pull may take a while. Show the output of
+        # 'docker pull' so user knows to wait
+        print("Pulling docker image...")
+        print("\033[2m", end="", flush=True)
+        try:
+            subprocess.run(["docker", "pull", img])
+        finally:
+            print("\033[0m", end="", flush=True)
+    else:
+        # Image is present so we pull again to make sure we have the latest code. It
+        # should be fast so hide the output.
+        if verbose:
+            print("Refreshing docker image...", flush=True)
+        subprocess.run(["docker", "pull", img], stdout=PIPE, stderr=PIPE)
 
 
 @functools.lru_cache(None)
@@ -21,7 +46,7 @@ def is_windows_by_host_mnt():
         return True
 
     try:
-        kwargs = dict(check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        kwargs = dict(check=True, stdout=PIPE, stderr=PIPE)
         catwin = "docker run --rm -v /:/mnt/external alpine cat /mnt/external/host_mnt/c/Windows/win.ini"
         proc = subprocess.run(catwin, shell=True, **kwargs)
         return len(proc.stderr) == 0 and len(proc.stdout) > 0
@@ -32,7 +57,7 @@ def is_windows_by_host_mnt():
 @functools.lru_cache(None)
 def docker_available_drives():
     try:
-        kwargs = dict(check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        kwargs = dict(check=True, stdout=PIPE, stderr=PIPE)
         lsdrives = "docker run --rm -v /:/mnt/external alpine ls /mnt/external/host_mnt"
         proc = subprocess.run(lsdrives, shell=True, **kwargs)
         return proc.stdout.decode("utf8").split()
@@ -57,10 +82,7 @@ def docker_available_drives():
 @functools.lru_cache(None)
 def is_docker_desktop():
     subp = subprocess.Popen(
-        "docker info --format '{{json .}}'",
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        "docker info --format '{{json .}}'", shell=True, stdout=PIPE, stderr=DEVNULL,
     )
     info_txt, err = subp.communicate()
 
@@ -73,8 +95,8 @@ def get_current_container_mounts():
     subp = subprocess.Popen(
         f"docker inspect -f '{{{{ json . }}}}' {get_current_container_id()}",
         shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stdout=PIPE,
+        stderr=DEVNULL,
     )
     mount_data, err = subp.communicate()
     log.debug(f"Got {mount_data} {err}")

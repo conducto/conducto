@@ -133,14 +133,8 @@ def launch_agent(check_for_old=True, token=None) -> str:
     tag = config.get_image_tag()
     is_test = os.environ.get("CONDUCTO_USE_TEST_IMAGES")
     agent_image = constants.ImageUtil.get_agent_image(tag, is_test)
-    if agent_image.startswith("conducto/"):
-        docker_parts = ["docker", "pull", agent_image]
-        log.debug(" ".join(pipes.quote(s) for s in docker_parts))
-        client_utils.subprocess_run(
-            docker_parts,
-            capture_output=capture_output,
-            msg="Error pulling agent container",
-        )
+    container_utils.refresh_image(agent_image)
+
     # Run agent container.
     docker_parts = ["docker", "run"] + flags + [agent_image] + cmd_parts
     log.debug(" ".join(pipes.quote(s) for s in docker_parts))

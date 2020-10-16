@@ -1122,8 +1122,7 @@ def _get_pipeline_validated(token, pipeline_id):
         pipeline = api.Pipeline().get(pipeline_id, token=token)
     except api.InvalidResponse as e:
         if "not found" in str(e):
-            print(str(e), file=sys.stderr)
-            sys.exit(1)
+            raise api.api_utils.NoTracebackError(e.message)
         else:
             raise
 
@@ -1313,10 +1312,16 @@ def main(
                         update_serialization(output.serialize(), pipeline_id,)
                     )
                 else:
-                    output._build(
-                        build_mode=BM.LOCAL if is_local else BM.DEPLOY_TO_CLOUD,
-                        **conducto_state,
-                    )
+                    try:
+                        output._build(
+                            build_mode=BM.LOCAL if is_local else BM.DEPLOY_TO_CLOUD,
+                            **conducto_state,
+                        )
+                    except api.api_utils.InvalidResponse as e:
+                        if str(e).find("Cloud mode must be enabled") >= 0:
+                            raise api.api_utils.NoTracebackError(e.message)
+                        else:
+                            raise
             except api.UserInputValidation as e:
                 print(str(e), file=sys.stderr)
                 sys.exit(1)

@@ -6,7 +6,7 @@ from .image import Image, relpath
 from .data import pipeline as temp_data, user as perm_data
 from .util import env_bool
 from ._version import __version__, __sha1__
-from . import api, data, profile, slack
+from . import api, data, profile, slack, git
 
 __all__ = [
     "Exec",

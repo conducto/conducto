@@ -1,7 +1,6 @@
 import json as pyjson
 import conducto as co
 from conducto.integrations.slack import Slack
-from conducto.shared import constants, log, agent_utils, container_utils
 from . import api
 
 

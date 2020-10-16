@@ -24,7 +24,7 @@ Consider a computational task that breaks into pieces (and maybe its pieces have
 Conducto organizes those pieces into trees that we call pipelines.
 At [conducto.com](https://conducto.com) we host pages that let you view and control them.
 
-![Pipeline Screenshot](tree_screenshot.png)
+![Pipeline Screenshot](https://github.com/conducto/conducto/blob/main/tree_screenshot.png?raw=true)
 
 ## Centralize Insights, Work Wherever
 

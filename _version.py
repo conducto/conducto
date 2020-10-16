@@ -1,3 +1,3 @@
 # Values set automatically. Do not modify by hand.
-__version__ = "0.0.99"
-__sha1__ = "ddd3ca4"
+__version__ = "0.0.100"
+__sha1__ = "d20dcd9"

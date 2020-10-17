@@ -46,8 +46,7 @@ class InvalidResponse(Exception):
     def __str__(self):
         return (
             f"{super().__str__()}\n"
-            f"  status_code={self.status_code}\n"
-            f"  url={self.url}\n"
+            f"  status_code={self.status_code}, url={self.url}\n"
             f"  content_type={self.content_type}"
         )
 

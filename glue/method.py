@@ -1175,6 +1175,9 @@ async def update_serialization(
 
     websocket = await api.connect_to_pipeline(pipeline_id, token)
     await websocket.send(json.dumps({"type": "UPDATE_SERIALIZATION", "payload": None}))
+    # seems like without this sleep occasionally the manager never receives the message
+    await asyncio.sleep(0.1)
+    await websocket.close()
 
 
 def main(

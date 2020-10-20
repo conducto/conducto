@@ -209,7 +209,10 @@ async def text_for_extend(user_image):
         if pyvers is None:
             lines.append("RUN apt-get update")
             lines.append(f"RUN apt-get install -y python3")
-            pyvers = (3, 8)
+            install_command = "apt-get update && apt-get install -y python3"
+            _default_python, pyvers, _pip_binary = await get_python_version(
+                user_image, install_command
+            )
             default_python = "/usr/bin/python3"
     elif _is_alpine(linux_flavor):
         suffix = "alpine"
@@ -314,10 +317,11 @@ async def get_shell(user_image):
     )
 
 
-async def get_python_version(user_image):
+async def get_python_version(user_image, install_command=None):
     cache = get_python_version._cache = getattr(get_python_version, "cache", {})
-    if user_image in cache:
-        return cache[user_image]
+    cache_key = (user_image, install_command)
+    if cache_key in cache:
+        return cache[cache_key]
 
     pyresults = [None, None]
 
@@ -330,7 +334,7 @@ async def get_python_version(user_image):
         "python3.8",
     ]:
         try:
-            version = await _get_python_version(user_image, binary)
+            version = await _get_python_version(user_image, binary, install_command)
             pyresults = [binary, version.release[0:2]]
             break
         except (
@@ -354,11 +358,13 @@ async def get_python_version(user_image):
                 pass
 
     result = pyresults[0], pyresults[1], pipresults
-    cache[user_image] = result
+    cache[cache_key] = result
     return result
 
 
-async def _get_python_version(user_image, python_binary) -> packaging.version.Version:
+async def _get_python_version(
+    user_image, python_binary, install_command
+) -> packaging.version.Version:
     """Gets python version within a Docker image.
     Args:
         user_image: image name
@@ -370,19 +376,17 @@ async def _get_python_version(user_image, python_binary) -> packaging.version.Ve
         LowPException if version is too low
     """
 
-    out, err = await async_utils.run_and_check(
-        "docker",
-        "run",
-        "--rm",
-        "--entrypoint",
-        python_binary,
-        user_image,
-        "--version",
-        stop_on_error=False,
-    )
-    out = out.decode("utf-8")
+    command = f"{python_binary} --version"
+    if install_command is not None:
+        command = f"{install_command} && {command}"
 
-    python_version = re.sub(r"^Python\s+", r"", out, re.IGNORECASE,).strip()
+    out, err = await async_utils.run_and_check(
+        "docker", "run", "--rm", user_image, "sh", "-c", command, stop_on_error=False,
+    )
+    out = out.decode("utf-8").strip()
+
+    python_version = re.sub(r"^.*Python\s+", r"", out, re.IGNORECASE, re.DOTALL).strip()
+
     # Some weird versions cannot be parsed by packaging.version.
     if python_version.endswith("+"):
         python_version = python_version[:-1]

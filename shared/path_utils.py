@@ -57,3 +57,10 @@ def outer_chown(path):
     do_set, uid, gid = outer_set()
     if do_set:
         os.chown(path, uid, gid)
+
+
+def outer_chown_recursive(path):
+    for dirpath, _dirnames, filenames in os.walk(path):
+        outer_chown(dirpath)
+        for filename in filenames:
+            outer_chown(os.path.join(dirpath, filename))

@@ -2,6 +2,7 @@ import pipes
 import asyncio, functools, logging, time
 import concurrent.futures
 from . import client_utils, log
+import inspect
 
 logger = logging.getLogger("conducto_async_utils")
 logger.setLevel(logging.INFO)
@@ -56,20 +57,34 @@ async def eval_in_thread(cb, *args, **kwargs):
         return await loop.run_in_executor(pool, functools.partial(cb, *args, **kwargs))
 
 
-# Usage: @to_async(threadpool)
-def to_async(pool):
-    def decorator(fxn):
+# Usage:
+# @to_async(threadpool): executes the function in the threadpool
+# @to_async: each instance of the function is evaluated in a separate thread
+def to_async(pool_or_fxn):
+
+    if not isinstance(pool_or_fxn, concurrent.futures.ThreadPoolExecutor):
+        assert not inspect.iscoroutinefunction(pool_or_fxn) and callable(pool_or_fxn)
+
+        @functools.wraps(pool_or_fxn)
         async def _inner(*args, **kwargs):
-            # NOTE: get_running_loop would be nice here, but this is python 3.6 compatible
-            loop = asyncio.get_event_loop()
-            assert loop.is_running()
-            return await loop.run_in_executor(
-                pool, functools.partial(fxn, *args, **kwargs)
-            )
+            return await eval_in_thread(pool_or_fxn, *args, **kwargs)
 
         return _inner
+    else:
 
-    return decorator
+        def decorator(fxn):
+            @functools.wraps(fxn)
+            async def _inner(*args, **kwargs):
+                # NOTE: get_running_loop would be nice here, but this is python 3.6 compatible
+                loop = asyncio.get_event_loop()
+                assert loop.is_running()
+                return await loop.run_in_executor(
+                    pool_or_fxn, functools.partial(fxn, *args, **kwargs)
+                )
+
+            return _inner
+
+        return decorator
 
 
 def return_control_to_loop(iterable, max_time=0.25):

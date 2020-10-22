@@ -1003,7 +1003,18 @@ class Image:
         await async_utils.run_and_check(
             "docker", "tag", self.name_local_extended, cloud_tag
         )
-        out, err = await async_utils.run_and_check("docker", "push", cloud_tag)
+        attempts = 3
+        for tries in range(attempts):
+            try:
+                out, err = await async_utils.run_and_check("docker", "push", cloud_tag)
+                break
+            except subprocess.CalledProcessError as e:
+                last = tries == attempts - 1
+                if not last and e.stderr.decode("utf8").startswith("toomanyrequests"):
+                    await asyncio.sleep(2)
+                    continue
+                else:
+                    raise
         return out, err
 
     def is_cloud_building(self):

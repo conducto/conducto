@@ -93,7 +93,12 @@ def profile_set_default(id):
 def _profile_add(url, default):
     # set global url for config object and clear profile to avoid clobbering
     # the default
-    os.environ["CONDUCTO_URL"] = url
+    if not url.startswith("https://"):
+        raise api.UserInputValidation(
+            f"The URL {url} is not recognized as a valid Conducto server environment"
+        )
+
+    os.environ["CONDUCTO_URL"] = url.rstrip("/")
     os.environ["CONDUCTO_PROFILE"] = "__none__"
 
     # this writes the profile
@@ -126,10 +131,6 @@ def profile_delete(id=None, url=None, email=None, force=False):
     """
     Delete a log-in profile on this computer selected by id, url or email.
     """
-    # TODO:  validate that no manager is running when you delete the profile
-    # because that would just leave a rubbish partial profile on the user's
-    # computer.
-
     if id is None and url is None and email is None:
         print(
             "You must include at least one criterion (id, url, email)", file=sys.stderr
@@ -272,6 +273,11 @@ def profile_delete(id=None, url=None, email=None, force=False):
             except (api.InvalidResponse, api.UnauthorizedResponse, PermissionError):
                 print(
                     "Warning: unauthorized connecting to Conducto servers to delete programs; they will be deleted after their retention period expires.",
+                    file=sys.stderr,
+                )
+            except Exception as e:
+                print(
+                    f"Warning: unknown error connecting to Conducto servers to delete programs; {str(e)}",
                     file=sys.stderr,
                 )
             else:

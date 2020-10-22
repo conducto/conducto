@@ -282,6 +282,8 @@ class PipelineLifecycle:
     standby = {STANDBY_LOCAL, STANDBY_CLOUD}
     sleeping = {SLEEPING_LOCAL, SLEEPING_CLOUD}
 
+    inactive = standby | sleeping
+
 
 class Hashing:
     PRIME_BASE = 1000000007
@@ -357,3 +359,18 @@ class CONFIG_EVENTS:
     CRON = "cron"
 
     events = {PR, PUSH, CREATE, DELETE, CRON}
+
+
+# remote docker instant statuses
+class InstanceStatus:
+    AVAILABLE = 0
+    RESERVED = 1
+    IN_USE = 2
+    PREALLOCATED = 3
+
+
+# max times for remote docker ops
+# ops taking longer than these limits indicate a faulty instance
+class InstanceTransitionLimits:
+    MAX_START = 120
+    MAX_STOP = 600

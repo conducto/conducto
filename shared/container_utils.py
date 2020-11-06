@@ -110,21 +110,44 @@ def get_current_container_mounts():
         if "desktop.docker.io/wsl-distro" in labels:
             # This is WSL2 integrated distro; the actual mounts in the mount
             # list are of the form [1] which appears fairly useless for our
-            # purposes.  The good news is that docker-desktop includes a bunch
-            # of labels on the image to fill the need.
+            # purposes.  However the list HostConfig.Binds has a different more
+            # useful view with a list of strings of format
+            # <Source>:<Destination>.
             # [1] /run/desktop/mnt/host/wsl/docker-desktop-bind-mounts/<distro>/<hexstring>
 
-            mount_list = []
-            for key in labels.keys():
-                m = re.match("^desktop.docker.io/(binds|mounts)/([0-9]+)/Source$", key)
-                if m:
-                    src = key
-                    # regex match guarantees this replace is only at the end
-                    dest = key.replace("Source", "Target")
+            re_bind = "^desktop.docker.io/(binds|mounts)/([0-9]+)/Source$"
+            has_bind_labels = any(re.match(re_bind, ll) for ll in labels.keys())
 
-                    mount_list.append(
-                        {"Source": labels[src], "Destination": labels[dest]}
+            if has_bind_labels:
+                # Docker Desktop 2.4
+                log.debug("determining host paths via docker 2.4 mechanism")
+
+                # The old understanding of the good news is that docker-desktop
+                # includes a bunch of labels on the image to fill the need.
+                mount_list = []
+                for key in labels.keys():
+                    m = re.match(
+                        "^desktop.docker.io/(binds|mounts)/([0-9]+)/Source$", key
                     )
+                    if m:
+                        src = key
+                        # regex match guarantees this replace is only at the end
+                        dest = key.replace("Source", "Target")
+                        mount_list.append(
+                            {"Source": labels[src], "Destination": labels[dest]}
+                        )
+            else:
+                # Docker Desktop 2.5
+                log.debug("determining host paths via docker 2.5 mechanism")
+
+                bindlist = inspect["HostConfig"]["Binds"]
+                bindlist = [bl.rsplit(":") for bl in bindlist]
+                bindmap = {bl[1].rstrip("/"): bl[0].rstrip("/") for bl in bindlist}
+                log.debug(bindmap)
+
+                for mount in mount_list:
+                    if mount["Destination"] in bindmap:
+                        mount["Source"] = bindmap[mount["Destination"]]
         elif is_docker_desktop():
             # if windows/mac (aka "Docker Desktop"), remove any leading '/host_mnt'
             # docker VM paths

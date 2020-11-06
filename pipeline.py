@@ -686,7 +686,6 @@ class Node:
         run=False,
         sleep_when_done=False,
         public=False,
-        token=None,
     ):
         if self.image is None:
             self.image = image_mod.Image(name="conducto-default")
@@ -705,7 +704,6 @@ class Node:
             use_app=app,
             retention=retention,
             is_public=public,
-            token=token,
         )
 
     def check_images(self):

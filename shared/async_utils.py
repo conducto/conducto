@@ -145,7 +145,10 @@ def loop(func, interval, ignore_errors=True):
     async def _loop():
         while True:
             try:
-                if asyncio.iscoroutinefunction(func):
+
+                check = func.func if isinstance(func, functools.partial) else func
+
+                if asyncio.iscoroutinefunction(check):
                     # cancelling the loop should not interrupt the final call of func()
                     # these tasks are eventually finished in _wait_tasks
                     task = asyncio.create_task(func())
@@ -158,6 +161,9 @@ def loop(func, interval, ignore_errors=True):
             except asyncio.CancelledError:
                 raise
             except Exception as e:
+                import traceback
+
+                traceback.print_exc()
                 logger.exception(e)
                 if not ignore_errors:
                     raise

@@ -139,6 +139,10 @@ class Pipeline:
             self.update(
                 pipeline_id, {"status": pl.SLEEPING_CLOUD}, "status", token=token
             )
+        elif pipeline["status"] == pl.STANDBY_LOCAL:
+            self.update(
+                pipeline_id, {"status": pl.SLEEPING_LOCAL}, "status", token=token
+            )
         else:
             # TODO: think about error
             pass

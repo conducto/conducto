@@ -21,7 +21,7 @@ from .. import api, callback, image as image_mod, pipeline
 from . import arg
 
 _UNSET = object()
-CONDUCTO_ARGS = [
+FLAG_ARGS = [
     "cloud",
     "local",
     "run",
@@ -29,10 +29,14 @@ CONDUCTO_ARGS = [
     "app",
     "sleep_when_done",
     "public",
+]
+VALUE_ARGS = [
     "pipeline_id",
     "title",
     "doc",
+    "default_doc",
 ]
+CONDUCTO_ARGS = FLAG_ARGS + VALUE_ARGS
 
 OPS = {"||", "&&", "!=", "==", "(", ")", "!"}
 
@@ -637,6 +641,7 @@ def _add_argparse_options_for_node(parser):
     parser.add_argument("--public", action="store_true")
     parser.add_argument("--title")
     parser.add_argument("--doc")
+    parser.add_argument("--default-doc")
 
 
 def _parse_args(parser, argv):
@@ -816,7 +821,7 @@ def _parse_config_args_from_cmdline(argv):
             basekey = key[2:].replace("-", "_")
 
             if basekey in CONDUCTO_ARGS:
-                if basekey not in ["pipeline_id", "title", "doc"]:
+                if basekey not in VALUE_ARGS:
                     if value is not None:
                         raise ValueError(
                             f"Invalid argument '{arg}'. --{key} takes no argument."
@@ -855,7 +860,6 @@ def run_cfg(
     copy_url=None,
     copy_branch=None,
     git_urls=None,
-    token=None,
     tags=None,
     unique_tag=None,
     *,
@@ -893,7 +897,6 @@ def run_cfg(
             copy_url=copy_url,
             copy_branch=copy_branch,
             git_urls=git_urls,
-            token=token,
             tags=tags,
             unique_tag=unique_tag,
             callback_after_create_before_build=callback_after_create_before_build,
@@ -916,7 +919,6 @@ def run_cfg(
                 copy_url=copy_url,
                 copy_branch=copy_branch,
                 git_urls=git_urls,
-                token=token,
                 tags=tags,
                 unique_tag=unique_tag,
                 callback_after_create_before_build=callback_after_create_before_build,
@@ -951,7 +953,6 @@ def run_cfg_section(
     copy_url=None,
     copy_branch=None,
     git_urls=None,
-    token=None,
     tags=None,
     unique_tag=None,
     *,
@@ -965,7 +966,7 @@ def run_cfg_section(
     # See if this user is already a running pipeline for this unique_tag
     if unique_tag is not None:
         pipe_api = co.api.Pipeline()
-        pipelines = pipe_api.list(token, user_only=True)
+        pipelines = pipe_api.list(user_only=True)
         s = constants.PipelineLifecycle.sleeping
         matches = [
             p for p in pipelines if unique_tag in p["tags"] and p["status"] not in s
@@ -1059,7 +1060,12 @@ def run_cfg_section(
     if output.title is None:
         output.title = _get_default_title(None, default_was_used=False)
 
-    output.doc = conducto_kwargs.pop("doc", None) or output.doc
+    output.doc = (
+        conducto_kwargs.pop("doc", None)
+        or output.doc
+        or conducto_kwargs.pop("default_doc")
+    )
+    conducto_kwargs.pop("default_doc", None)
 
     if output.title is not None:
         output["Generate"].env["CONDUCTO_PARENT_TITLE"] = output.title
@@ -1102,9 +1108,7 @@ def run_cfg_section(
     if will_build:
         BM = constants.BuildMode
         return output._build(
-            build_mode=BM.LOCAL if is_local else BM.DEPLOY_TO_CLOUD,
-            token=token,
-            **conducto_kwargs,
+            build_mode=BM.LOCAL if is_local else BM.DEPLOY_TO_CLOUD, **conducto_kwargs
         )
     elif t.Bool(os.getenv("CONDUCTO_GLUE_DEBUG")):
         print(output.serialize(pretty=True))
@@ -1175,8 +1179,7 @@ async def update_serialization(
 
     websocket = await api.connect_to_pipeline(pipeline_id, token)
     await websocket.send(json.dumps({"type": "UPDATE_SERIALIZATION", "payload": None}))
-    # seems like without this sleep occasionally the manager never receives the message
-    await asyncio.sleep(0.1)
+    await websocket.recv()
     await websocket.close()
 
 
@@ -1295,7 +1298,13 @@ def main(
             output.title = _get_default_title(callFunc.__name__, default_was_used)
 
         # Set the doc on the Node
-        output.doc = conducto_state.pop("doc") or output.doc
+        output.doc = (
+            conducto_state.pop("doc", None)
+            or output.doc
+            or conducto_state.pop("default_doc")
+        )
+        conducto_state.pop("default_doc", None)
+
         if output.doc is None and callFunc.__doc__ is not None:
             output.doc = log.unindent(callFunc.__doc__)
 
@@ -1311,6 +1320,8 @@ def main(
             BM = constants.BuildMode
             try:
                 if pipeline_id:
+                    if output.image is None:
+                        output.image = image_mod.Image(name="conducto-default")
                     asyncio.get_event_loop().run_until_complete(
                         update_serialization(output.serialize(), pipeline_id,)
                     )

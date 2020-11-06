@@ -99,11 +99,15 @@ def post(url, headers=None, data=None):
     return response
 
 
-def delete(url, headers=None, params=None):
+def delete(url, headers=None, data=None, params=None):
     if headers is None:
         headers = {}
     url = _put_params(url, params)
-    the_request = urllib.request.Request(url, headers=headers, method="DELETE")
+    data = _get_json_bytes(data)
+    assert isinstance(data, bytes), f"data is of type {type(data)}."
+    the_request = urllib.request.Request(
+        url, headers=headers, data=data, method="DELETE"
+    )
     try:
         response = urllib.request.urlopen(the_request)
     except urllib.error.HTTPError as e:

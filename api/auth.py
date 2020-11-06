@@ -5,7 +5,7 @@ import getpass
 import os
 from .. import api
 from jose import jwt
-from conducto.shared import types as t, request_utils
+from conducto.shared import constants, request_utils, types as t
 from http import HTTPStatus as hs
 from . import api_utils
 
@@ -19,6 +19,7 @@ class Auth:
     # public methods
     ############################################################
     def get_token(self, login: dict) -> typing.Optional[t.Token]:
+        # TODO:  remove this function once get_auth is used everywhere
         if not login.get("email") or not login.get("password"):
             raise Exception("Login dict must specify email and password")
         data = json.dumps(login)
@@ -29,9 +30,40 @@ class Auth:
         data = self._get_data(response)
         return data["AccessToken"]
 
+    def get_account_token(
+        self, login: dict, account_id: str = None
+    ) -> typing.Optional[t.Token]:
+        if not login.get("email") or not login.get("password"):
+            raise Exception("Login dict must specify email and password")
+        data = json.dumps(login)
+        headers = {"content-type": "application/json"}
+        response = request_utils.post(
+            self.url + "/auth/login", headers=headers, data=data
+        )
+        data = self._get_data(response)
+        token = data["AccessToken"]
+        if not account_id:
+            # list accounts and use the first by default
+            accounts = self.list_accounts(token)
+            if len(accounts) > 0:
+                account_id = accounts[0]["user_id"]
+            else:
+                # critical failure
+                print("Cannot get account level token, no accounts for user")
+                return None
+
+        account_token = self.select_account(token, account_id)
+
+        # select account
+        return account_token
+
     def get_refreshed_token(
         self, token: t.Token, force: bool = False
     ) -> typing.Optional[t.Token]:
+        # TODO:  remove this function once refresh_auth is used everywhere
+        if constants.ExecutionEnv.images_only():
+            # In images_only mode, tokens don't matter so skip the actual refresh.
+            return token
         claims = self.get_unverified_claims(token)
         REFRESH_WINDOW_SECS = 120
         if time.time() + REFRESH_WINDOW_SECS < claims["exp"] and not force:
@@ -41,20 +73,43 @@ class Auth:
         data = self._get_data(response)
         return data["AccessToken"] if data is not None else None
 
-    def get_id_token(self, token: t.Token = None) -> typing.Optional[t.Token]:
-        headers = api_utils.get_auth_headers(token)
-        response = request_utils.get(self.url + "/auth/idtoken", headers=headers)
-        data = self._get_data(response)
-        return data["IdToken"]
+    def get_auth(self, login: dict) -> dict:
+        if not login.get("email") or not login.get("password"):
+            raise Exception("Login dict must specify email and password")
+        data = json.dumps(login)
+        headers = {"content-type": "application/json"}
+        response = request_utils.post(
+            self.url + "/auth/login", headers=headers, data=data
+        )
+        return self._get_data(response)
 
-    def get_identity_claims(self, token: t.Token = None) -> dict:
-        id_token = self.get_id_token(token)
-        claims = self.get_unverified_claims(id_token)
-        return claims
+    def refresh_auth(self, auths: dict, force: bool = False) -> dict:
+        if constants.ExecutionEnv.images_only():
+            # In images_only mode, tokens don't matter so skip the actual refresh.
+            return auths
+
+        acctoken = auths.get("AccessToken") or auths.get("IdToken")
+
+        if acctoken and not force:
+            claims = self.get_unverified_claims(acctoken)
+            REFRESH_WINDOW_SECS = 120
+            if time.time() + REFRESH_WINDOW_SECS < claims["exp"]:
+                return auths
+
+        headers = api_utils.get_auth_headers(acctoken, refresh=False)
+        headers["X-Refresh-Token"] = auths["RefreshToken"]
+        response = request_utils.get(self.url + "/auth/refresh", headers=headers)
+        return self._get_data(response)
 
     def get_credentials(self, token: t.Token = None, force_refresh=False) -> dict:
         headers = api_utils.get_auth_headers(token, force_refresh=force_refresh)
         response = request_utils.get(self.url + "/auth/creds", headers=headers)
+        data = self._get_data(response)
+        return data
+
+    def get_email(self, token: t.Token = None) -> dict:
+        headers = api_utils.get_auth_headers(token)
+        response = request_utils.get(self.url + "/auth/email", headers=headers)
         data = self._get_data(response)
         return data
 
@@ -68,6 +123,33 @@ class Auth:
         )
         return self._get_data(response)
 
+    def admin_create_account(self, token: t.Token, user_email: str, org_id: int):
+        headers = api_utils.get_auth_headers(token)
+        body = {"user_email": user_email, "org_id": org_id}
+
+        data = json.dumps(body)
+        response = request_utils.post(
+            self.url + "/auth/admin/account/create", headers=headers, data=data
+        )
+        return self._get_data(response)
+
+    def list_accounts(self, id_token: t.Token):
+        headers = api_utils.get_auth_headers(id_token)
+
+        response = request_utils.get(self.url + "/auth/accounts", headers=headers)
+        return self._get_data(response)
+
+    def select_account(self, id_token: t.Token, account_id: str):
+        headers = api_utils.get_auth_headers(id_token)
+
+        response = request_utils.get(
+            self.url + f"/auth/account/{account_id}", headers=headers
+        )
+        data = self._get_data(response)
+        token = data["AccessToken"]
+
+        return token
+
     def admin_enable_users(self, token: t.Token, users: list):
         headers = api_utils.get_auth_headers(token)
         body = {"user_ids": users}
@@ -78,37 +160,93 @@ class Auth:
         )
         return self._get_data(response)
 
+    def admin_delete_users(self, token: t.Token, users: list):
+        headers = api_utils.get_auth_headers(token)
+        body = {"user_ids": users}
+
+        data = json.dumps(body)
+        response = request_utils.delete(
+            self.url + "/auth/admin/account/delete", headers=headers, data=data
+        )
+        return self._get_data(response)
+
     def get_token_from_shell(
-        self, login: dict = None, force=False, skip_profile=False
+        self,
+        login: dict = None,
+        account_id: str = None,
+        force=False,
+        skip_profile=False,
     ) -> typing.Optional[t.Token]:
         try:
-            token = self.config.get_token(refresh=True)
+            account_token = self.config.get_token(refresh=True)
         except api_utils.UnauthorizedResponse:
             # silently null the token and it will be prompted from the user
             # further down
-            token = None
+            account_token = None
 
-        # If login not specified, read from environment.
-        if not login and os.environ.get("CONDUCTO_EMAIL"):
-            login = {
-                "email": os.environ.get("CONDUCTO_EMAIL"),
-                "password": os.environ["CONDUCTO_PASSWORD"],
-            }
-            print(
-                f"Logging in with CONDUCTO_EMAIL={login['email']} and "
-                f"CONDUCTO_PASSWORD in environment."
+        if account_token is None or login is not None:
+            if not login and os.environ.get("CONDUCTO_EMAIL"):
+                login = {
+                    "email": os.environ.get("CONDUCTO_EMAIL"),
+                    "password": os.environ["CONDUCTO_PASSWORD"],
+                }
+                print(
+                    f"Logging in with CONDUCTO_EMAIL={login['email']} and "
+                    f"CONDUCTO_PASSWORD in environment."
+                )
+
+            if login:
+                auth_token = self.get_token(login)
+            elif not account_id and not self.config.default_profile:
+                auth_token = self._get_token_from_login()
+            else:
+                auth_token = None
+
+            if auth_token and not account_id:
+                if os.environ.get("CONDUCTO_ACCOUNT"):
+                    account_id = os.environ.get("CONDUCTO_ACCOUNT")
+                else:
+                    # if there is at least one account, select the first by default
+                    # NOTE: mostly convenience for testing (account id is unpredictable)
+                    # TODO -- show accounts to user and select default
+                    print(
+                        "No account id specified; Selecting first account in list by default."
+                    )
+                    accounts = self.list_accounts(auth_token)
+                    if len(accounts) > 0:
+                        user_id = accounts[0]["user_id"]
+                        print(f"Defaulting to account id {user_id}")
+                        account_id = user_id
+                    else:
+                        raise api.UserInputValidation(
+                            "No accounts associated with this user.\n"
+                            f"Please visit {self.url}/app and create an account, then try again."
+                        )
+
+        # if login and account_id:
+        if account_id:
+            # print("Getting fresh token with login data & account id")
+            new_token = self.select_account(id_token=auth_token, account_id=account_id)
+            if new_token and new_token != account_token:
+                # print("successfully aquired new token")
+                account_token = new_token
+                if not skip_profile:
+                    self.config.set_profile_general(
+                        self.config.default_profile, "token", account_token
+                    )
+        elif not account_token:
+            # token is expired, not enough info to fetch it headlessly.
+            # prompt the user to login via the UI
+            raise api.UserInputValidation(
+                "Failed to refresh token. Token may be expired.\n"
+                f"Log in through the webapp at {self.url}/app/ and select an account, then try again."
             )
-
-        # First try to login with specified login.
-        if login:
-            token = self.get_token(login)
-
-        # Otherwise try to refresh existing token.
-        elif token:
+        else:
+            # try to refresh the token
             try:
-                new_token = self.get_refreshed_token(token, force)
+                new_token = self.get_refreshed_token(account_token, force)
             except api_utils.InvalidResponse as e:
-                token = None
+                account_token = None
                 # If cognito changed, our token is invalid, so we should
                 # prompt for re-login.
                 if e.status_code == hs.UNAUTHORIZED and "Invalid auth token" in str(e):
@@ -122,31 +260,31 @@ class Auth:
                     raise e
             else:
                 if new_token:
-                    if new_token != token:
-                        if os.environ.get("CONDUCTO_USE_ID_TOKEN"):
-                            new_token = self.get_id_token(new_token)
-                        self.config.set_profile_general(
-                            self.config.default_profile, "token", new_token
-                        )
-                        token = new_token
+                    if new_token != account_token:
+                        if not skip_profile:
+                            self.config.set_profile_general(
+                                self.config.default_profile, "token", new_token
+                            )
+                        account_token = new_token
                     # now, we continue with the refreshed token possibly
                     # writing a brand new profile (e.g. from the copied
                     # `start-agent` command from the app)
 
-        # If no token by now, prompt for login.
-        if not token:
-            token = self._get_token_from_login()
-            if self.config.default_profile:
-                self.config.set_profile_general(
-                    self.config.default_profile, "token", token
+        # If no token by now, fail and let the user know that they need
+        # to refresh their token in the app by logging in again.
+
+        if not account_token:
+            raise api.UserInputValidation(
+                "Failed to refresh token. Token may be expired.\n"
+                f"Log in through the webapp at {self.url}/app/ and select an account, then try again."
+            )
+        else:
+            # update profile with fresh token unless skipped
+            if not skip_profile:
+                self.config.write_profile(
+                    self.config.get_url(), account_token, default="first"
                 )
-
-        if os.environ.get("CONDUCTO_USE_ID_TOKEN"):
-            token = self.get_id_token(token)
-
-        if not skip_profile:
-            self.config.write_profile(self.config.get_url(), token, default="first")
-        return t.Token(token)
+            return t.Token(account_token)
 
     def get_unverified_claims(self, token: t.Token = None) -> dict:
         # Returns a dict of *unverified* claims decoded from token.
@@ -158,22 +296,6 @@ class Auth:
 
     def get_user_id(self, token: t.Token = None):
         return self.get_unverified_claims(token=token)["sub"]
-
-    def prompt_for_login(self, i=None) -> dict:
-        if not i:
-            # only print this on the first iteration to avoid obscuring the
-            # failure mode
-            print(f"Log in to Conducto. To register, visit {self.url}/app/")
-        login = {}
-        while True:
-            login["email"] = input("Email: ")
-            if len(login["email"]) > 0:
-                break
-        while True:
-            login["password"] = getpass.getpass(prompt="Password: ")
-            if len(login["password"]) > 0:
-                break
-        return login
 
     def test(self, token: t.Token = None) -> bool:
         headers = api_utils.get_auth_headers(token=token)
@@ -204,6 +326,22 @@ class Auth:
                     return None
             raise
 
+    def prompt_for_login(self, i=None) -> dict:
+        if not i:
+            # only print this on the first iteration to avoid obscuring the
+            # failure mode
+            print(f"Log in to Conducto. To register, visit {self.url}/app/")
+        login = {}
+        while True:
+            login["email"] = input("Email: ")
+            if len(login["email"]) > 0:
+                break
+        while True:
+            login["password"] = getpass.getpass(prompt="Password: ")
+            if len(login["password"]) > 0:
+                break
+        return login
+
     def _get_token_from_login(self):
         NUM_TRIES = 3
         for i in range(NUM_TRIES):
@@ -211,12 +349,54 @@ class Auth:
             try:
                 token = self.get_token(login)
 
-                # test that the directory entry from the user is complete, it
-                # makes a mockery to say successful when this is required too
+                # write/update a profile for all currently available accounts
+                accounts = self.list_accounts(token)
                 dir_api = api.dir.Dir()
-                dir_api.url = self.url
-                dir_api.user(token)
+                dir_api.url = self.config.get_url()
+                accounts_list = []
+                for account in accounts:
+                    account_token = self.select_account(token, account["user_id"])
+                    profile = self.config.write_profile(
+                        self.config.get_url(), account_token, default=False
+                    )
+                    try:
+                        userdata = dir_api.user(account_token)
+                        orgdata = dir_api.org_by_user(account_token)
+                        accounts_list.append(
+                            {
+                                "profile_id": profile,
+                                "user_name": userdata["name"],
+                                "org_name": orgdata["name"],
+                                "is_default": profile == self.config.default_profile,
+                            }
+                        )
+                    except InvalidResponse as e:
+                        if e.status_code == hs.NOT_FOUND:
+                            # user or org may be pending delete
+                            # account effectively unavailable
+                            pass
+                        else:
+                            raise e
 
+                # show available accounts
+                if len(accounts_list) > 0:
+                    accounts_message = "Available accounts: "
+                    for a in accounts_list:
+                        accounts_message += (
+                            f"\n  {a['profile_id']}: {a['user_name']} @ {a['org_name']}"
+                            + ("*" if a["is_default"] else "")
+                        )
+                    print(accounts_message)
+                    print(
+                        "NOTE: * indicates default profile.\n"
+                        "Change your default at anytime with the command:\n"
+                        "  `conducto-profile set-default <profile_id>`"
+                    )
+                else:
+                    raise api.UserInputValidation(
+                        f"No accounts associated with this user. please visit the web app at {self.url}/app/ "
+                        "and create or join at least one organization."
+                    )
                 # All good
                 print("Login Successful...")
             except api_utils.InvalidResponse as e:

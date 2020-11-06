@@ -26,6 +26,8 @@ class State:
     ERROR = "error"
     WORKER_ERROR = "worker_error"
 
+    base = {PENDING, QUEUED, RUNNING, DONE, WARNING, ERROR, WORKER_ERROR}
+
     stopped = {PENDING, DONE, WARNING, ERROR, WORKER_ERROR}
     in_progress = {QUEUED, RUNNING}
     finished = {DONE, WARNING, ERROR, WORKER_ERROR}
@@ -119,8 +121,6 @@ class BuildMode:
     ALREADY_IN_CLOUD = (
         "already_in_cloud"  # If it's already in AWS and now needs to be run
     )
-    SHELL = "shell"  # Skip all the fancy interfaces and just run in shell. Debug usage only.
-    TEST = "test"  # Write no logs to disk, don't register, just run in shell then return when done.
 
 
 class ManagerAppParams:
@@ -131,6 +131,11 @@ class ManagerAppParams:
     LAUNCH_THROTTLE = 10
     # total deploy/active/standby cloud programs (per org)
     ACTIVE_LIMIT = 100
+    FREE_ACTIVE_LIMIT = 5
+
+    WORKER_MAX_CONCURRENT = 200
+    # TODO:  consider lowering free limit to 1 when the worker count is more robust
+    FREE_WORKER_MAX_CONCURRENT = 5
 
 
 class GwParams:
@@ -147,6 +152,7 @@ class RdParams:
 class ConductoPaths:
     MOUNT_LOCATION = "/mnt/external"
     GIT_LOCATION = "/mnt/git"
+    S3_LOCATION = "/mnt/s3"
     COPY_LOCATION = "/mnt/conducto"
     SERIALIZATION = "serialization"
 
@@ -204,16 +210,22 @@ class ConductoPaths:
         # Clean up URL: remove username/password, and sanitize the rest
         res = urllib.parse.urlparse(url)
         cleaner_url = res._replace(netloc=res.hostname).geturl()
-        cleaned_url = re.sub("[^\w_:@?=\-]+", "_", cleaner_url)
+        cleaned_url = re.sub(r"[^\w_:@?=\-]+", "_", cleaner_url)
 
         if not isinstance(branch, str):
             raise TypeError(f"Expected str. Got copy_branch={repr(branch)}")
 
         return f"{ConductoPaths.GIT_LOCATION}/{pipeline_id}:{cleaned_url}:{branch}"
 
+    @staticmethod
+    def s3_copy_dest(pipeline_id, url):
+        cleaned_url = re.sub(r"[^\w_:@?=\-]+", "_", url)
+        return f"{ConductoPaths.S3_LOCATION}/{pipeline_id}:{cleaned_url}"
+
 
 # 8 characters, matches a host_id
 HOST_ID_NO_AGENT = "*nohost*"
+HOST_ID_CLOUDDEV = "clouddev"
 
 
 class ExecutionEnv:
@@ -259,6 +271,10 @@ class ExecutionEnv:
           built without an Agent.
         """
         return t.Bool(os.getenv("CONDUCTO_HEADLESS"))
+
+    @staticmethod
+    def images_only():
+        return t.Bool(os.getenv("CONDUCTO_IMAGES_ONLY"))
 
 
 class PipelineLifecycle:
@@ -367,6 +383,7 @@ class InstanceStatus:
     RESERVED = 1
     IN_USE = 2
     PREALLOCATED = 3
+    PREALLOCATE_RESERVED = 4
 
 
 # max times for remote docker ops

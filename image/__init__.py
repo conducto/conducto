@@ -44,6 +44,7 @@ class Status:
     PENDING = "pending"
     QUEUED = "queued"
     CLONING = "cloning"
+    SYNCING_S3 = "syncing_s3"
     PULLING = "pulling"
     BUILDING = "building"
     INSTALLING = "installing"
@@ -147,7 +148,7 @@ class Image:
     :param path_map:  Dict that maps external_path to internal_path. Needed for
         live debug and :py:func:`conducto.Lazy`. It can be inferred from
         `copy_dir`; if not using that, you must specify `path_map`.
-    :param reqs_py:  List of Python packages for Conducto to pip install into
+    :param reqs_py:  List of Python packages for Conducto to pip install --use-feature=2020-resolver into
         the generated Docker image.
     :param reqs_packages: List of packages to install with the appropriate Linux package
         manager for this image's flavor.
@@ -164,6 +165,7 @@ class Image:
     _CONTEXT = None
     _CLONE_LOCKS = {}
     _COMPLETED_CLONES = set()
+    _DOCKERHUB_LOGIN_ATTEMPTED = False
 
     AUTO = "__auto__"
 
@@ -213,11 +215,19 @@ class Image:
             raise ValueError(
                 f"Must not specify copy_dir ({copy_dir}) and copy_url ({copy_url})."
             )
-        if copy_url and not copy_branch:
-            raise ValueError(
-                f"If specifying copy_url ({copy_url}) must "
-                f"also specify copy_branch ({copy_branch})"
-            )
+        if copy_url:
+            self.copy_url = copy_url
+            is_s3_url = self._is_s3_url()
+            if is_s3_url and copy_branch:
+                raise ValueError(
+                    f"If specifying an s3 copy_url ({copy_url}) must "
+                    f"not specify copy_branch ({copy_branch})"
+                )
+            elif not is_s3_url and not copy_branch:
+                raise ValueError(
+                    f"If specifying copy_url ({copy_url}) must "
+                    f"also specify copy_branch ({copy_branch})"
+                )
 
         self.image = image
         self.dockerfile = dockerfile
@@ -572,11 +582,9 @@ class Image:
 
     @property
     def name_cloud_extended(self):
-        from .. import api
-
         if self._pipeline_id is None:
             raise ValueError("Must specify pipeline_id before pushing to cloud")
-        docker_domain = api.Config().get_docker_domain()
+        docker_domain = conducto.api.Config().get_docker_domain()
         return f"{docker_domain}/{self._pipeline_id}:{self._get_image_tag()}"
 
     @property
@@ -632,14 +640,22 @@ class Image:
                     st.finish("Using cached clone")
         yield
 
+        # Copy from S3 if needed
+        if self._is_s3_url():
+            async with self._new_status(Status.SYNCING_S3, callback) as st:
+                if force_rebuild or not self._sync_s3_complete():
+                    await callback()
+                    out, err = await self._sync_s3()
+                    st.finish(out, err)
+                else:
+                    st.finish("Using cached s3 copy")
+
         # Pull the image if needed
-        if self.image and "/" in self.image:
+        if await self.needs_pulling():
             async with self._new_status(Status.PULLING, callback) as st:
                 if force_rebuild or not await self._image_exists(self.image):
                     await callback()
-                    out, err = await async_utils.run_and_check(
-                        "docker", "pull", self.image
-                    )
+                    out, err = await self._pull()
                     st.finish(out, err)
                 else:
                     st.finish("Image already pulled")
@@ -755,6 +771,11 @@ class Image:
             pipeline_id=self._pipeline_id, url=self.copy_url, branch=self.copy_branch
         )
 
+    def _get_s3_dest(self):
+        return constants.ConductoPaths.s3_copy_dest(
+            pipeline_id=self._pipeline_id, url=self.copy_url
+        )
+
     def _get_clone_lock(self, dest):
         if dest in Image._CLONE_LOCKS:
             lock = Image._CLONE_LOCKS[dest]
@@ -773,13 +794,25 @@ class Image:
         dest = self._get_clone_dest()
         return dest in Image._COMPLETED_CLONES
 
+    def _sync_s3_complete(self):
+        # Ok to use _COMPLETED_CLONES set.
+        dest = self._get_s3_dest()
+        return dest in Image._COMPLETED_CLONES
+
     async def _clone(self):
         from conducto.integrations import git
 
         # Only one clone() can run at a time on a single directory
         dest = self._get_clone_dest()
-        real_url = git.clone_url(self.copy_url)
-        fake_url = git.clone_url(self.copy_url, token=t.Token("{__conducto_token__}"))
+
+        if constants.ExecutionEnv.images_only():
+            real_url = self.copy_url
+            fake_url = self.copy_url
+        else:
+            real_url = git.clone_url(self.copy_url)
+            fake_url = git.clone_url(
+                self.copy_url, token=t.Token("{__conducto_token__}")
+            )
 
         async with self._get_clone_lock(dest):
             outputs = []
@@ -825,6 +858,69 @@ class Image:
         Image._COMPLETED_CLONES.add(dest)
         return out, err
 
+    async def _sync_s3(self):
+        # Only one sync_s3() can run at a time on a single directory
+        dest = self._get_s3_dest()
+
+        # Can use same clone lock method and _COMPLETED_CLONES set.
+        async with self._get_clone_lock(dest):
+            creds = conducto.api.Auth().get_credentials()
+            env_with_creds = {
+                **os.environ,
+                "AWS_ACCESS_KEY_ID": creds["AccessKeyId"],
+                "AWS_SECRET_ACCESS_KEY": creds["SecretKey"],
+                "AWS_SESSION_TOKEN": creds["SessionToken"],
+            }
+            outputs = []
+            outputs.append(
+                await async_utils.run_and_check(
+                    "aws",
+                    "s3",
+                    "sync",
+                    "--exclude",
+                    ".git*",
+                    "--exclude",
+                    "*/.git*",
+                    self.copy_url,
+                    dest,
+                    env=env_with_creds,
+                )
+            )
+
+        out = b"\n\n".join(o for o, e in outputs if o)
+        err = b"\n\n".join(e for o, e in outputs if e)
+
+        # Mark that this has been finished
+        Image._COMPLETED_CLONES.add(dest)
+        return out, err
+
+    async def _pull(self):
+        is_dockerhub_image = True
+        if "/" in self.image:
+            possible_domain = self.image.split("/", 1)[0]
+            if "." in possible_domain or ":" in possible_domain:
+                is_dockerhub_image = False
+
+        if is_dockerhub_image and not Image._DOCKERHUB_LOGIN_ATTEMPTED:
+            secrets = conducto.api.Secrets().get_user_secrets(include_org_secrets=True)
+            if "DOCKERHUB_USER" in secrets and "DOCKERHUB_PASSWORD" in secrets:
+                await async_utils.run_and_check(
+                    "docker",
+                    "login",
+                    "-u",
+                    secrets["DOCKERHUB_USER"],
+                    "--password-stdin",
+                    input=secrets["DOCKERHUB_PASSWORD"].encode("utf8"),
+                )
+
+            # Only need to do this once. It's idempotent, so it's okay if it happens
+            # multiple times due to a race condition. If the user doesn't have this
+            # secret defined, don't keep checking.
+            Image._DOCKERHUB_LOGIN_ATTEMPTED = True
+
+        out, err = await async_utils.run_and_check("docker", "pull", self.image)
+        return out, err
+
     async def _build(self):
         """
         Build this Image's `dockerfile`. If copy_* or reqs_* are passed, then additional
@@ -833,8 +929,13 @@ class Image:
         assert self.dockerfile is not None
         # Build the specified dockerfile
         if self.needs_cloning():
-            context = self.context.to_docker_mount(gitroot=self._get_clone_dest())
-            dockerfile = self.dockerfile.to_docker_mount(gitroot=self._get_clone_dest())
+            gitroot = self._get_clone_dest()
+            context = self.context.to_docker_mount(gitroot=gitroot)
+            dockerfile = self.dockerfile.to_docker_mount(gitroot=gitroot)
+        elif self._is_s3_url():
+            s3root = self._get_s3_dest()
+            context = self.context.to_docker_mount(s3root=s3root)
+            dockerfile = self.dockerfile.to_docker_mount(s3root=s3root)
         else:
             context = self.context.to_docker_mount(pipeline_id=self._pipeline_id)
             dockerfile = self.dockerfile.to_docker_mount(pipeline_id=self._pipeline_id)
@@ -850,13 +951,12 @@ class Image:
             "-t",
             self.name_built,
             "--label",
-            "com.conducto.build",
-            "--label",
-            "com.conducto",
+            "com.conducto.user",
             *build_args,
             "-f",
             dockerfile,
             context,
+            env={**os.environ, "DOCKER_BUILDKIT": "1"},
         )
         return out, err
 
@@ -897,20 +997,20 @@ class Image:
             "-t",
             self.name_installed,
             "--label",
-            "com.conducto.install",
-            "--label",
-            "com.conducto",
+            "com.conducto.user",
             "-",
             input=text.encode(),
+            env={**os.environ, "DOCKER_BUILDKIT": "1"},
         )
         return out, err
 
     async def _copy(self):
         env = {}
-        if self.copy_url:
-            env["CONDUCTO_GIT_URL"] = self.copy_url
-        if self.copy_branch:
-            env["CONDUCTO_GIT_BRANCH"] = self.copy_branch
+        if not self._is_s3_url():
+            if self.copy_url:
+                env["CONDUCTO_GIT_URL"] = self.copy_url
+            if self.copy_branch:
+                env["CONDUCTO_GIT_BRANCH"] = self.copy_branch
 
         # If copying a whole repo, or if getting a remote Git repo, get the commit SHA.
         if self.copy_repo or self.needs_cloning():
@@ -918,6 +1018,8 @@ class Image:
 
         if self.copy_dir:
             context = self.copy_dir.to_docker_mount(pipeline_id=self._pipeline_id)
+        elif self._is_s3_url():
+            context = self._get_s3_dest()
         else:
             context = self._get_clone_dest()
 
@@ -944,9 +1046,7 @@ class Image:
             "-t",
             self.name_copied,
             "--label",
-            "com.conducto.copy",
-            "--label",
-            "com.conducto",
+            "com.conducto.user",
             "-f",
             dockerfile_path,
             context,
@@ -959,7 +1059,17 @@ class Image:
             self.shell = await dockerfile_mod.get_shell(self.name_copied)
 
         # Writes Dockerfile that extends user-provided image.
-        text, worker_image = await dockerfile_mod.text_for_extend(self.name_copied)
+        profile = conducto.api.Config().default_profile
+        pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID", self._pipeline_id)
+        labels = [
+            "com.conducto.user",
+            f"com.conducto.profile={profile}",
+            f"com.conducto.pipeline={pipeline_id}",
+        ]
+        text, worker_image = await dockerfile_mod.text_for_extend(
+            self.name_copied, labels
+        )
+
         if "/" in worker_image:
             pull_worker = True
             if os.environ.get("CONDUCTO_DEV_REGISTRY"):
@@ -974,24 +1084,14 @@ class Image:
                 await async_utils.run_and_check("docker", "pull", worker_image)
                 Image._PULLED_IMAGES.add(worker_image)
 
-        profile = conducto.api.Config().default_profile
-        pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID", self._pipeline_id)
-
         out, err = await async_utils.run_and_check(
             "docker",
             "build",
             "-t",
             self.name_local_extended,
-            "--label",
-            "com.conducto.extend",
-            "--label",
-            "com.conducto",
-            "--label",
-            f"com.conducto.profile={profile}",
-            "--label",
-            f"com.conducto.pipeline={pipeline_id}",
             "-",
             input=text.encode(),
+            env={**os.environ, "DOCKER_BUILDKIT": "1"},
         )
         return out, err
 
@@ -1029,6 +1129,24 @@ class Image:
             return False
         return True
 
+    async def needs_pulling(self):
+        if not self.image:
+            # If not based on a Docker image, then nothing to pull
+            return False
+        elif "/" in self.image:
+            # A `/` in the image name means it is fetched from somewhere remote
+            return True
+        else:
+            # An image name with no `/` could be like "python:3.8" and needs pulling
+            # from Docker Hub, or it could be built locally. A partial solution is to
+            # see if the image exists locally, and if so then it doesn't need pulling.
+            try:
+                await async_utils.run_and_check("docker", "inspect", self.image)
+            except subprocess.CalledProcessError:
+                return True
+            else:
+                return False
+
     def needs_building(self):
         return self.dockerfile is not None
 
@@ -1037,6 +1155,9 @@ class Image:
 
     def needs_copying(self):
         return self.copy_dir is not None or self.copy_url is not None
+
+    def _is_s3_url(self):
+        return self.copy_url is not None and self.copy_url.startswith("s3://")
 
 
 class HistoryEntry:

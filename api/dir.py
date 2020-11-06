@@ -74,6 +74,14 @@ class Dir:
         )
         return api_utils.get_data(response)
 
+    def bulk_orgs_by_users(self, user_ids, token: t.Token) -> list:
+        headers = api_utils.get_auth_headers(token)
+        data = json.dumps({"user_ids": user_ids})
+        response = request_utils.post(
+            self.url + f"/dir/org/by_user/bulk", data=data, headers=headers
+        )
+        return api_utils.get_data(response)
+
     def org_by_user(self, token: t.Token = None) -> dict:
         headers = api_utils.get_auth_headers(token)
 

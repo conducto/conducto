@@ -120,7 +120,7 @@ class Path:
             if m[1]["type"] == "git" and m[1].get("branch", None):
                 return True
 
-    def to_docker_mount(self, *, pipeline_id=None, gitroot=None) -> str:
+    def to_docker_mount(self, *, pipeline_id=None, gitroot=None, s3root=None) -> str:
         # to be used for building
         # This converts a path from a serialization to the manager or the host
         # machine which created this serialization.  It is will return a valid path
@@ -146,6 +146,8 @@ class Path:
                     gittail = gittail.replace("\\", "/")
 
                 return os.path.join(gitroot, gittail)
+            elif s3root:
+                raise Exception("s3 root not yet implemented")
             else:
                 hostpath = self.to_docker_host()
 

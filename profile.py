@@ -6,7 +6,7 @@ import socket
 import subprocess
 import urllib.error
 import conducto as co
-from conducto.shared import constants, log, agent_utils, container_utils
+from conducto.shared import constants, log, agent_utils, container_utils, types as t
 from . import api
 
 
@@ -116,10 +116,13 @@ def _profile_add(url, default):
     return profile
 
 
-def profile_add(url, default=False):
+def profile_add(url, default=False, token=None):
     """
     Add a new log-in profile for a specified Conducto URL.
     """
+    if token is not None:
+        os.environ["CONDUCTO_TOKEN"] = token
+
     profile = _profile_add(url, default=default)
 
     conf = api.Config()

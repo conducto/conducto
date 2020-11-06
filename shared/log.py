@@ -260,7 +260,11 @@ class base_logger(object):
     NAMES = _utils.NAMES
     REVERSE_NAMES = _utils.REVERSE_NAMES
 
-    _LOCK = multiprocessing.Lock()
+    # Cannot use multiprocessing.Lock() inside of an AWS lambda.
+    try:
+        _LOCK = multiprocessing.Lock()
+    except:
+        _LOCK = None
     _IN_PROGRESS = False
 
     def __init__(self, level=None):
@@ -664,15 +668,21 @@ class base_logger(object):
         msg = self._format(*args, **kwargs)
 
         # Write the output and return it.
-        with self._LOCK:
-            if self._IN_PROGRESS:
-                handle.write("\n")
-                self._IN_PROGRESS = False
-            handle.write(msg)
-            if not nonewln:
-                handle.write("\n")
-            handle.flush()
-            return msg
+        if self._LOCK is None:
+            return self._writeOutput(handle, msg, nonewln)
+        else:
+            with self._LOCK:
+                return self._writeOutput(handle, msg, nonewln)
+
+    def _writeOutput(self, handle, msg, nonewln):
+        if self._IN_PROGRESS:
+            handle.write("\n")
+            self._IN_PROGRESS = False
+        handle.write(msg)
+        if not nonewln:
+            handle.write("\n")
+        handle.flush()
+        return msg
 
     ################
     def setCallDefaults(self, **kwargs):

@@ -27,7 +27,6 @@ def build(
     use_app=True,
     retention=7,
     is_public=False,
-    token=None,
 ):
     assert node.parent is None
     assert node.name == "/"
@@ -43,6 +42,7 @@ def build(
 
     # refresh the token for every pipeline launch
     # Force in case of cognito change
+    token = api.Config().get_token(refresh=True)
     if token is None:
         token = api.Auth().get_token_from_shell(force=True)
     node.token = token
@@ -51,15 +51,18 @@ def build(
 
     # Register pipeline, get <pipeline_id>
     cloud = build_mode == constants.BuildMode.DEPLOY_TO_CLOUD
-    pipeline_id = api.Pipeline().create(
-        command,
-        token=token,
-        cloud=cloud,
-        retention=retention,
-        tags=node.tags or [],
-        title=node.title,
-        is_public=is_public,
-    )
+    if constants.ExecutionEnv.images_only():
+        pipeline_id = "zzz-zzz"
+    else:
+        pipeline_id = api.Pipeline().create(
+            command,
+            token=token,
+            cloud=cloud,
+            retention=retention,
+            tags=node.tags or [],
+            title=node.title,
+            is_public=is_public,
+        )
 
     if cloud:
         _check_nodes_for_cloud(node)
@@ -81,6 +84,8 @@ def launch_from_serialization(
     inject_env=None,
     is_migration=False,
 ):
+    _auto_set_headless()
+
     if not token:
         token = api.Auth().get_token_from_shell(force=True)
 
@@ -110,7 +115,8 @@ def launch_from_serialization(
         log.debug(f"Connecting to pipeline_id={pipeline_id}")
 
     def local_deploy():
-        clean_log_dirs(token)
+        if not constants.ExecutionEnv.images_only():
+            clean_log_dirs(token)
 
         # Write serialization to ~/.conducto/
         local_progdir = constants.ConductoPaths.get_local_path(pipeline_id)
@@ -123,9 +129,10 @@ def launch_from_serialization(
             f.write(serialization)
         path_utils.outer_chown(serialization_path)
 
-        api.Pipeline().update(
-            pipeline_id, {"program_path": serialization_path}, token=token
-        )
+        if not constants.ExecutionEnv.images_only():
+            api.Pipeline().update(
+                pipeline_id, {"program_path": serialization_path}, token=token
+            )
 
         run_in_local_container(
             token, pipeline_id, inject_env=inject_env, is_migration=is_migration
@@ -159,15 +166,7 @@ def run(token, pipeline_id, func, use_app, use_shell, msg, starting):
         tag = config.get_image_tag()
         is_test = os.environ.get("CONDUCTO_USE_TEST_IMAGES")
         manager_image = constants.ImageUtil.get_manager_image(tag, is_test)
-        try:
-            client_utils.subprocess_run(["docker", "image", "inspect", manager_image])
-        except client_utils.CalledProcessError:
-            docker_parts = ["docker", "pull", manager_image]
-            print("Downloading the Conducto docker image that runs your pipeline.")
-            log.debug(" ".join(pipes.quote(s) for s in docker_parts))
-            client_utils.subprocess_run(
-                docker_parts, msg="Error pulling manager container",
-            )
+        container_utils.refresh_image(manager_image, verbose=False)
 
     print(f"{msg} pipeline {pipeline_id}.")
 
@@ -307,6 +306,9 @@ def run_in_local_container(
         "CONDUCTO_DEV_REGISTRY",
         "CONDUCTO_USE_TEST_IMAGES",
         "CONDUCTO_USE_ID_TOKEN",
+        "CONDUCTO_LOCAL_STANDBY",
+        "CONDUCTO_HOST_ID",
+        "CONDUCTO_IMAGES_ONLY",
     ):
         if os.environ.get(env_var):
             flags.extend(["-e", f"{env_var}={os.environ[env_var]}"])
@@ -316,7 +318,10 @@ def run_in_local_container(
     flags += container_utils.get_whole_host_mounting_flags(is_migration)
 
     if _manager_debug():
-        flags[0] = "-it"
+        if sys.stdin.isatty():
+            flags[0] = "-it"
+        else:
+            flags[0] = "-i"
         flags += ["-e", "CONDUCTO_LOG_LEVEL=0"]
         capture_output = False
     else:
@@ -469,3 +474,12 @@ def _manager_debug():
 
 def _manager_cpu():
     return float(os.getenv("CONDUCTO_MANAGER_CPU", "1"))
+
+
+def _auto_set_headless():
+    if os.environ.get("CONDUCTO_HEADLESS") is None:
+        try:
+            client_utils.subprocess_run(["docker", "info"])
+        except (client_utils.CalledProcessError, FileNotFoundError):
+            log.debug("Docker not found, auto setting CONDUCTO_HEADLESS=1")
+            os.environ["CONDUCTO_HEADLESS"] = "1"

@@ -79,15 +79,20 @@ def makedatenodes(baseNode, dates, makeLeafNode=False, reverse=True, nodeType=No
     )
 
 
-def magic_doc(*, func=None, doc_only=False):
+def magic_doc(*, func=None, doc_only=False, comment=False):
     if func is None:
         st = traceback.extract_stack(limit=2)
         func_name = st[-2].name
         module_name = os.path.basename(st[-2].filename).split(".py")[0]
         module = importlib.import_module(module_name)
         func = getattr(module, func_name)
+        lineno = st[-2].lineno
     else:
         module = inspect.getmodule(func)
+        lineno = func.__code__.co_firstlineno
+
+    if comment:
+        return _get_prev_comment(func, lineno)
 
     docstring = func.__doc__
     if docstring is not None:
@@ -116,3 +121,30 @@ def magic_doc(*, func=None, doc_only=False):
         return pretty_doc
     else:
         return f"{pretty_doc}\n\n```python\n{code}\n```"
+
+
+def _get_prev_comment(func, lineno):
+    """
+    Get the previous lines of comments before lineno. Adapted from inspect.getcomments()
+    """
+    lines, _lnum = inspect.findsource(func)
+
+    # Look for the preceding block of comments.
+    end = lineno - 1
+    while end >= 0:
+        if lines[end].lstrip()[:1] == "#":
+            break
+        end -= 1
+
+    start = end
+    while start >= 0 and lines[start].lstrip()[:1] == "#":
+        start -= 1
+
+    comment_lines = lines[start + 1 : end + 1]
+    comments = [l.expandtabs().lstrip()[1:] for l in comment_lines]
+    while comments and comments[0].strip() == "":
+        del comments[0]
+    while comments and comments[-1].strip() == "":
+        del comments[-1]
+    res = "".join(comments)
+    return log.unindent(res)

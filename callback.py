@@ -66,20 +66,6 @@ def email(to=None, cc=None):
     return base("email", to=to, cc=cc)
 
 
-# TODO: remove this in a few days (10/3/2020)
-def slack(to, token, message=None, node_summary=False):
-    """
-    Post a summary of the node in the specified slack channel.
-    :param to: where to send the updates to, channel id or user id
-    :param token: slack app token. Obtain it by running /conducto_token in your slack channel
-    :param message: message to print, optional
-    :param node_summary: print node summary, defaults to True if no message, False otherwise
-    :return:
-    """
-
-    return base("slack", to=to, token=token, message=message, node_summary=node_summary)
-
-
 def slack_status(recipient, message=None, node_summary=False):
     """
     Post a summary of the node in the specified slack channel via the Slack integration.

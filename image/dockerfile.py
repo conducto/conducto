@@ -4,6 +4,7 @@ import packaging.version
 import re
 import shlex
 import subprocess
+import typing
 
 from .. import api
 from .._version import __version__
@@ -57,7 +58,7 @@ async def text_for_install(image, reqs_py, reqs_packages, reqs_docker):
     if reqs_docker:
         lines.append("RUN curl -sSL https://get.docker.com/ | sh")
 
-    # Instead python packages with pip
+    # Install python packages with pip
     if reqs_py:
         py_binary, _py_version, pip_binary = await get_python_version(image)
         if not pip_binary:
@@ -90,8 +91,12 @@ async def text_for_install(image, reqs_py, reqs_packages, reqs_docker):
                 f"Cannot find suitable python in {image} for installing {reqs_py}"
             )
 
+        # Upgrade pip to use the "--use-feature" input
+        lines.append(f"RUN {py_binary} -m pip install --upgrade pip")
+
         non_conducto_reqs_py = [r for r in reqs_py if r != "conducto"]
         if non_conducto_reqs_py:
+            # Don't use the 2020 resolver with non conducto reqs
             lines.append(
                 f"RUN {py_binary} -m pip install " + " ".join(non_conducto_reqs_py)
             )
@@ -107,9 +112,15 @@ async def text_for_install(image, reqs_py, reqs_packages, reqs_docker):
                 lines.append(
                     f"COPY --from={conducto_image} /tmp/conducto /tmp/conducto"
                 )
-                lines.append(f"RUN {py_binary} -m pip install -e /tmp/conducto")
+                # Use the 2020 resolver with conducto reqs
+                lines.append(
+                    f"RUN {py_binary} -m pip install --use-feature=2020-resolver -e /tmp/conducto"
+                )
             else:
-                lines.append(f"RUN {py_binary} -m pip install conducto=={__version__}")
+                # Use the 2020 resolver with conducto reqs
+                lines.append(
+                    f"RUN {py_binary} -m pip install --use-feature=2020-resolver conducto=={__version__}"
+                )
 
     # Reset the uid to its original value, if needed
     if uid != 0:
@@ -151,7 +162,7 @@ def dockerignore_for_copy(context, preserve_git):
     return text
 
 
-async def text_for_extend(user_image):
+async def text_for_extend(user_image, labels):
     lines = [f"FROM {user_image}"]
 
     linux_flavor, linux_version, linux_name = await _get_linux_flavor_and_version(
@@ -163,31 +174,20 @@ async def text_for_extend(user_image):
 
     default_python = None
     if pyvers is not None:
-        if _is_fedora(linux_flavor) or _is_centos(linux_flavor):
-            # The base Fedora and CentOS images don't have 'which' for some reason. A
-            # workaround is to use python to print sys.executable.
-            which_python, _ = await async_utils.run_and_check(
-                "docker",
-                "run",
-                "--rm",
-                "--entrypoint",
-                acceptable_binary,
-                user_image,
-                "-c",
-                "import sys; print(sys.executable)",
-            )
-            default_python = which_python.decode("utf8").strip()
-        else:
-            which_python, _ = await async_utils.run_and_check(
-                "docker",
-                "run",
-                "--rm",
-                "--entrypoint",
-                "which",
-                user_image,
-                acceptable_binary,
-            )
-            default_python = which_python.decode("utf8").strip()
+        # Use `type` instead of `which` because the base Fedora and CentOS images don't
+        # have `/usr/bin/which` while `type` is a widely supported shell builtin.
+        out, err = await async_utils.run_and_check(
+            "docker",
+            "run",
+            "--rm",
+            "--entrypoint",
+            "sh",
+            user_image,
+            "-c",
+            f"type {acceptable_binary}",
+        )
+        line = out.decode().splitlines()[0]
+        _, default_python = _parse_type_command(line)
 
     uid = await _get_uid(user_image)
     if uid != 0:
@@ -272,6 +272,8 @@ async def text_for_extend(user_image):
             entrypoint = " ".join(shlex.quote(s) for s in entrypoint)
         lines.append(f"ENV ENTRYPOINT={shlex.quote(entrypoint)}")
 
+    lines.append(f"LABEL {' '.join(labels)}")
+
     return "\n".join(lines), worker_image
 
 
@@ -291,29 +293,38 @@ class UnsupportedShellException(Exception):
     pass
 
 
+class UnsupportedTypeOutputException(Exception):
+    pass
+
+
 # Note: we don't need caching here except on get_python_version and get_shell
 # because we already have caching mechanisms above
-# each image gets their .build called once, and everything below _get_python_version
+# each image gets their .build called once, and everything below _get_python_info
 # is called just once per name_copied
 async def get_shell(user_image):
     cache = get_shell._cache = getattr(get_shell, "cache", {})
     if user_image in cache:
         return cache[user_image]
 
-    shells = ["/bin/bash", "/bin/ash", "/bin/zsh", "/bin/sh"]
-    for shell in shells:
-        try:
-            await async_utils.run_and_check(
-                "docker", "run", "--rm", "--entrypoint", shell, user_image, "-c", "true"
-            )
-        except subprocess.CalledProcessError:
-            pass
-        else:
-            cache[user_image] = shell
-            return shell
+    shells = ["bash", "ash", "zsh", "sh"]
+    subcommands = [f"(type {s} 2>/dev/null)" for s in shells]
+    command = " || ".join(cmd for cmd in subcommands)
+    try:
+        out, _err = await async_utils.run_and_check(
+            "docker", "run", "--rm", "--entrypoint", "sh", user_image, "-c", command
+        )
+    except subprocess.CalledProcessError:
+        pass
+    else:
+        for line in out.decode().splitlines():
+            sh, location = _parse_type_command(line)
+            if location is not None:
+                cache[user_image] = location
+                return location
+
     raise UnsupportedShellException(
-        f"Could not auto-determine correct shell to use. Tried {shells} but none were "
-        f"available"
+        f"Could not auto-determine correct shell to use. Tried {shells} but none "
+        f"were available."
     )
 
 
@@ -323,49 +334,15 @@ async def get_python_version(user_image, install_command=None):
     if cache_key in cache:
         return cache[cache_key]
 
-    pyresults = [None, None]
+    result = await _get_python_info(user_image, install_command)
 
-    for binary in [
-        "python",
-        "python3",
-        "python3.5",
-        "python3.6",
-        "python3.7",
-        "python3.8",
-    ]:
-        try:
-            version = await _get_python_version(user_image, binary, install_command)
-            pyresults = [binary, version.release[0:2]]
-            break
-        except (
-            subprocess.CalledProcessError,
-            LowPException,
-            packaging.version.InvalidVersion,
-        ):
-            pass
-
-    pipresults = None
-    # if no python, there is no point in looking for pip
-    if pyresults[0]:
-        for binary in ["pip", "pip3"]:
-            try:
-                # we are only interested here in known the binary
-                # name that responds with-out shell error
-                await _get_pip_version(user_image, binary)
-                pipresults = binary
-                break
-            except subprocess.CalledProcessError:
-                pass
-
-    result = pyresults[0], pyresults[1], pipresults
     cache[cache_key] = result
     return result
 
 
-async def _get_python_version(
-    user_image, python_binary, install_command
-) -> packaging.version.Version:
-    """Gets python version within a Docker image.
+async def _get_python_info(user_image, install_command):
+    """
+    Gets python version within a Docker image.
     Args:
         user_image: image name
         python_binary: Python binary (e.g. python3)
@@ -376,24 +353,84 @@ async def _get_python_version(
         LowPException if version is too low
     """
 
-    command = f"{python_binary} --version"
+    # Construct a single command to check all the python versions and pip
+    # version in one shot. Calling `docker run` has a nontrivial startup time,
+    # so batching these commands noticeably reduces the latency of building an
+    # Image. Order these from most recent python version to least recent,
+    # because we prefer newer versions.
+    py_binaries = [
+        "python3.8",
+        "python3.7",
+        "python3.6",
+        "python3.5",
+        "python3",
+        "python",  # Put this last because it can get python 2
+    ]
+    py_subcommands = []
+    for b in py_binaries:
+        py_subcommands.append(f"({b} --version 2>/dev/null && echo {b})")
+    py_command = " || ".join(py_subcommands)
+
+    pip_command = "type pip3|| type pip"
+
+    sep = "__conducto_start__"
+
+    command = f"echo {sep} && (({py_command}) && ({pip_command}))"
     if install_command is not None:
         command = f"{install_command} && {command}"
 
-    out, err = await async_utils.run_and_check(
-        "docker", "run", "--rm", user_image, "sh", "-c", command, stop_on_error=False,
-    )
+    docker_command = [
+        "docker",
+        "run",
+        "--rm",
+        "--entrypoint",
+        "sh",
+        user_image,
+        "-c",
+        command,
+    ]
+    out, err = await async_utils.run_and_check(*docker_command, stop_on_error=False,)
     out = out.decode("utf-8").strip()
+    out = out.split(sep, 1)[-1].strip()
 
-    python_version = re.sub(r"^.*Python\s+", r"", out, re.IGNORECASE, re.DOTALL).strip()
+    if not out:
+        return None, None, None
+
+    lines = out.splitlines()
+    if len(lines) not in (2, 3, 4):
+        raise UnsupportedPythonException(
+            f"Cannot parse output of Python-detection command. output:\n{out}"
+        )
+
+    version_line = lines[0].strip()
+    version_str = re.sub(r"^.*Python\s+", r"", version_line, re.IGNORECASE, re.DOTALL)
+    py_binary = lines[1]
 
     # Some weird versions cannot be parsed by packaging.version.
-    if python_version.endswith("+"):
-        python_version = python_version[:-1]
-    python_version = packaging.version.Version(python_version)
-    if python_version < packaging.version.Version("3.5"):
-        raise LowPException("")
-    return python_version
+    if version_str.endswith("+"):
+        version_str = version_str[:-1]
+    try:
+        py_version = packaging.version.Version(version_str)
+    except Exception as e:
+        raise Exception(
+            f"Cannot get version from version string={version_str}\n"
+            f"Original version line={version_line}\n"
+            f"Docker command={' '.join(docker_command)}\n"
+            f"Exception={e}"
+        )
+    if py_version < packaging.version.Version("3.5"):
+        return None, None, None
+
+    # Parse the `pip` lines. Only need to consider the last line, because the previous
+    # ones will have failed.
+    if len(lines) > 2:
+        pip_binary, _pip_location = _parse_type_command(lines[-1])
+        if _pip_location is None:
+            pip_binary = None
+    else:
+        pip_binary = None
+
+    return py_binary, py_version.release[0:2], pip_binary
 
 
 async def _get_pip_version(user_image, pip_binary) -> packaging.version.Version:
@@ -416,31 +453,6 @@ async def _get_pip_version(user_image, pip_binary) -> packaging.version.Version:
     pip_version = re.search(r"^pip ([0-9.]+)", out.decode("utf-8"))
     pip_version = packaging.version.Version(pip_version.group(1))
     return pip_version
-
-
-async def _get_git_version(user_image) -> packaging.version.Version:
-    """Gets git version within a Docker image.
-    Args:
-        user_image: image name
-    Returns:
-        packaging.version.Version object
-    Raises:
-        subprocess.CalledProcessError if binary doesn't exist
-    """
-
-    git_binary = "git"
-
-    out, err = await async_utils.run_and_check(
-        "docker", "run", "--rm", "--entrypoint", git_binary, user_image, "--version",
-    )
-    out = out.decode("utf-8")
-
-    git_version = re.sub(r"^git version\s+", r"", out, re.IGNORECASE,).strip()
-    git_version = packaging.version.Version(git_version)
-    # Maybe we'll ascertain a minimum required git, but not for now.
-    # if git_version < packaging.version.Version("3.5"):
-    #    raise LowPException("")
-    return git_version
 
 
 async def _get_linux_flavor_and_version(user_image):
@@ -488,11 +500,16 @@ async def _get_uid(image_name):
 
 
 async def _get_entrypoint(image_name):
+    cache = _get_entrypoint._cache = getattr(_get_entrypoint, "cache", {})
+    if image_name in cache:
+        return cache[image_name]
+
     out, _err = await async_utils.run_and_check(
         "docker", "inspect", "--format", "{{json .}}", image_name
     )
     d = json.loads(out)
-    return d["Config"]["Entrypoint"]
+    cache[image_name] = result = d["Config"]["Entrypoint"]
+    return result
 
 
 def _escape(s):
@@ -517,3 +534,25 @@ def _is_centos(linux_flavor):
 
 def _is_fedora(linux_flavor):
     return re.search(r".*fedora", linux_flavor)
+
+
+def _parse_type_command(line) -> typing.Tuple[str, typing.Optional[str]]:
+    """
+    Parse the output of the `type` command.
+
+    `type` has a few possible outputs:
+    - "python: not found"
+    - "python is /usr/bin/python"
+    - "echo is a shell builtin"
+
+    There are more, but we only need to parse the first two
+    """
+    m = re.search("^(.*): not found$", line)
+    if m:
+        return m.group(1), None
+
+    m = re.search("^(.*?) is (/.*)$", line)
+    if m:
+        return m.group(1), m.group(2)
+
+    raise UnsupportedTypeOutputException(line)

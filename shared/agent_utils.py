@@ -3,7 +3,7 @@ import re
 import pipes
 import socket
 import conducto as co
-from . import client_utils, constants, container_utils, log
+from . import client_utils, constants, container_utils, log, types as t
 from ..internal import host_detection as hostdet
 
 
@@ -13,7 +13,7 @@ def name():
     return f"conducto_agent_h{host_id}_p{profile_id}"
 
 
-def launch_agent(check_for_old=True, token=None) -> str:
+def launch_agent(*, check_for_old=True, token=None) -> str:
     inside_container = container_utils.get_current_container_id()
     container_name = name()
 
@@ -102,6 +102,7 @@ def launch_agent(check_for_old=True, token=None) -> str:
 
     for env_var in (
         "CONDUCTO_URL",
+        "CONDUCTO_TOKEN",
         "CONDUCTO_DEV_REGISTRY",
         "CONDUCTO_IMAGE_TAG",
         "CONDUCTO_USE_ID_TOKEN",

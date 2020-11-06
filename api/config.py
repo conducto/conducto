@@ -12,11 +12,21 @@ import urllib.parse
 from conducto.shared import constants, log, types as t, path_utils, imagepath
 from . import api_utils
 from .. import api
+from jose import jwt
+
+try:
+    import contextvars as cv
+except ImportError:
+    cv = None
 
 
 class Config:
     TOKEN: typing.Optional[t.Token] = None
     _RAN_FIX = False
+
+    # contextvars is the async version of thread-local storage. This allows services to
+    # have separate tokens for separate async tasks
+    _CV_TOKEN = {} if cv is None else cv.ContextVar("_CV_TOKEN", default=None)
 
     class Location:
         LOCAL = "local"
@@ -28,7 +38,10 @@ class Config:
         # Try exactly once per run to clean up old profile names. Only run this
         # externally, not inside a container.
         if not Config._RAN_FIX:
-            if constants.ExecutionEnv.value() == constants.ExecutionEnv.EXTERNAL:
+            if (
+                constants.ExecutionEnv.value() == constants.ExecutionEnv.EXTERNAL
+                and not constants.ExecutionEnv.images_only()
+            ):
                 self.cleanup_profile_names()
             Config._RAN_FIX = True
 
@@ -232,6 +245,20 @@ commands:
             return netloc
 
     def get_token(self, refresh: bool, force_refresh=False) -> typing.Optional[t.Token]:
+        # First look in contextvars, which is the async version of thread-local storage
+        if Config._CV_TOKEN.get() is not None:
+            if refresh or force_refresh:
+                auth = api.Auth()
+                new_token = auth.get_refreshed_token(
+                    Config._CV_TOKEN.get(), force=force_refresh
+                )
+                if new_token is None:
+                    raise PermissionError("Expired token in Config.TOKEN")
+                if Config._CV_TOKEN.get() != new_token:
+                    Config._log_new_expiration_time(auth, new_token, loc="Config.TOKEN")
+                    Config._CV_TOKEN.set(new_token)
+            return Config._CV_TOKEN.get()
+
         # First priority is the class variable
         if Config.TOKEN is not None:
             if refresh or force_refresh:
@@ -387,6 +414,9 @@ commands:
         return os.getenv("CONDUCTO_IMAGE_TAG") or self.get("dev", "who", default)
 
     def _generate_host_id(self, profile):
+        if constants.ExecutionEnv.headless():
+            return constants.HOST_ID_NO_AGENT
+
         # This generation code for the host-id is somewhat deterministic,
         # but we save the host-id in ~/.conducto/config by design to not
         # rely on any specifics of long-term determinism.  It is convenient
@@ -394,15 +424,22 @@ commands:
         # happen to be generating a host-id at the same time for a new
         # configuration.  We know that windows and mac generate a new
         # docker id on docker restart.
+        host_id = os.getenv("CONDUCTO_HOST_ID")
+        if host_id:
+            if len(host_id) != 8:
+                raise ValueError(f"Invalid CONDUCTO_HOST_ID: {host_id:r}")
+            return host_id
 
-        cmd = [
-            "docker",
-            "info",
-            "--format='{{json .ID}}'",
-        ]
-        info = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-
-        docker_id = info.stdout.decode().strip('"')
+        try:
+            cmd = [
+                "docker",
+                "info",
+                "--format='{{json .ID}}'",
+            ]
+            info = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            docker_id = info.stdout.decode().strip('"')
+        except:
+            docker_id = None
 
         if not docker_id:
             # This should never be necessary, but having a docker error hold up
@@ -441,13 +478,20 @@ commands:
         if not self.config.has_section("general"):
             self.config.add_section("general")
 
-        from .. import api
-
-        dir_api = api.dir.Dir()
-        dir_api.url = url
-        userdata = dir_api.user(token)
-        org_id = str(userdata["org_id"])
-        email = userdata["email"]
+        auth = api.Auth()
+        claims = auth.get_unverified_claims(token)
+        if (
+            claims["user_status"] == "unregistered"
+            and claims["user_type"] == "anonymous"
+        ):
+            org_id = "anonymous"
+            email = "anonymous"
+        else:
+            dir_api = api.dir.Dir()
+            dir_api.url = url
+            userdata = dir_api.user(token)
+            org_id = str(userdata["org_id"])
+            email = userdata["email"]
 
         # compute profile id search for url & org & email matching
         profile = self.get_profile_id(url, org_id, email)
@@ -498,7 +542,26 @@ commands:
         return os.path.join(os.path.expanduser(base_dir), "config")
 
     @staticmethod
+    def _sanity_check_token(config, filename):
+        # Sanity check that we are not about to overwrite a token for a
+        # different user.
+        old_config = Config._atomic_read_config(filename)
+        new_token = config.get("general", "token", fallback=None)
+        old_token = old_config.get("general", "token", fallback=None)
+        if new_token is not None and old_token is not None:
+            new_claims = jwt.get_unverified_claims(new_token)
+            old_claims = jwt.get_unverified_claims(old_token)
+            if (
+                new_claims["iss"] != old_claims["iss"]
+                or new_claims["sub"] != old_claims["sub"]
+            ):
+                raise Exception(
+                    f"Old and new token mismatch!\nnew={new_claims}\nold={old_claims}"
+                )
+
+    @staticmethod
     def _atomic_write_config(config, filename):
+        Config._sanity_check_token(config, filename)
         cwd = os.path.dirname(filename)
         path_utils.makedirs(cwd, exist_ok=True)
         with tempfile.NamedTemporaryFile(

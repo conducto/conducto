@@ -297,6 +297,16 @@ class Auth:
     def get_user_id(self, token: t.Token = None):
         return self.get_unverified_claims(token=token)["sub"]
 
+    def is_anonymous(self, token: t.Token = None):
+        claims = self.get_unverified_claims(token)
+        check1 = claims["user_status"] == "unregistered"
+        check2 = claims["user_type"] == "anonymous"
+        assert check1 == check2, (
+            f"Unexpected discrepancy: user_status={claims['user_status']} "
+            f"user_type={claims['user_type']}"
+        )
+        return check1
+
     def test(self, token: t.Token = None) -> bool:
         headers = api_utils.get_auth_headers(token=token)
         response = request_utils.get(self.url + "/auth/test", headers=headers)

@@ -902,16 +902,22 @@ class Image:
                 is_dockerhub_image = False
 
         if is_dockerhub_image and not Image._DOCKERHUB_LOGIN_ATTEMPTED:
-            secrets = conducto.api.Secrets().get_user_secrets(include_org_secrets=True)
-            if "DOCKERHUB_USER" in secrets and "DOCKERHUB_PASSWORD" in secrets:
-                await async_utils.run_and_check(
-                    "docker",
-                    "login",
-                    "-u",
-                    secrets["DOCKERHUB_USER"],
-                    "--password-stdin",
-                    input=secrets["DOCKERHUB_PASSWORD"].encode("utf8"),
+            if (
+                not constants.ExecutionEnv.images_only()
+                and not conducto.api.Auth().is_anonymous()
+            ):
+                secrets = await conducto.api.AsyncSecrets().get_user_secrets(
+                    include_org_secrets=True
                 )
+                if "DOCKERHUB_USER" in secrets and "DOCKERHUB_PASSWORD" in secrets:
+                    await async_utils.run_and_check(
+                        "docker",
+                        "login",
+                        "-u",
+                        secrets["DOCKERHUB_USER"],
+                        "--password-stdin",
+                        input=secrets["DOCKERHUB_PASSWORD"].encode("utf8"),
+                    )
 
             # Only need to do this once. It's idempotent, so it's okay if it happens
             # multiple times due to a race condition. If the user doesn't have this

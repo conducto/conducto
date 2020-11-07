@@ -478,12 +478,7 @@ commands:
         if not self.config.has_section("general"):
             self.config.add_section("general")
 
-        auth = api.Auth()
-        claims = auth.get_unverified_claims(token)
-        if (
-            claims["user_status"] == "unregistered"
-            and claims["user_type"] == "anonymous"
-        ):
+        if api.Auth().is_anonymous(token):
             org_id = "anonymous"
             email = "anonymous"
         else:

@@ -6,6 +6,7 @@ import socket
 import subprocess
 import urllib.error
 import conducto as co
+import jose
 from conducto.shared import constants, log, agent_utils, container_utils, types as t
 from . import api
 
@@ -21,6 +22,8 @@ def _enrich_profile(profile, data):
     try:
         token = auth_api.get_refreshed_token(data["token"])
         org = dir_api.org(data["org_id"], token=token)
+    except (jose.exceptions.JWTError, KeyError):
+        data["org_name"] = log.format("Missing/invalid token", color="red", bold=False)
     except api.UnauthorizedResponse:
         data["org_name"] = log.format(
             "Unauthorized token, cannot fetch org details", color="red", bold=False
@@ -101,15 +104,14 @@ def _profile_add(url, default):
     os.environ["CONDUCTO_URL"] = url.rstrip("/")
     os.environ["CONDUCTO_PROFILE"] = "__none__"
 
-    # this writes the profile
-    token = api.Auth().get_token_from_shell(force=True)
+    # I want to explicitly drive the profile process here
+    token = api.Auth().get_token_from_shell(force_new=True, skip_profile=True)
 
     config = api.Config()
-    for profile in config.profile_sections():
-        if config.get_profile_general(profile, "token") == token:
-            break
-    else:
-        raise Exception("Somehow there's no matching profile though we just made one.")
+    config.default_profile = None
+    # This may overwrite an existing profile; this depends on the credentials
+    # entered.
+    profile = config.write_profile(config.get_url(), token, default="first")
 
     if default:
         profile_set_default(profile)

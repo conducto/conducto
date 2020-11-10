@@ -3,8 +3,8 @@ import time
 import typing
 import getpass
 import os
+import jose, jose.jwt
 from .. import api
-from jose import jwt
 from conducto.shared import constants, request_utils, types as t
 from http import HTTPStatus as hs
 from . import api_utils
@@ -41,21 +41,8 @@ class Auth:
             self.url + "/auth/login", headers=headers, data=data
         )
         data = self._get_data(response)
-        token = data["AccessToken"]
-        if not account_id:
-            # list accounts and use the first by default
-            accounts = self.list_accounts(token)
-            if len(accounts) > 0:
-                account_id = accounts[0]["user_id"]
-            else:
-                # critical failure
-                print("Cannot get account level token, no accounts for user")
-                return None
 
-        account_token = self.select_account(token, account_id)
-
-        # select account
-        return account_token
+        return self.config.write_account_profiles(data["AccessToken"])
 
     def get_refreshed_token(
         self, token: t.Token, force: bool = False
@@ -176,13 +163,18 @@ class Auth:
         account_id: str = None,
         force=False,
         skip_profile=False,
+        force_new=False,
     ) -> typing.Optional[t.Token]:
+        account_token = None
         try:
-            account_token = self.config.get_token(refresh=True)
-        except api_utils.UnauthorizedResponse:
+            if not force_new:
+                account_token = self.config.get_token(refresh=True)
+        except (api_utils.UnauthorizedResponse, jose.exceptions.JWTError):
             # silently null the token and it will be prompted from the user
             # further down
-            account_token = None
+            pass
+
+        auth_token = None
 
         if account_token is None or login is not None:
             if not login and os.environ.get("CONDUCTO_EMAIL"):
@@ -197,18 +189,25 @@ class Auth:
 
             if login:
                 auth_token = self.get_token(login)
-            elif not account_id and not self.config.default_profile:
-                auth_token = self._get_token_from_login()
+                account_token = self.config.write_account_profiles(
+                    auth_token, skip_profile=skip_profile
+                )
+            elif os.getenv("CONDUCTO_TOKEN"):
+                # Is this token an auth token or account token
+                account_token = os.getenv("CONDUCTO_TOKEN")
+            elif not account_id and (not self.config.default_profile or force_new):
+                account_token = self._get_token_from_login()
             else:
-                auth_token = None
+                account_token = None
 
-            if auth_token and not account_id:
+            if False and auth_token and not account_id:
+                # TODO where should this go since account stuff is now resolved
+                # in api.Config.write_account_profiles
                 if os.environ.get("CONDUCTO_ACCOUNT"):
                     account_id = os.environ.get("CONDUCTO_ACCOUNT")
                 else:
                     # if there is at least one account, select the first by default
                     # NOTE: mostly convenience for testing (account id is unpredictable)
-                    # TODO -- show accounts to user and select default
                     print(
                         "No account id specified; Selecting first account in list by default."
                     )
@@ -291,7 +290,7 @@ class Auth:
         # No validation is done. Requires no knowledge of aws resources.
         if token is None:
             token = self.config.get_token(refresh=False)
-        claims = jwt.get_unverified_claims(token)
+        claims = jose.jwt.get_unverified_claims(token)
         return claims
 
     def get_user_id(self, token: t.Token = None):
@@ -357,56 +356,8 @@ class Auth:
         for i in range(NUM_TRIES):
             login = self.prompt_for_login(i)
             try:
-                token = self.get_token(login)
-
-                # write/update a profile for all currently available accounts
-                accounts = self.list_accounts(token)
-                dir_api = api.dir.Dir()
-                dir_api.url = self.config.get_url()
-                accounts_list = []
-                for account in accounts:
-                    account_token = self.select_account(token, account["user_id"])
-                    profile = self.config.write_profile(
-                        self.config.get_url(), account_token, default=False
-                    )
-                    try:
-                        userdata = dir_api.user(account_token)
-                        orgdata = dir_api.org_by_user(account_token)
-                        accounts_list.append(
-                            {
-                                "profile_id": profile,
-                                "user_name": userdata["name"],
-                                "org_name": orgdata["name"],
-                                "is_default": profile == self.config.default_profile,
-                            }
-                        )
-                    except InvalidResponse as e:
-                        if e.status_code == hs.NOT_FOUND:
-                            # user or org may be pending delete
-                            # account effectively unavailable
-                            pass
-                        else:
-                            raise e
-
-                # show available accounts
-                if len(accounts_list) > 0:
-                    accounts_message = "Available accounts: "
-                    for a in accounts_list:
-                        accounts_message += (
-                            f"\n  {a['profile_id']}: {a['user_name']} @ {a['org_name']}"
-                            + ("*" if a["is_default"] else "")
-                        )
-                    print(accounts_message)
-                    print(
-                        "NOTE: * indicates default profile.\n"
-                        "Change your default at anytime with the command:\n"
-                        "  `conducto-profile set-default <profile_id>`"
-                    )
-                else:
-                    raise api.UserInputValidation(
-                        f"No accounts associated with this user. please visit the web app at {self.url}/app/ "
-                        "and create or join at least one organization."
-                    )
+                auth_token = self.get_token(login)
+                token = self.config.write_account_profiles(auth_token)
                 # All good
                 print("Login Successful...")
             except api_utils.InvalidResponse as e:

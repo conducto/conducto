@@ -1,3 +1,4 @@
+import sys
 import configparser
 import hashlib
 import json
@@ -9,7 +10,9 @@ import time
 import typing
 import tempfile
 import urllib.parse
+import jose
 from conducto.shared import constants, log, types as t, path_utils, imagepath
+from http import HTTPStatus as hs
 from . import api_utils
 from .. import api
 from jose import jwt
@@ -228,9 +231,11 @@ commands:
             # sandboxx*.conducto* -> sandbox.conducto*
             # testx*.conducto* -> test.conducto*
             res = urllib.parse.urlparse(result)
-            m = re.search("^(www|sandbox|test).*\.(conducto\.(?:com|io))$", res.netloc)
+            m = re.search(
+                r"^(wwwx|sandboxx|testx).*\.(conducto\.(?:com|io))$", res.netloc
+            )
             if m:
-                netloc = f"{m.group(1)}.{m.group(2)}"
+                netloc = f"{m.group(1)[:-1]}.{m.group(2)}"
                 return res._replace(netloc=netloc).geturl()
 
         return result
@@ -287,24 +292,58 @@ commands:
                     os.environ["CONDUCTO_TOKEN"] = new_token
             return os.environ["CONDUCTO_TOKEN"]
 
+        re_ask_cred_msg = None
+
         # If neither the environment variable nor the class variable are set then read
         # the token in from the .conducto profile config.
         if self.default_profile and os.path.exists(
             self._get_profile_config_file(self.default_profile)
         ):
             token = self._profile_general(self.default_profile).get("token", None)
+            if not token:
+                re_ask_cred_msg = "Credentials are missing in the local profile."
             if token and (refresh or force_refresh):
                 auth = api.Auth()
-                new_token = auth.get_refreshed_token(
-                    t.Token(token), force=force_refresh
-                )
-                if new_token is None:
-                    raise PermissionError("Expired token in config")
-                if token != new_token:
+                try:
+                    new_token = auth.get_refreshed_token(
+                        t.Token(token), force=force_refresh
+                    )
+                except (jose.exceptions.JWTError, api.api_utils.UnauthorizedResponse):
+                    re_ask_cred_msg = (
+                        "Credentials stored in the local profile are expired."
+                    )
+                    token = None
+                    new_token = None
+                if new_token and token != new_token:
                     Config._log_new_expiration_time(auth, new_token, loc="config file")
                     self.set_profile_general(self.default_profile, "token", new_token)
-                return new_token
+                    token = new_token
+            if token:
+                return token
+
+        # If a tty & token has not been discovered one of the prior ways or the
+        # token is corrupt/missing/expired in the profile then request
+        # credentials from the user.
+        if sys.stdin.isatty():
+            if re_ask_cred_msg:
+                print(re_ask_cred_msg)
+
+            # I want to explicitly drive the profile process here
+            token = auth.get_token_from_shell(force_new=True, skip_profile=True)
+
+            config = api.Config()
+            config.default_profile = None
+            # This may overwrite an existing profile; this depends on the credentials
+            # entered.
+            profile = config.write_profile(auth.url, token, default="first")
+            # set up the default for the duration of this process
+            os.environ["CONDUCTO_PROFILE"] = profile
+
             return token
+        else:
+            if re_ask_cred_msg:
+                raise PermissionError(re_ask_cred_msg)
+
         return None
 
     @staticmethod
@@ -334,6 +373,72 @@ commands:
             pass
         profconfig.set("general", option, value)
         self.write_profile_config(profile, profconfig)
+
+    def write_account_profiles(self, auth_token, skip_profile=False):
+        default_account_token = None
+
+        # write/update a profile for all currently available accounts
+        auth_api = api.auth.Auth()
+        accounts = auth_api.list_accounts(auth_token)
+        dir_api = api.dir.Dir()
+        dir_api.url = self.get_url()
+        accounts_list = []
+        for account in accounts:
+            account_token = auth_api.select_account(auth_token, account["user_id"])
+            userdata = dir_api.user(account_token)
+            orgdata = dir_api.org_by_user(account_token)
+            if not skip_profile:
+                profile = self.write_profile(
+                    self.get_url(), account_token, default=False
+                )
+            else:
+                profile = self.get_profile_id(
+                    self.get_url(), userdata["org_id"], userdata["email"]
+                )
+            try:
+                accounts_list.append(
+                    {
+                        "profile_id": profile,
+                        "token": account_token,
+                        "user_name": userdata["name"],
+                        "org_name": orgdata["name"],
+                        "is_default": profile == self.default_profile,
+                    }
+                )
+            except api_utils.InvalidResponse as e:
+                if e.status_code == hs.NOT_FOUND:
+                    # user or org may be pending delete
+                    # account effectively unavailable
+                    pass
+                else:
+                    raise e
+
+        # show available accounts
+        if len(accounts_list) > 0:
+            accounts_message = "Available accounts: "
+            for a in accounts_list:
+                accounts_message += (
+                    f"\n  {a['profile_id']}: {a['user_name']} @ {a['org_name']}"
+                    + ("*" if a["is_default"] else "")
+                )
+                # set the token to the account token
+                if a["is_default"]:
+                    default_account_token = a["token"]
+            if not default_account_token:
+                # if none is marked default in config, take first
+                default_account_token = accounts_list[0]["token"]
+            print(accounts_message)
+            print(
+                "NOTE: * indicates default profile.\n"
+                "Change your default at anytime with the command:\n"
+                "  `conducto-profile set-default <profile_id>`"
+            )
+        else:
+            raise api.UserInputValidation(
+                f"No accounts associated with this user. please visit the web app at {self.get_url()}/app/ "
+                "and create or join at least one organization."
+            )
+        return default_account_token
 
     def register_named_share(self, profile, name, dirname):
         """
@@ -438,7 +543,7 @@ commands:
             ]
             info = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
             docker_id = info.stdout.decode().strip('"')
-        except:
+        except subprocess.CalledProcessError:
             docker_id = None
 
         if not docker_id:
@@ -545,7 +650,18 @@ commands:
         old_token = old_config.get("general", "token", fallback=None)
         if new_token is not None and old_token is not None:
             new_claims = jwt.get_unverified_claims(new_token)
-            old_claims = jwt.get_unverified_claims(old_token)
+            try:
+                old_claims = jwt.get_unverified_claims(old_token)
+            except jose.exceptions.JWTError:
+                # the old claim is garbage, lets ignore this and move on
+                old_claims = new_claims
+
+            # TODO:  for now tolerate claims with no token_type, but tighten this later
+            if new_claims.get("token_type", "account") != "account":
+                raise Exception(
+                    "Tokens written to the config must be account tokens (not auth)"
+                )
+
             if (
                 new_claims["iss"] != old_claims["iss"]
                 or new_claims["sub"] != old_claims["sub"]

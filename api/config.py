@@ -250,10 +250,11 @@ commands:
             return netloc
 
     def get_token(self, refresh: bool, force_refresh=False) -> typing.Optional[t.Token]:
+        auth = api.Auth()
+
         # First look in contextvars, which is the async version of thread-local storage
         if Config._CV_TOKEN.get() is not None:
             if refresh or force_refresh:
-                auth = api.Auth()
                 new_token = auth.get_refreshed_token(
                     Config._CV_TOKEN.get(), force=force_refresh
                 )
@@ -267,7 +268,6 @@ commands:
         # First priority is the class variable
         if Config.TOKEN is not None:
             if refresh or force_refresh:
-                auth = api.Auth()
                 new_token = auth.get_refreshed_token(Config.TOKEN, force=force_refresh)
                 if new_token is None:
                     raise PermissionError("Expired token in Config.TOKEN")
@@ -279,7 +279,6 @@ commands:
         # If that's absent, look at the environment variable
         if "CONDUCTO_TOKEN" in os.environ:
             if refresh or force_refresh:
-                auth = api.Auth()
                 new_token = auth.get_refreshed_token(
                     os.environ["CONDUCTO_TOKEN"], force=force_refresh
                 )
@@ -303,7 +302,6 @@ commands:
             if not token:
                 re_ask_cred_msg = "Credentials are missing in the local profile."
             if token and (refresh or force_refresh):
-                auth = api.Auth()
                 try:
                     new_token = auth.get_refreshed_token(
                         t.Token(token), force=force_refresh
@@ -656,13 +654,20 @@ commands:
                 # the old claim is garbage, lets ignore this and move on
                 old_claims = new_claims
 
+            check1 = new_claims["user_status"] == "unregistered"
+            check2 = new_claims["user_type"] == "anonymous"
+            assert check1 == check2, (
+                f"Unexpected discrepancy: user_status={new_claims['user_status']} "
+                f"user_type={new_claims['user_type']}"
+            )
+
             # TODO:  for now tolerate claims with no token_type, but tighten this later
-            if new_claims.get("token_type", "account") != "account":
+            if not check1 and new_claims.get("token_type", "account") != "account":
                 raise Exception(
                     "Tokens written to the config must be account tokens (not auth)"
                 )
 
-            if (
+            if not check1 and (
                 new_claims["iss"] != old_claims["iss"]
                 or new_claims["sub"] != old_claims["sub"]
             ):

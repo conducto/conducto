@@ -88,6 +88,14 @@ class Auth:
         response = request_utils.get(self.url + "/auth/refresh", headers=headers)
         return self._get_data(response)
 
+    def change_password(self, current: str, new: str, token: t.Token = None):
+        data = json.dumps({"current_password": current, "new_password": new})
+        headers = api_utils.get_auth_headers(token)
+        response = request_utils.post(
+            self.url + "/auth/change-password", headers=headers, data=data
+        )
+        return self._get_data(response)
+
     def get_credentials(self, token: t.Token = None, force_refresh=False) -> dict:
         headers = api_utils.get_auth_headers(token, force_refresh=force_refresh)
         response = request_utils.get(self.url + "/auth/creds", headers=headers)

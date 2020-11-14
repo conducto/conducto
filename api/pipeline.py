@@ -169,8 +169,13 @@ class Pipeline:
         response = request_utils.get(self.url + "/program/agent", headers=headers)
         return api_utils.get_data(response)
 
-    def get_agent(self, *, user_id=None, host_id, token: t.Token = None) -> dict:
+    def get_agent(
+        self, user_id: str = None, host_id: str = None, token: t.Token = None
+    ) -> dict:
         headers = api_utils.get_auth_headers(token)
+        if not user_id:
+            auth = api.Auth()
+            user_id = auth.get_user_id(token)
         response = request_utils.get(
             self.url + f"/program/agent/user/{user_id}/host/{host_id}", headers=headers
         )

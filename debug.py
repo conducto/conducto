@@ -193,7 +193,7 @@ def dump_command(container_name, command, shell):
 @functools.lru_cache()
 def get_image_inspection(image_name):
     proc = subprocess.run(
-        ["docker", "image", "inspect", image_name], stderr=PIPE, stdout=PIPE,
+        ["docker", "image", "inspect", image_name], stderr=PIPE, stdout=PIPE
     )
     return proc.stdout.decode().strip()
 
@@ -290,7 +290,7 @@ async def _debug(id, node, live, timestamp):
     pl = constants.PipelineLifecycle
 
     pipeline_id = id
-    token = api.Auth().get_token_from_shell(force=True)
+    token = api.Config().get_token_from_shell(force=True)
     try:
         pipeline = api.Pipeline().get(pipeline_id, token=token)
     except api.InvalidResponse as e:

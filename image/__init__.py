@@ -848,7 +848,7 @@ class Image:
 
         outputs.append(
             await async_utils.run_and_check(
-                "git", "-C", dest, "config", "remote.origin.url", fake_url,
+                "git", "-C", dest, "config", "remote.origin.url", fake_url
             )
         )
         out = b"\n\n".join(o for o, e in outputs if o)

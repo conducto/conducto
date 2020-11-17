@@ -105,7 +105,7 @@ def _profile_add(url, default):
     os.environ["CONDUCTO_PROFILE"] = "__none__"
 
     # I want to explicitly drive the profile process here
-    token = api.Auth().get_token_from_shell(force_new=True, skip_profile=True)
+    token = api.Config().get_token_from_shell(force_new=True, skip_profile=True)
 
     config = api.Config()
     config.default_profile = None
@@ -310,7 +310,7 @@ def profile_start_agent(id=None):
     if id is not None:
         os.environ["CONDUCTO_PROFILE"] = id
 
-    token = api.Auth().get_token_from_shell()
+    token = api.Config().get_token_from_shell()
 
     start_status = agent_utils.launch_agent(token=token)
 

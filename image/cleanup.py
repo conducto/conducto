@@ -22,7 +22,7 @@ async def cleanup(label, age, clean_networks=True):
         # We convert to repo tags because when you push an image to another
         # repository, delete will only delete the image by id with -f switch.
         stdout, stderr = await async_utils.run_and_check(
-            "docker", "inspect", *to_delete, "--format={{json .RepoTags}}",
+            "docker", "inspect", *to_delete, "--format={{json .RepoTags}}"
         )
 
         to_delete_tags = []

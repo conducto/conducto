@@ -5,6 +5,7 @@ import json
 import os
 import re
 import secrets
+import getpass
 import subprocess
 import time
 import typing
@@ -327,15 +328,14 @@ commands:
                 print(re_ask_cred_msg)
 
             # I want to explicitly drive the profile process here
-            token = auth.get_token_from_shell(force_new=True, skip_profile=True)
+            token = self.get_token_from_shell(force_new=True, skip_profile=True)
 
-            config = api.Config()
-            config.default_profile = None
             # This may overwrite an existing profile; this depends on the credentials
             # entered.
-            profile = config.write_profile(auth.url, token, default="first")
+            profile = self.write_profile(auth.url, token, default="first")
             # set up the default for the duration of this process
             os.environ["CONDUCTO_PROFILE"] = profile
+            self.default_profile = profile
 
             return token
         else:
@@ -446,8 +446,7 @@ commands:
         from .. import image as image_mod
 
         if not self.default_profile:
-            auth = api.Auth()
-            auth.get_token_from_shell(force=True)
+            self.get_token_from_shell(force=True)
 
         path = image_mod.Image.get_contextual_path(dirname, named_shares=False)
         dirname = path.to_docker_host()
@@ -624,6 +623,159 @@ commands:
             self.default_profile = profile
         self.write()
         return profile
+
+    def get_token_from_shell(
+        self, login: dict = None, force=False, skip_profile=False, force_new=False
+    ) -> typing.Optional[t.Token]:
+        try:
+            if not force_new:
+                token = self.get_token(refresh=True)
+                if token:
+                    if not skip_profile:
+                        # One of the reasons for a (full) write_profile here is
+                        # for login with CONDUCTO_URL & CONDUCTO_TOKEN as
+                        # environment variables.
+                        self.write_profile(self.get_url(), token, default="first")
+                    return token
+        except (api_utils.UnauthorizedResponse, jose.exceptions.JWTError):
+            # silently null the token and it will be prompted from the user
+            # further down
+            pass
+
+        auth = api.Auth()
+        auth.url = self.get_url()
+
+        return Config._get_token_from_shell(
+            self, auth, login=login, force=force, skip_profile=skip_profile
+        )
+
+    # This is equally a method of config & auth so priviledge neither as self.
+    @staticmethod
+    def _get_token_from_shell(
+        config, auth, login: dict = None, force=False, skip_profile=False
+    ):
+        if not login and os.environ.get("CONDUCTO_EMAIL"):
+            login = {
+                "email": os.environ.get("CONDUCTO_EMAIL"),
+                "password": os.environ["CONDUCTO_PASSWORD"],
+            }
+            print(
+                f"Logging in with CONDUCTO_EMAIL={login['email']} and "
+                f"CONDUCTO_PASSWORD in environment."
+            )
+
+        if login:
+            auth_token = auth.get_token(login)
+            account_token = config.write_account_profiles(
+                auth_token, skip_profile=skip_profile
+            )
+        elif os.getenv("CONDUCTO_TOKEN"):
+            # Is this token an auth token or account token
+            account_token = os.getenv("CONDUCTO_TOKEN")
+        else:
+            account_token = Config._get_token_from_login(config, auth)
+
+        if not account_token:
+            # token is expired, not enough info to fetch it headlessly.
+            # prompt the user to login via the UI
+            raise api.UserInputValidation(
+                "Failed to refresh token. Token may be expired.\n"
+                f"Log in through the webapp at {auth.url}/app/ and select an account, then try again."
+            )
+        else:
+            # try to refresh the token
+            try:
+                new_token = auth.get_refreshed_token(account_token, force)
+            except api_utils.InvalidResponse as e:
+                account_token = None
+                # If cognito changed, our token is invalid, so we should
+                # prompt for re-login.
+                if e.status_code == hs.UNAUTHORIZED and "Invalid auth token" in str(e):
+                    pass
+                # Convenience case for when we're testing and user is deleted from
+                # cognito. Token will still be valid but not associated with a user.
+                # Re-login will straighten things out
+                elif e.status_code == hs.NOT_FOUND and "User not found" in str(e):
+                    pass
+                else:
+                    raise e
+            else:
+                if new_token:
+                    if new_token != account_token:
+                        if not skip_profile:
+                            # TODO -- how do we know that this is the same profile?
+                            config.set_profile_general(
+                                config.default_profile, "token", new_token
+                            )
+                        account_token = new_token
+                    # now, we continue with the refreshed token possibly
+                    # writing a brand new profile (e.g. from the copied
+                    # `start-agent` command from the app)
+
+        # If no token by now, fail and let the user know that they need
+        # to refresh their token in the app by logging in again.
+
+        if not account_token:
+            raise api.UserInputValidation(
+                "Failed to refresh token. Token may be expired.\n"
+                f"Log in through the webapp at {auth.url}/app/ and select an account, then try again."
+            )
+        else:
+            # update profile with fresh token unless skipped
+            if not skip_profile:
+                config.write_profile(auth.url, account_token, default="first")
+            return t.Token(account_token)
+
+    # This is equally a method of config & auth so priviledge neither as self.
+    @staticmethod
+    def _prompt_for_login() -> dict:
+        login = {}
+        while True:
+            login["email"] = input("Email: ")
+            if len(login["email"]) > 0:
+                break
+        while True:
+            login["password"] = getpass.getpass(prompt="Password: ")
+            if len(login["password"]) > 0:
+                break
+        return login
+
+    # This is equally a method of config & auth so priviledge neither as self.
+    @staticmethod
+    def _get_token_from_login(config, auth):
+        NUM_TRIES = 3
+
+        print(f"Log in to Conducto. To register, visit {auth.url}/app/")
+        for i in range(NUM_TRIES):
+            login = config._prompt_for_login()
+            try:
+                auth_token = auth.get_token(login)
+                token = config.write_account_profiles(auth_token)
+                # All good
+                print("Login Successful...")
+            except api_utils.InvalidResponse as e:
+                if e.status_code == hs.CONFLICT and e.message.startswith(
+                    "User registration"
+                ):
+                    print(e.message)
+                elif e.status_code == hs.NOT_FOUND and e.message.startswith("No user"):
+                    print(e.message)
+                else:
+                    raise
+            except Exception as e:
+                incorrects = ["Incorrect email or password", "User not found"]
+                unfinished = ["User must confirm email", "No user information found"]
+                if any(s in str(e) for s in incorrects):
+                    print("Could not login. Incorrect email or password.")
+                elif any(s in str(e) for s in unfinished):
+                    print(
+                        "Could not login. Complete registration from the link in the confirmation e-mail."
+                    )
+                else:
+                    raise e
+            else:
+                return token
+        raise Exception(f"Failed to login after {NUM_TRIES} attempts")
 
     ############################################################
     # helper methods

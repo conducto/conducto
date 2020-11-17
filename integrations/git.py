@@ -109,12 +109,12 @@ def get_log_diff(
     return "\n\n".join(formatted_lines)
 
 
-def get_num_commits(base_branch: str, current_branch: str = None, git_dir=None,) -> int:
+def get_num_commits(base_branch: str, current_branch: str = None, git_dir=None) -> int:
     return _get_log_diff_for_key("num_commits", base_branch, current_branch, git_dir)
 
 
 def get_num_commits_behind_base(
-    base_branch: str, current_branch: str = None, git_dir=None,
+    base_branch: str, current_branch: str = None, git_dir=None
 ) -> int:
     return _get_log_diff_for_key(
         "num_commits_behind_base", base_branch, current_branch, git_dir
@@ -122,7 +122,7 @@ def get_num_commits_behind_base(
 
 
 def get_last_shared_commit(
-    base_branch: str, current_branch: str = None, git_dir=None,
+    base_branch: str, current_branch: str = None, git_dir=None
 ) -> str:
     return _get_log_diff_for_key(
         "last_shared_commit", base_branch, current_branch, git_dir
@@ -133,7 +133,7 @@ def get_last_shared_commit(
 # internal helpers
 ############################################################
 def _get_log_diff_for_key(
-    diff_key: str, base_branch: str, current_branch: str = None, git_dir=None,
+    diff_key: str, base_branch: str, current_branch: str = None, git_dir=None
 ) -> str:
     git_root = _find_git_root(git_dir)
 

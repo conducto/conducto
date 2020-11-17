@@ -1134,7 +1134,7 @@ def _get_pipeline_validated(token, pipeline_id):
 
 
 def return_serialization(pipeline_id):
-    token = api.Auth().get_token_from_shell(force=True)
+    token = api.Config().get_token_from_shell(force=True)
     pipeline = _get_pipeline_validated(token, pipeline_id)
 
     status = pipeline["status"]
@@ -1153,11 +1153,9 @@ def return_serialization(pipeline_id):
     return serialization
 
 
-async def update_serialization(
-    serialization, pipeline_id, token=None,
-):
+async def update_serialization(serialization, pipeline_id, token=None):
     if not token:
-        token = api.Auth().get_token_from_shell()
+        token = api.Config().get_token_from_shell()
     pipeline = _get_pipeline_validated(token, pipeline_id)
     status = pipeline["status"]
     pl = constants.PipelineLifecycle
@@ -1323,7 +1321,7 @@ def main(
                     if output.image is None:
                         output.image = image_mod.Image(name="conducto-default")
                     asyncio.get_event_loop().run_until_complete(
-                        update_serialization(output.serialize(), pipeline_id,)
+                        update_serialization(output.serialize(), pipeline_id)
                     )
                 else:
                     try:

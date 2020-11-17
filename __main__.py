@@ -20,7 +20,7 @@ def show(id, app=method._get_default_app(), shell=method._get_default_shell()):
     pl = constants.PipelineLifecycle
 
     pipeline_id = id
-    token = co.api.Auth().get_token_from_shell(force=True)
+    token = co.api.Config().get_token_from_shell(force=True)
     pipeline = method._get_pipeline_validated(token, pipeline_id)
     perms = co.api.Pipeline().perms(pipeline_id, token=token)
 
@@ -82,7 +82,7 @@ def show(id, app=method._get_default_app(), shell=method._get_default_shell()):
 
 async def sleep(id):
     pipeline_id = id
-    token = co.api.Auth().get_token_from_shell(force=True)
+    token = co.api.Config().get_token_from_shell(force=True)
     pipeline = method._get_pipeline_validated(token, pipeline_id)
 
     status = pipeline["status"]

@@ -82,7 +82,7 @@ def docker_available_drives():
 @functools.lru_cache(None)
 def is_docker_desktop():
     subp = subprocess.Popen(
-        "docker info --format '{{json .}}'", shell=True, stdout=PIPE, stderr=DEVNULL,
+        "docker info --format '{{json .}}'", shell=True, stdout=PIPE, stderr=DEVNULL
     )
     info_txt, err = subp.communicate()
 

@@ -50,9 +50,9 @@ class Node:
     :param cpu: `float`, default 1, Number of CPUs to allocate to the Node.
         Must be >0 if assigned.
     :param mem: `float`, default 2, GB of memory to allocate to the Node. Must
-        be >0 if assigned. 
+        be >0 if assigned.
     :param requires_docker: `bool`, default `False`, If True, enable the Node
-        to use 
+        to use
     :param env: `dict` with keys environment variables and the values
 
     :param image: :py:class:`conducto.Image` or `str`, Run Node in container
@@ -76,7 +76,7 @@ class Node:
         indicating seconds, minutes, hours, or days respectively.
 
     :param name: If creating Node inside a context manager, you may pass
-        `name=...` instead of using normal dict assignment. 
+        `name=...` instead of using normal dict assignment.
 
     All of these arguments, except for `name`, may be set in the Node
     constructor or later. For example, `n = co.Parallel(cpu=2)` and
@@ -647,7 +647,7 @@ class Node:
         return None
 
     def launch_local(
-        self, use_shell=True, retention=7, run=False, sleep_when_done=False,
+        self, use_shell=True, retention=7, run=False, sleep_when_done=False
     ):
         """
         Launch directly from python.
@@ -933,7 +933,7 @@ class Exec(Node):
 class Parallel(Node):
     """
     Node that has child Nodes and runs them at the same time.
-    Same interface as :py:func:`conducto.Node`. 
+    Same interface as :py:func:`conducto.Node`.
     """
 
     __slots__ = []

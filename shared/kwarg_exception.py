@@ -148,9 +148,7 @@ class KwargException(Exception):
             )
 
         if stackedContexts:
-            parts.extend(
-                ["Stacked Contexts:", indented(stackedContexts),]
-            )
+            parts.extend(["Stacked Contexts:", indented(stackedContexts)])
 
         return "\n\n".join(parts)
 

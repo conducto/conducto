@@ -6,9 +6,9 @@ from . import api
 
 def _auth_and_send_message(recipient, text=None, blocks=None):
     slack = Slack()
-    token = api.Auth().get_token_from_shell()
+    token = api.Config().get_token()
     thread_info = slack.message(
-        recipient=recipient, text=text, blocks=blocks, token=token,
+        recipient=recipient, text=text, blocks=blocks, token=token
     )
 
 

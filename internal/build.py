@@ -70,7 +70,7 @@ def build(
     serialization = node.serialize()
 
     return launch_from_serialization(
-        serialization, pipeline_id, build_mode, use_shell, use_app, token,
+        serialization, pipeline_id, build_mode, use_shell, use_app, token
     )
 
 

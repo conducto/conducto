@@ -139,9 +139,7 @@ class _Data:
         return _Context(local=cls._local, uri=cls._get_uri())
 
     @staticmethod
-    def _init(
-        *, pipeline_id: t.PipelineId = None, local: bool = None,
-    ):
+    def _init(*, pipeline_id: t.PipelineId = None, local: bool = None):
         # Order of precedence for each param:
         #  - If it is specified, use it.
         #  - elif it is set on the class, use that

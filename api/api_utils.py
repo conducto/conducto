@@ -119,8 +119,8 @@ def get_data(
     response, content_type="application/json"
 ) -> typing.Union[None, dict, list, str, int, float, typing.Dict[str, dict]]:
     """
-        Handle responses that have errors, and return the JSON-parsed result. May return
-        None for certain status codes that have no data.
+    Handle responses that have errors, and return the JSON-parsed result. May return
+    None for certain status codes that have no data.
     """
     url = response.url if hasattr(response, "url") else ""
     res = response.read()
@@ -132,8 +132,8 @@ async def aiohttp_get_data(
     response, content_type="application/json"
 ) -> typing.Union[None, dict, list, str, int, float, typing.Dict[str, dict]]:
     """
-        Handle responses that have errors, and return the JSON-parsed result. May return
-        None for certain status codes that have no data.
+    Handle responses that have errors, and return the JSON-parsed result. May return
+    None for certain status codes that have no data.
     """
     url = response.url if hasattr(response, "url") else ""
     res = await response.read()

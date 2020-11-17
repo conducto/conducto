@@ -389,7 +389,7 @@ async def _get_python_info(user_image, install_command):
         "-c",
         command,
     ]
-    out, err = await async_utils.run_and_check(*docker_command, stop_on_error=False,)
+    out, err = await async_utils.run_and_check(*docker_command, stop_on_error=False)
     out = out.decode("utf-8").strip()
     out = out.split(sep, 1)[-1].strip()
 
@@ -445,7 +445,7 @@ async def _get_pip_version(user_image, pip_binary) -> packaging.version.Version:
     """
 
     out, err = await async_utils.run_and_check(
-        "docker", "run", "--rm", "--entrypoint", pip_binary, user_image, "--version",
+        "docker", "run", "--rm", "--entrypoint", pip_binary, user_image, "--version"
     )
 
     # we don't really care about the pip version, but I retain it here for

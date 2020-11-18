@@ -57,6 +57,19 @@ async def text_for_install(image, reqs_py, reqs_packages, reqs_docker):
     # Install docker if needed
     if reqs_docker:
         lines.append("RUN curl -sSL https://get.docker.com/ | sh")
+        if _is_debian(linux_flavor):
+            lines_append_once("RUN apt-get update")
+            lines.append("RUN apt-get install -y openssh-server")
+        elif _is_alpine(linux_flavor):
+            lines.append("RUN apk add openssh")
+        elif _is_centos(linux_flavor):
+            lines.append("RUN yum install -y openssh-clients")
+        elif _is_fedora(linux_flavor):
+            lines.append("RUN dnf install -y openssh-clients")
+        else:
+            raise ValueError(
+                f"Don't know how to install ssh for linux_flavor={repr(linux_flavor)}"
+            )
 
     # Install python packages with pip
     if reqs_py:

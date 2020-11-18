@@ -946,6 +946,7 @@ class Image:
             context = self.context.to_docker_mount(pipeline_id=self._pipeline_id)
             dockerfile = self.dockerfile.to_docker_mount(pipeline_id=self._pipeline_id)
 
+        pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID", self._pipeline_id)
         build_args = []
         if self.docker_build_args is not None:
             for k, v in self.docker_build_args.items():
@@ -958,6 +959,8 @@ class Image:
             self.name_built,
             "--label",
             "com.conducto.user",
+            "--label",
+            f"com.conducto.pipeline={pipeline_id}",
             *build_args,
             "-f",
             dockerfile,
@@ -997,6 +1000,7 @@ class Image:
                 await async_utils.run_and_check("docker", "pull", conducto_image)
                 Image._PULLED_IMAGES.add(conducto_image)
 
+        pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID", self._pipeline_id)
         out, err = await async_utils.run_and_check(
             "docker",
             "build",
@@ -1004,6 +1008,8 @@ class Image:
             self.name_installed,
             "--label",
             "com.conducto.user",
+            "--label",
+            f"com.conducto.pipeline={pipeline_id}",
             "-",
             input=text.encode(),
             env={**os.environ, "DOCKER_BUILDKIT": "1"},
@@ -1045,6 +1051,7 @@ class Image:
         with open(dockerignore_path, "w") as f:
             f.write(dockerignore_text)
 
+        pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID", self._pipeline_id)
         # Run the command
         out, err = await async_utils.run_and_check(
             "docker",
@@ -1053,6 +1060,8 @@ class Image:
             self.name_copied,
             "--label",
             "com.conducto.user",
+            "--label",
+            f"com.conducto.pipeline={pipeline_id}",
             "-f",
             dockerfile_path,
             context,

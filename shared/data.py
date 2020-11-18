@@ -31,17 +31,21 @@ class Credentials:
     def refresh(cls):
         if cls.refresh_time is None or time.time() - cls.refresh_time >= 3000:
             with client_creation_lock:
+                if not (
+                    cls.refresh_time is None or time.time() - cls.refresh_time >= 3000
+                ):
+                    return
+
                 import boto3
                 from conducto import api
 
                 cls._creds = api.Auth().get_credentials(force_refresh=True)
-
-                session = boto3.Session(
+                cls._s3_client = boto3.client(
+                    "s3",
                     aws_access_key_id=cls._creds["AccessKeyId"],
                     aws_secret_access_key=cls._creds["SecretKey"],
                     aws_session_token=cls._creds["SessionToken"],
                 )
-                cls._s3_client = session.client("s3")
                 cls.refresh_time = time.time()
 
     @classmethod
@@ -194,14 +198,15 @@ class _Data:
                     return f.read()
 
     @classmethod
-    def put(cls, name, file):
+    def put(cls, name, file, skip_cleanup=False):
         """
         Store object in `file` to `name`.
         """
         ctx = cls._ctx()
         if not ctx.local:
             ctx.get_function("upload_file", name)(file)
-            ctx.cleanup(name, skip_latest=True)
+            if not skip_cleanup:
+                ctx.cleanup(name, skip_latest=True)
         else:
             # Make sure to write the obj atomically. Write to a temp file then move it
             # into the final location. If anything goes wrong delete the temp file.

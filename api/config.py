@@ -24,13 +24,21 @@ except ImportError:
     cv = None
 
 
+class EmptyCV:
+    def __init__(self):
+        pass
+
+    def get(self):
+        return None
+
+
 class Config:
     TOKEN: typing.Optional[t.Token] = None
     _RAN_FIX = False
 
     # contextvars is the async version of thread-local storage. This allows services to
     # have separate tokens for separate async tasks
-    _CV_TOKEN = {} if cv is None else cv.ContextVar("_CV_TOKEN", default=None)
+    _CV_TOKEN = EmptyCV() if cv is None else cv.ContextVar("_CV_TOKEN", default=None)
 
     class Location:
         LOCAL = "local"

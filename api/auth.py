@@ -106,7 +106,7 @@ class Auth:
         headers = api_utils.get_auth_headers(token)
         response = request_utils.get(self.url + "/auth/email", headers=headers)
         data = self._get_data(response)
-        return data
+        return data["email"]
 
     def admin_disable_users(self, token: t.Token, users: list):
         headers = api_utils.get_auth_headers(token)
@@ -158,7 +158,6 @@ class Auth:
     def admin_delete_users(self, token: t.Token, users: list):
         headers = api_utils.get_auth_headers(token)
         body = {"user_ids": users}
-
         data = json.dumps(body)
         response = request_utils.delete(
             self.url + "/auth/admin/account/delete", headers=headers, data=data

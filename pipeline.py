@@ -295,7 +295,9 @@ class Node:
         if image is not None:
             self.image = image
         if env is not None:
-            self.env = env
+            # explicitly copy the current env here so that this is not mutated
+            # by modifying the passed dict later
+            self.env = env.copy()
         if doc is not None:
             self.doc = doc
         if title is not None:

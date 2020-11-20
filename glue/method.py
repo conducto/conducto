@@ -1117,7 +1117,7 @@ def run_cfg_section(
             # Variable is set in conducto_worker/__main__.py to avoid
             # printing ugly serialization when not needed.
             s = output.serialize()
-            print(f"<__conducto_serialization>{s}</__conducto_serialization>\n")
+            print(f"\n<__conducto_serialization>{s}</__conducto_serialization>\n")
         print(output.pretty(strict=False))
 
 
@@ -1344,7 +1344,7 @@ def main(
                 # Variable is set in conducto_worker/__main__.py to avoid
                 # printing ugly serialization when not needed.
                 s = output.serialize()
-                print(f"<__conducto_serialization>{s}</__conducto_serialization>\n")
+                print(f"\n<__conducto_serialization>{s}</__conducto_serialization>\n")
             print(output.pretty(strict=False))
     elif output is not None:
         printer(output)

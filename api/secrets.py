@@ -1,7 +1,4 @@
 import json
-import typing
-
-from http import HTTPStatus as hs
 
 from .. import api
 from . import api_utils
@@ -63,7 +60,7 @@ class Secrets:
             headers=api_utils.get_auth_headers(token),
         )
 
-    def delete_user_secrets(self, token: types.Token, secret_names: list):
+    def delete_user_secrets(self, secret_names: list, token: types.Token = None):
         data = {"secret_names": secret_names}
         request_utils.post(
             f"{self.url}/secrets/user/delete",
@@ -71,7 +68,7 @@ class Secrets:
             headers=api_utils.get_auth_headers(token),
         )
 
-    def delete_org_secrets(self, token: types.Token, secret_names: list):
+    def delete_org_secrets(self, secret_names: list, token: types.Token = None):
         data = {"secret_names": secret_names}
         request_utils.post(
             f"{self.url}/secrets/org/delete",

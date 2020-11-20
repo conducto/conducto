@@ -45,6 +45,13 @@ def is_windows_by_host_mnt():
         # if this check does not work to detect your windows, you can short-circuit it
         return True
 
+    # If we are detectably a mac, we are outside docker and we can
+    # authoritatively say this is not windows; if we are on a linux, it may be
+    # docker desktop on windows so we cannot make the analogous fast exit for
+    # linux.
+    if hostdet.is_mac():
+        return False
+
     try:
         kwargs = dict(check=True, stdout=PIPE, stderr=PIPE)
         catwin = "docker run --rm -v /:/mnt/external alpine cat /mnt/external/host_mnt/c/Windows/win.ini"

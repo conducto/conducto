@@ -166,13 +166,13 @@ class Path:
                 if not os.path.exists(path) and os.path.exists(bugpath):
                     raise Exception(
                         """
-    The latest Docker Desktop for Mac (v2.4.0) has a bug with gRPC FUSE that breaks
-    Conducto. Please disable it by going to 'Docker Desktop > Preferences' and
-    uncheck 'Use gRPC FUSE for file sharing'. This will kill all Docker containers,
-    so you may have to restart your pipeline.
+    Docker Desktop for Mac (v2.4.0 through v2.5.0.1) has a bug with gRPC FUSE
+    that breaks Conducto. To disable it go to 'Docker Desktop > Preferences'
+    and uncheck 'Use gRPC FUSE for file sharing'. This will kill all Docker
+    containers, so you may have to restart your pipeline.
 
-    If you're not on Docker Desktop for Mac v2.4, please let us know that you saw
-    this error because that means it is more widespread than we believed.
+    If you are not on Docker Desktop for Mac v2.4 through v2.5.0.1, please let
+    us know that you saw this error, as it is more widespread than we believed.
 """
                     )
                 else:

@@ -108,16 +108,6 @@ class Auth:
         data = self._get_data(response)
         return data["email"]
 
-    def admin_disable_users(self, token: t.Token, users: list):
-        headers = api_utils.get_auth_headers(token)
-        body = {"user_ids": users}
-
-        data = json.dumps(body)
-        response = request_utils.post(
-            self.url + "/auth/disable", headers=headers, data=data
-        )
-        return self._get_data(response)
-
     def admin_create_account(self, token: t.Token, user_email: str, org_id: int):
         headers = api_utils.get_auth_headers(token)
         body = {"user_email": user_email, "org_id": org_id}
@@ -144,16 +134,6 @@ class Auth:
         token = data["AccessToken"]
 
         return token
-
-    def admin_enable_users(self, token: t.Token, users: list):
-        headers = api_utils.get_auth_headers(token)
-        body = {"user_ids": users}
-
-        data = json.dumps(body)
-        response = request_utils.post(
-            self.url + "/auth/enable", headers=headers, data=data
-        )
-        return self._get_data(response)
 
     def admin_delete_users(self, token: t.Token, users: list):
         headers = api_utils.get_auth_headers(token)

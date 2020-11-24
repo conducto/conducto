@@ -1,4 +1,3 @@
-import sys
 import configparser
 import hashlib
 import json
@@ -300,8 +299,6 @@ commands:
                     os.environ["CONDUCTO_TOKEN"] = new_token
             return os.environ["CONDUCTO_TOKEN"]
 
-        re_ask_cred_msg = None
-
         # If neither the environment variable nor the class variable are set then read
         # the token in from the .conducto profile config.
         if self.default_profile and os.path.exists(
@@ -309,14 +306,14 @@ commands:
         ):
             token = self._profile_general(self.default_profile).get("token", None)
             if not token:
-                re_ask_cred_msg = "Credentials are missing in the local profile."
+                raise PermissionError("Credentials are missing in the local profile.")
             if token and (refresh or force_refresh):
                 try:
                     new_token = auth.get_refreshed_token(
                         t.Token(token), force=force_refresh
                     )
                 except (jose.exceptions.JWTError, api.api_utils.UnauthorizedResponse):
-                    re_ask_cred_msg = (
+                    raise PermissionError(
                         "Credentials stored in the local profile are expired."
                     )
                     token = None
@@ -327,28 +324,6 @@ commands:
                     token = new_token
             if token:
                 return token
-
-        # If a tty & token has not been discovered one of the prior ways or the
-        # token is corrupt/missing/expired in the profile then request
-        # credentials from the user.
-        if sys.stdin.isatty():
-            if re_ask_cred_msg:
-                print(re_ask_cred_msg)
-
-            # I want to explicitly drive the profile process here
-            token = self.get_token_from_shell(force_new=True, skip_profile=True)
-
-            # This may overwrite an existing profile; this depends on the credentials
-            # entered.
-            profile = self.write_profile(auth.url, token, default="first")
-            # set up the default for the duration of this process
-            os.environ["CONDUCTO_PROFILE"] = profile
-            self.default_profile = profile
-
-            return token
-        else:
-            if re_ask_cred_msg:
-                raise PermissionError(re_ask_cred_msg)
 
         return None
 

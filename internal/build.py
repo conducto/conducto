@@ -42,9 +42,12 @@ def build(
 
     # refresh the token for every pipeline launch
     # Force in case of cognito change
-    token = api.Config().get_token(refresh=True)
-    if token is None:
-        token = api.Auth().get_token_from_shell(force=True)
+    try:
+        token = api.Config().get_token(refresh=True)
+    except PermissionError:
+        token = None
+    if token is None and sys.stdin.isatty():
+        token = api.Auth().get_token_from_shell(force=True, force_new=True)
     node.token = token
 
     command = " ".join(pipes.quote(a) for a in sys.argv)

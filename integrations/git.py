@@ -226,6 +226,9 @@ def _parse_github_url(url):
     Look for "github.com/{owner}/{repo}.git" or "github.com:{owner}/{repo}.git" or "github.com-user:{owner}/{repo}.git"
     """
     m = re.search(r"github\.com(?:-.*?)?[/:]([^/]+)/(.+?)\.git$", url)
+    if not m:
+        raise ValueError(f"{url} is not a valid github url.")
+
     owner, repo = m.group(1, 2)
     return owner, repo
 

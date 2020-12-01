@@ -4,7 +4,7 @@ from .analytics import Analytics, AsyncAnalytics
 from .dir import Dir, AsyncDir
 from .pipeline import Pipeline, AsyncPipeline
 from .manager import Manager, AsyncManager
-from .secrets import Secrets, AsyncSecrets
+from .secrets import Secrets, AsyncSecrets, Secret, SecretKey
 from .misc import connect_to_pipeline, connect_to_ns
 from .api_utils import (
     InvalidResponse,

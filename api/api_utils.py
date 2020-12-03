@@ -109,6 +109,10 @@ def get_auth_headers(token: t.Token = None, refresh=True, force_refresh=False):
             raise ValueError(
                 "Cannot authenticate to Conducto services because no token is available."
             )
+    elif refresh:
+        from . import auth
+
+        token = auth.Auth().get_refreshed_token(t.Token(token), force=force_refresh)
     return {
         "content-type": "application/json",
         "Authorization": f"Bearer {token}",

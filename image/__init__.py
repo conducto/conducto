@@ -3,6 +3,7 @@ import contextlib
 import concurrent.futures
 import functools
 import hashlib
+import io
 import json
 import os
 import subprocess
@@ -11,7 +12,7 @@ import time
 import traceback
 import typing
 
-from conducto.shared import async_utils, constants, imagepath, types as t
+from conducto.shared import async_utils, client_utils, constants, imagepath, types as t
 import conducto
 from . import dockerfile as dockerfile_mod, names
 
@@ -634,8 +635,8 @@ class Image:
             async with self._new_status(Status.CLONING, callback) as st:
                 if force_rebuild or not self._clone_complete():
                     await callback()
-                    out, err = await self._clone()
-                    st.finish(out, err)
+                    await self._clone(st)
+                    st.finish()
                 else:
                     st.finish("Using cached clone")
         yield
@@ -645,8 +646,8 @@ class Image:
             async with self._new_status(Status.SYNCING_S3, callback) as st:
                 if force_rebuild or not self._sync_s3_complete():
                     await callback()
-                    out, err = await self._sync_s3()
-                    st.finish(out, err)
+                    await self._sync_s3(st)
+                    st.finish()
                 else:
                     st.finish("Using cached s3 copy")
 
@@ -655,8 +656,8 @@ class Image:
             async with self._new_status(Status.PULLING, callback) as st:
                 if force_rebuild or not await self._image_exists(self.image):
                     await callback()
-                    out, err = await self._pull()
-                    st.finish(out, err)
+                    await self._pull(st)
+                    st.finish()
                 else:
                     st.finish("Image already pulled")
         yield
@@ -666,8 +667,8 @@ class Image:
             async with self._new_status(Status.BUILDING, callback) as st:
                 if force_rebuild or not await self._image_exists(self.name_built):
                     await callback()
-                    out, err = await self._build()
-                    st.finish(out, err)
+                    await self._build(st)
+                    st.finish()
                 else:
                     st.finish("Dockerfile already built")
         yield
@@ -677,8 +678,8 @@ class Image:
             async with self._new_status(Status.INSTALLING, callback) as st:
                 if force_rebuild or not await self._image_exists(self.name_installed):
                     await callback()
-                    out, err = await self._install()
-                    st.finish(out, err)
+                    await self._install(st)
+                    st.finish()
                 else:
                     st.finish("Python libraries already installed.")
         yield
@@ -688,8 +689,8 @@ class Image:
             async with self._new_status(Status.COPYING, callback) as st:
                 if force_rebuild or not await self._image_exists(self.name_copied):
                     await callback()
-                    out, err = await self._copy()
-                    st.finish(out, err)
+                    await self._copy(st)
+                    st.finish()
                 else:
                     st.finish("Code already copied.")
         yield
@@ -697,8 +698,8 @@ class Image:
         async with self._new_status(Status.EXTENDING, callback) as st:
             if force_rebuild or not await self._image_exists(self.name_local_extended):
                 await callback()
-                out, err = await self._extend()
-                st.finish(out, err)
+                await self._extend(st)
+                st.finish()
             else:
                 st.finish("Conducto toolchain already added")
         yield
@@ -706,8 +707,8 @@ class Image:
         if push_to_cloud:
             async with self._new_status(Status.PUSHING, callback) as st:
                 await callback()
-                out, err = await self._push()
-                st.finish(out, err)
+                await self._push(st)
+                st.finish()
 
         self._mark_done()
         if callback:
@@ -799,7 +800,7 @@ class Image:
         dest = self._get_s3_dest()
         return dest in Image._COMPLETED_CLONES
 
-    async def _clone(self):
+    async def _clone(self, st: "HistoryEntry"):
         from conducto.integrations import git
 
         # Only one clone() can run at a time on a single directory
@@ -815,50 +816,36 @@ class Image:
             )
 
         async with self._get_clone_lock(dest):
-            outputs = []
             if os.path.exists(dest):
                 await async_utils.run_and_check(
                     "git", "-C", dest, "config", "remote.origin.url", real_url
                 )
-                outputs.append(
-                    await async_utils.run_and_check("git", "-C", dest, "fetch")
-                )
-                outputs.append(
-                    await async_utils.run_and_check(
-                        "git",
-                        "-C",
-                        dest,
-                        "reset",
-                        "--hard",
-                        f"origin/{self.copy_branch}",
-                    )
+                await st.run("git", "-C", dest, "fetch")
+                await st.run(
+                    "git",
+                    "-C",
+                    dest,
+                    "reset",
+                    "--hard",
+                    f"origin/{self.copy_branch}",
                 )
             else:
-                outputs.append(
-                    await async_utils.run_and_check(
-                        "git",
-                        "clone",
-                        "--single-branch",
-                        "--branch",
-                        self.copy_branch,
-                        real_url,
-                        dest,
-                    )
+                await st.run(
+                    "git",
+                    "clone",
+                    "--single-branch",
+                    "--branch",
+                    self.copy_branch,
+                    real_url,
+                    dest,
                 )
 
-        outputs.append(
-            await async_utils.run_and_check(
-                "git", "-C", dest, "config", "remote.origin.url", fake_url
-            )
-        )
-        out = b"\n\n".join(o for o, e in outputs if o)
-        err = b"\n\n".join(e for o, e in outputs if e)
+        await st.run("git", "-C", dest, "config", "remote.origin.url", fake_url)
 
         # Mark that this has been finished
         Image._COMPLETED_CLONES.add(dest)
-        return out, err
 
-    async def _sync_s3(self):
+    async def _sync_s3(self, st: "HistoryEntry"):
         # Only one sync_s3() can run at a time on a single directory
         dest = self._get_s3_dest()
 
@@ -871,30 +858,23 @@ class Image:
                 "AWS_SECRET_ACCESS_KEY": creds["SecretKey"],
                 "AWS_SESSION_TOKEN": creds["SessionToken"],
             }
-            outputs = []
-            outputs.append(
-                await async_utils.run_and_check(
-                    "aws",
-                    "s3",
-                    "sync",
-                    "--exclude",
-                    ".git*",
-                    "--exclude",
-                    "*/.git*",
-                    self.copy_url,
-                    dest,
-                    env=env_with_creds,
-                )
+            await st.run(
+                "aws",
+                "s3",
+                "sync",
+                "--exclude",
+                ".git*",
+                "--exclude",
+                "*/.git*",
+                self.copy_url,
+                dest,
+                env=env_with_creds,
             )
-
-        out = b"\n\n".join(o for o, e in outputs if o)
-        err = b"\n\n".join(e for o, e in outputs if e)
 
         # Mark that this has been finished
         Image._COMPLETED_CLONES.add(dest)
-        return out, err
 
-    async def _pull(self):
+    async def _pull(self, st: "HistoryEntry"):
         is_dockerhub_image = True
         if "/" in self.image:
             possible_domain = self.image.split("/", 1)[0]
@@ -924,10 +904,9 @@ class Image:
             # secret defined, don't keep checking.
             Image._DOCKERHUB_LOGIN_ATTEMPTED = True
 
-        out, err = await async_utils.run_and_check("docker", "pull", self.image)
-        return out, err
+        await st.run("docker", "pull", self.image)
 
-    async def _build(self):
+    async def _build(self, st: "HistoryEntry"):
         """
         Build this Image's `dockerfile`. If copy_* or reqs_* are passed, then additional
         code or packages will be added in a later step.
@@ -952,7 +931,7 @@ class Image:
             for k, v in self.docker_build_args.items():
                 build_args += ["--build-arg", f"{k}={v}"]
 
-        out, err = await async_utils.run_and_check(
+        await st.run(
             "docker",
             "build",
             "-t",
@@ -967,9 +946,8 @@ class Image:
             context,
             env={**os.environ, "DOCKER_BUILDKIT": "1"},
         )
-        return out, err
 
-    async def _install(self):
+    async def _install(self, st: "HistoryEntry"):
         # Create dockerfile from stdin. Replace "-f <dockerfile> <copy_dir>"
         # with "-"
         text = await dockerfile_mod.text_for_install(
@@ -1001,7 +979,7 @@ class Image:
                 Image._PULLED_IMAGES.add(conducto_image)
 
         pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID", self._pipeline_id)
-        out, err = await async_utils.run_and_check(
+        await st.run(
             "docker",
             "build",
             "-t",
@@ -1014,9 +992,8 @@ class Image:
             input=text.encode(),
             env={**os.environ, "DOCKER_BUILDKIT": "1"},
         )
-        return out, err
 
-    async def _copy(self):
+    async def _copy(self, st: "HistoryEntry"):
         env = {}
         if not self._is_s3_url():
             if self.copy_url:
@@ -1053,7 +1030,7 @@ class Image:
 
         pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID", self._pipeline_id)
         # Run the command
-        out, err = await async_utils.run_and_check(
+        await st.run(
             "docker",
             "build",
             "-t",
@@ -1067,9 +1044,8 @@ class Image:
             context,
             env={**os.environ, "DOCKER_BUILDKIT": "1"},
         )
-        return out, err
 
-    async def _extend(self):
+    async def _extend(self, st: "HistoryEntry"):
         if self.shell == Image.AUTO:
             self.shell = await dockerfile_mod.get_shell(self.name_copied)
 
@@ -1099,7 +1075,7 @@ class Image:
                 await async_utils.run_and_check("docker", "pull", worker_image)
                 Image._PULLED_IMAGES.add(worker_image)
 
-        out, err = await async_utils.run_and_check(
+        await st.run(
             "docker",
             "build",
             "-t",
@@ -1108,9 +1084,8 @@ class Image:
             input=text.encode(),
             env={**os.environ, "DOCKER_BUILDKIT": "1"},
         )
-        return out, err
 
-    async def _push(self):
+    async def _push(self, st: "HistoryEntry"):
         # If push_to_cloud, tag the local image and push it
         cloud_tag = self.name_cloud_extended
         if self._cloud_tag_convert and self.is_cloud_building():
@@ -1121,7 +1096,7 @@ class Image:
         attempts = 3
         for tries in range(attempts):
             try:
-                out, err = await async_utils.run_and_check("docker", "push", cloud_tag)
+                await st.run("docker", "push", cloud_tag)
                 break
             except subprocess.CalledProcessError as e:
                 last = tries == attempts - 1
@@ -1130,7 +1105,6 @@ class Image:
                     continue
                 else:
                     raise
-        return out, err
 
     def is_cloud_building(self):
         """
@@ -1143,6 +1117,23 @@ class Image:
         if self.dockerfile and not self.copy_branch:
             return False
         return True
+
+    def get_steps(self, push_to_cloud):
+        result = []
+        if self.needs_cloning():
+            result.append(Status.CLONING)
+        if self.image:
+            result.append(Status.PULLING)
+        if self.needs_building():
+            result.append(Status.BUILDING)
+        if self.needs_installing():
+            result.append(Status.INSTALLING)
+        if self.needs_copying():
+            result.append(Status.COPYING)
+        result.append(Status.EXTENDING)
+        if push_to_cloud:
+            result.append(Status.PUSHING)
+        return result
 
     async def needs_pulling(self):
         if not self.image:
@@ -1184,8 +1175,18 @@ class HistoryEntry:
         self.end = None
         self.stdout = None
         self.stderr = None
+        self.buf = client_utils.ByteBuffer()
         if finish:
             self.finish()
+
+    async def run(self, *args, input: bytes = None, **kwargs):
+        await async_utils.eval_in_thread(
+            client_utils.subprocess_streaming,
+            *args,
+            buf=self.buf,
+            input=input,
+            **kwargs,
+        )
 
     @classmethod
     def from_json(cls, values: dict):
@@ -1196,8 +1197,12 @@ class HistoryEntry:
 
     def finish(self, stdout=None, stderr=None):
         self.end = time.time()
-        self.stdout = _to_str(stdout)
-        self.stderr = _to_str(stderr)
+        self.stdout = _to_str(bytes(self.buf))
+
+        if stdout:
+            self.stdout += "\n\n" + _to_str(stdout)
+        if stderr:
+            self.stdout += "\n\n" + _to_str(stderr)
 
     def __aenter__(self):
         return self
@@ -1221,6 +1226,9 @@ class HistoryEntry:
             "stdout": self.stdout,
             "stderr": self.stderr,
         }
+
+    def get_output(self, start_idx):
+        return bytes(self.buf)[start_idx : start_idx + 60000]
 
 
 def _to_str(s):

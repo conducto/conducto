@@ -1,4 +1,11 @@
+import io
+import os
+import pty
+import select
+import shlex
 import subprocess
+
+from . import log
 
 
 def isiterable(o):
@@ -124,3 +131,45 @@ def subprocess_run(cmd, *args, shell=False, msg="", capture_output=True, **kwarg
         raise CalledProcessError(e.returncode, cmd, e.stdout, e.stderr, msg) from None
     else:
         return result
+
+
+class ByteBuffer(bytearray):
+    def __init__(self):
+        super(ByteBuffer, self).__init__()
+        self.write = self.extend
+
+    def flush(self):
+        pass
+
+
+def subprocess_streaming(
+    *args, buf: ByteBuffer, input: bytes = None, timeout=None, **kwargs
+):
+    import pexpect
+
+    cmd = " ".join(shlex.quote(a) for a in args)
+    if input is not None:
+        log.log(f"stdin: {input}")
+        cmd = f"echo {shlex.quote(input.decode('utf-8'))} | {cmd}"
+
+    cmd = f"sh -c {shlex.quote(cmd)}"
+    log.log(f"Running: {cmd}")
+
+    # `buf` may already be populated. Record its current length so that if we have an
+    # error message we can include only the portion from this command.
+    start_idx = len(buf)
+
+    output, exitstatus = pexpect.run(
+        cmd,
+        logfile=buf,
+        timeout=timeout,
+        withexitstatus=1,
+        **kwargs,
+    )
+    log.log(f"Output {output}")
+
+    if exitstatus != 0:
+        output = bytes(buf[start_idx:])
+        raise CalledProcessError(
+            exitstatus, cmd, output.decode("utf-8"), stderr=None, msg="", stdin=input
+        ) from None

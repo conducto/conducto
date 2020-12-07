@@ -1,7 +1,3 @@
-import io
-import os
-import pty
-import select
 import shlex
 import subprocess
 

@@ -1100,7 +1100,7 @@ class Image:
                 break
             except subprocess.CalledProcessError as e:
                 last = tries == attempts - 1
-                if not last and e.stderr.decode("utf8").startswith("toomanyrequests"):
+                if not last and "toomanyrequests" in e.stdout.decode("utf8"):
                     await asyncio.sleep(2)
                     continue
                 else:

@@ -240,9 +240,20 @@ def run_in_local_container(
     network_name = os.getenv("CONDUCTO_NETWORK", f"conducto_network_{pipeline_id}")
     if not is_migration:
         try:
-            client_utils.subprocess_run(
+            subp = client_utils.subprocess_run(
                 ["docker", "network", "create", network_name] + labels
             )
+            stderr = subp.stderr.decode()
+            # this is the first docker command that we run, in the stderr we would probably catch a good number
+            # of issues where the user's docker is misconfigured, i.e.:
+            # Warning on attempt to create network:
+            # WARNING: unable to read config file: open /Users/alwinpeng/.docker/config.json: permission denied
+            # WARNING: Error loading config file: /Users/alwinpeng/.docker/config.json:
+            # open /Users/alwinpeng/.docker/config.json: permission denied
+
+            if "warning" in stderr.lower() or "error" in stderr.lower():
+                print("Warning or error on attempt to create network: ")
+                print(stderr)
         except client_utils.CalledProcessError as e:
             if f"network with name {network_name} already exists" in e.stderr.decode():
                 pass

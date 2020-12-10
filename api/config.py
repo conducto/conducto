@@ -479,14 +479,9 @@ commands:
         assert isinstance(current, list), "shares are stored as json lists of strings"
         return current
 
-    def get_connect_url(self, pipeline_id, allow_short_urls=False):
+    def get_connect_url(self, pipeline_id):
         base = self.get_url().rstrip("/")
         url = f"{base}/app/p/{pipeline_id}"
-        if allow_short_urls:
-            if self.get_url().find("conducto.com") > 0:
-                url = f"https://conduc.to/{pipeline_id}"
-            elif self.get_url().find("test.conducto.io") > 0:
-                url = f"https://test.conduc.to/{pipeline_id}"
         return url
 
     def get_location(self):

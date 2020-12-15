@@ -107,36 +107,9 @@ def done_future():
     return res
 
 
-def schedule_instance_async_non_concurrent(async_fxn):
-    """
-    Make it such that two calls of obj().async_fxn can never run at the same time
-    if obj().async_fxn is called while it is already running, wait for the existing function
-    to finish, and then schedule a new one
-
-    Note: for a given object, two calls of its method may not run concurrently, but two different objects
-    can have their async_fxn run at the same time
-
-    Additionally changes an async function into a synchronous one that
-    schedules the async function to run in the background
-    """
-    # raise NotImplementedError(
-    #     "jmarcus believes this doesn't catch errors properly and we should instead use "
-    #     "asyncio.Lock."
-    # )
-
-    def inner(self, *args, **kwargs):
-        if not hasattr(self, "last_task"):
-            self.last_task = done_future()
-
-        to_await = self.last_task
-
-        async def _coro():
-            await to_await
-            await async_fxn(self, *args, **kwargs)
-
-        self.last_task = asyncio.create_task(_coro())
-
-    return inner
+schedule_instance_async_non_concurrent = (
+    client_utils.schedule_instance_async_non_concurrent
+)
 
 
 def loop(func, interval, ignore_errors=True):

@@ -1,7 +1,41 @@
 import shlex
 import subprocess
-
 from . import log
+import asyncio
+
+
+def schedule_instance_async_non_concurrent(async_fxn):
+    """
+    Make it such that two calls of obj().async_fxn can never run at the same time
+    if obj().async_fxn is called while it is already running, wait for the existing function
+    to finish, and then schedule a new one
+
+    Note: for a given object, two calls of its method may not run concurrently, but two different objects
+    can have their async_fxn run at the same time
+
+    Additionally changes an async function into a synchronous one that
+    schedules the async function to run in the background
+    """
+    # raise NotImplementedError(
+    #     "jmarcus believes this doesn't catch errors properly and we should instead use "
+    #     "asyncio.Lock."
+    # )
+
+    def inner(self, *args, **kwargs):
+        if not hasattr(self, "last_task"):
+            res = asyncio.Future()
+            res.set_result(None)
+            self.last_task = res
+
+        to_await = self.last_task
+
+        async def _coro():
+            await to_await
+            await async_fxn(self, *args, **kwargs)
+
+        self.last_task = asyncio.create_task(_coro())
+
+    return inner
 
 
 def isiterable(o):
@@ -130,12 +164,22 @@ def subprocess_run(cmd, *args, shell=False, msg="", capture_output=True, **kwarg
 
 
 class ByteBuffer(bytearray):
-    def __init__(self):
+    def __init__(self, cb=None):
         super(ByteBuffer, self).__init__()
+        self.cb = cb
+        self.flush_idx = 0
         self.write = self.extend
 
+    @schedule_instance_async_non_concurrent
+    async def flush_util(self):
+        to_send = bytes(self[self.flush_idx :])
+        self.flush_idx += len(to_send)
+        if to_send:
+            await self.cb(to_send)
+
     def flush(self):
-        pass
+        if self.cb:
+            self.flush_util()
 
 
 def subprocess_streaming(

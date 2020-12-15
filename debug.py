@@ -10,7 +10,13 @@ import time
 import tarfile
 import io
 from conducto.shared.log import format
-from conducto.shared import constants, container_utils, imagepath
+from conducto.shared import (
+    constants,
+    container_utils,
+    imagepath,
+    async_utils,
+    client_utils,
+)
 import conducto.internal.host_detection as hostdet
 
 NULL = subprocess.DEVNULL
@@ -81,10 +87,12 @@ def get_param(payload, param, default=None):
     return default
 
 
-def start_container(pipeline, payload, live, token):
+async def start_container(pipeline, payload, live, token):
     import random
     from rich.console import Console
     from . import api
+
+    get_user_id_task = asyncio.create_task(api.AsyncAuth().get_user_id(token))
 
     console = Console()
 
@@ -98,7 +106,9 @@ def start_container(pipeline, payload, live, token):
 
     container_name = "conducto_debug_" + str(random.randrange(1 << 64))
 
-    container_utils.refresh_image(image_name, verbose=True)
+    await async_utils.eval_in_thread(
+        container_utils.refresh_image, image_name, verbose=True
+    )
 
     console.print("Launching docker container...")
 
@@ -121,10 +131,18 @@ def start_container(pipeline, payload, live, token):
     local_basedir = imagepath.Path.from_localhost(local_basedir)
 
     profile = api.Config().default_profile
-    remote_basedir = f"{get_home_dir_for_image(image_name)}/.conducto/{profile}"
-    options.append(f"-v {local_basedir.to_docker_mount()}:{remote_basedir}")
 
     if live:
+
+        image_home_dir, image_work_dir = await asyncio.gather(
+            get_home_dir_for_image(image_name), get_work_dir_for_image(image_name)
+        )
+
+        remote_basedir = f"{image_home_dir}/.conducto/{profile}"
+
+        # TODO (apeng) confirm my suspicion that this mount should be live debug only
+        options.append(f"-v {local_basedir.to_docker_mount()}:{remote_basedir}")
+
         for external, internal in image["path_map"].items():
             external = imagepath.Path.from_dockerhost_encoded(external)
 
@@ -132,7 +150,7 @@ def start_container(pipeline, payload, live, token):
             external = external.resolve_named_share()
 
             if not os.path.isabs(internal):
-                internal = get_work_dir_for_image(image_name) + "/" + internal
+                internal = f"{image_work_dir}/internal"
 
             mount = os.path.normpath(external.to_docker_mount())
             console.print(
@@ -141,30 +159,28 @@ def start_container(pipeline, payload, live, token):
             )
             options.append(f"-v {mount}:{internal}")
 
-    if pipeline["user_id"] != api.Auth().get_user_id(token):
+    if pipeline["user_id"] != await get_user_id_task:
         console.print(
             "Debugging another user's command, so their secrets are not available. "
             "This may cause unexpected behavior."
         )
 
-    command = f"docker run {' '.join(options)} --name={container_name} {image_name} tail -f /dev/null "
+    command = f"docker run -d --rm {' '.join(options)} --name={container_name} {image_name} tail -f /dev/null "
 
-    subprocess.Popen(command, shell=True)
-    time.sleep(1)
+    await async_utils.run_and_check(command, shell=True)
     if not live:
         path_map = image["path_map"] or {}
         for internal in path_map.values():
             if internal == constants.ConductoPaths.COPY_LOCATION:
-                execute_in(
+                await execute_in(
                     container_name,
                     f"sed -i 's/{{__conducto_token__}}/{token}/' {internal}/.git/config || true",
                 )
                 break
-
     return container_name
 
 
-def dump_command(container_name, command, shell):
+async def dump_command(container_name, command, shell):
     # Create in-memory tar file since docker will take that on stdin with no
     # tempfile needed.
     tario = io.BytesIO()
@@ -177,12 +193,12 @@ def dump_command(container_name, command, shell):
         cmdtar.addfile(tfile, io.BytesIO(content.encode("utf-8")))
 
     args = ["docker", "cp", "-", f"{container_name}:/"]
-    proc = subprocess.run(args, input=tario.getvalue(), stdout=PIPE, stderr=PIPE)
-    if proc.returncode != 0:
-        stderr = proc.stderr.decode("utf-8").strip()
-        raise RuntimeError(f"error placing cmd.conducto: ({stderr})")
+    try:
+        out, err = await async_utils.run_and_check(*args, input=tario.getvalue())
+    except client_utils.CalledProcessError as e:
+        raise RuntimeError(f"Error placing cmd.conduct: ({e})")
 
-    execute_in(container_name, f"chmod u+x /cmd.conducto")
+    await execute_in(container_name, f"chmod u+x /cmd.conducto")
 
     shell_alias = {"/bin/sh": "sh", "/bin/bash": "bash"}.get(shell, shell)
     print(
@@ -190,47 +206,44 @@ def dump_command(container_name, command, shell):
     )
 
 
-@functools.lru_cache()
-def get_image_inspection(image_name):
-    proc = subprocess.run(
-        ["docker", "image", "inspect", image_name], stderr=PIPE, stdout=PIPE
+async def get_image_inspection(image_name):
+    out, err = await async_utils.run_and_check(
+        "docker", "image", "inspect", image_name, stop_on_error=False
     )
-    return proc.stdout.decode().strip()
+    return out.decode().strip()
 
 
-@functools.lru_cache()
-def get_work_dir_for_image(image_name):
-    output = subprocess.check_output(
-        ["docker", "image", "inspect", "--format", "{{.Config.WorkingDir}}", image_name]
+@async_utils.async_cache
+async def get_work_dir_for_image(image_name):
+    out, err = await async_utils.run_and_check(
+        "docker", "image", "inspect", "--format", "{{.Config.WorkingDir}}", image_name
     )
-    return output.decode().strip()
+    return out.decode().strip()
 
 
-@functools.lru_cache()
-def get_work_dir_for_container(container_name):
-    output = subprocess.check_output(
-        [
-            "docker",
-            "container",
-            "inspect",
-            "--format",
-            "{{.Config.WorkingDir}}",
-            container_name,
-        ]
+@async_utils.async_cache
+async def get_work_dir_for_container(container_name):
+    out, err = await async_utils.run_and_check(
+        "docker",
+        "container",
+        "inspect",
+        "--format",
+        "{{.Config.WorkingDir}}",
+        container_name,
     )
-    return output.decode().strip()
+    return out.decode().strip()
 
 
-def get_home_dir_for_image(image_name):
-    output = subprocess.check_output(
-        ["docker", "run", "--rm", "-it", image_name, "sh", "-c", "cd ~; pwd"]
+async def get_home_dir_for_image(image_name):
+    out, err = await async_utils.run_and_check(
+        "docker", "run", "--rm", image_name, "sh", "-c", "cd ~; pwd"
     )
-    return output.decode().strip()
+    return out.decode().strip()
 
 
-def get_linux_flavor(container_name):
+async def get_linux_flavor(container_name):
     cmd = 'sh -c "cat /etc/*-release | grep ^ID="'
-    output = execute_in(container_name, cmd).decode("utf8").strip()
+    output = (await execute_in(container_name, cmd)).decode("utf8").strip()
 
     flavor = re.search(r"^ID=(.*)", output, re.M)
     flavor = flavor.groups()[0].strip().strip('"')
@@ -243,21 +256,23 @@ def get_linux_flavor(container_name):
         return f"unknown - {flavor}"
 
 
-def execute_in(container_name, command):
-    result = subprocess.run(
-        f"docker exec {container_name} {command}",
-        shell=True,
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+async def execute_in(container_name, command):
+    # using this instead of shell is slightly faster
+    out, err = await async_utils.run_and_check(
+        "docker",
+        "exec",
+        container_name,
+        "sh",
+        "-c",
+        command,
     )
-    return result.stdout
+    return out
 
 
-def print_editor_commands(container_name):
-    flavor = get_linux_flavor(container_name)
+async def print_editor_commands(container_name):
+    flavor = await get_linux_flavor(container_name)
     if flavor == "ubuntu":
-        uid_str = execute_in(container_name, "id -u")
+        uid_str = await execute_in(container_name, "id -u")
         base = "apt-get update"
         each = "apt-get install"
         if int(uid_str) != 0:
@@ -281,18 +296,66 @@ def print_editor_commands(container_name):
 def start_shell(container_name, env_list, shell):
     subprocess.call(["docker", "exec", "-it", *env_list, container_name, shell])
     subprocess.call(["docker", "kill", container_name])
-    subprocess.call(["docker", "rm", container_name], stdout=NULL, stderr=NULL)
 
 
-async def _debug(id, node, live, timestamp):
+def start_remote_shell(remote_callback, container_name, env_list, shell):
+    """
+    Executes into a remote debug container
+    Returns:
+        send() to send input into the container
+        recv() to receive output from the container
+        finish_task
+
+    """
+    import shlex
+    import pexpect
+
+    buf = client_utils.ByteBuffer(cb=remote_callback)
+
+    child = pexpect.spawn(
+        " ".join(
+            shlex.quote(i)
+            for i in ["docker", "exec", "-it", *env_list, container_name, shell]
+        ),
+        timeout=None,
+    )
+    child.logfile_read = buf
+
+    close = child.close
+
+    async def finish():
+        try:
+            while True:
+                try:
+                    await child.expect(pexpect.EOF, async_=True, timeout=5)
+                except pexpect.TIMEOUT:
+                    pass
+                else:
+                    break
+        finally:
+            close()
+            await async_utils.run_and_check("docker", "kill", container_name)
+
+    # wait on for the child to exit in the background, once it does exit terminate the container
+    finish_task = asyncio.create_task(finish())
+
+    return child.send, buf, close, finish_task, child.setwinsize
+
+
+async def _debug(id, node, live, timestamp, remote_callback=None):
     from . import api
 
     pl = constants.PipelineLifecycle
 
     pipeline_id = id
     token = api.Config().get_token_from_shell(force=True)
+
+    get_queue_stats_task = asyncio.create_task(
+        get_exec_node_queue_stats(token, pipeline_id, node, timestamp)
+    )
+
     try:
-        pipeline = api.Pipeline().get(pipeline_id, token=token)
+        pipeline = await api.AsyncPipeline().get(pipeline_id, token=token)
     except api.InvalidResponse as e:
         if "not found" in str(e):
             print(str(e), file=sys.stderr)
@@ -313,12 +376,12 @@ async def _debug(id, node, live, timestamp):
         api.Manager().launch(pipeline_id, token=token)
         pipeline = api.Pipeline().get(pipeline_id, token=token)
 
-    payload = await get_exec_node_queue_stats(token, pipeline_id, node, timestamp)
+    payload = await get_queue_stats_task
 
     if status in pl.local:
         image = get_param(payload, "image", default={})
         image_name = image["name_debug"]
-        inspect_json = get_image_inspection(image_name)
+        inspect_json = await get_image_inspection(image_name)
         inspect = json.loads(inspect_json)
         if len(inspect) == 0:
             m = f"The container for pipeline {pipeline_id} is not in this host's docker registry."
@@ -363,25 +426,38 @@ async def _debug(id, node, live, timestamp):
             "--password-stdin",
             f"https://{docker_domain}",
         ]
-        proc = subprocess.Popen(
-            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
-        _, stderr = proc.communicate(input=token.encode("utf8"))
-        if proc.wait():
+
+        try:
+            _, stderr = await async_utils.run_and_check(
+                *cmd, input=token.encode("utf-8")
+            )
+        except client_utils.CalledProcessError as e:
+            print(e)
             print(
-                f"error logging into https://{docker_domain}; unable to debug\n{stderr}",
+                f"error logging into https://{docker_domain}; unable to debug\n{e}",
                 file=sys.stderr,
             )
             sys.exit(1)
 
-    container_name = start_container(pipeline, payload, live, token)
-    if not live:
-        print_editor_commands(container_name)
+    container_name = await start_container(pipeline, payload, live, token)
 
     shell = get_param(payload, "image", default={}).get("shell", "/bin/sh")
+    dump_command_task = asyncio.create_task(
+        dump_command(container_name, get_param(payload, "commandSummary"), shell)
+    )
 
-    dump_command(container_name, get_param(payload, "commandSummary"), shell)
-    start_shell(container_name, env_list, shell)
+    if not live:
+        await print_editor_commands(container_name)
+
+    await dump_command_task
+    if remote_callback:
+        return start_remote_shell(remote_callback, container_name, env_list, shell)
+    else:
+        start_shell(container_name, env_list, shell)
+
+
+async def remote_debug(remote_callback, id, node, live, timestamp=None):
+    return await _debug(id, node, live, timestamp, remote_callback)
 
 
 async def debug(id, node, timestamp=None):

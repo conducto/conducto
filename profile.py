@@ -7,7 +7,7 @@ import subprocess
 import urllib.error
 import conducto as co
 import jose
-from conducto.shared import constants, log, agent_utils, container_utils, types as t
+from conducto.shared import constants, log, agent_utils, container_utils
 from . import api
 
 
@@ -115,6 +115,9 @@ def _profile_add(url, default):
 
     if default:
         profile_set_default(profile)
+    else:
+        print("To set this profile as the default for command line usage:")
+        print(f"conducto-profile set-default {profile}")
     return profile
 
 
@@ -315,9 +318,14 @@ def profile_start_agent(id=None):
     start_status = agent_utils.launch_agent(token=token)
 
     if start_status.startswith("running"):
-        print(f"Agent for profile {co.api.Config().default_profile} is already running")
+        print(f"Agent for profile {api.Config().default_profile} is already running")
     else:
-        print(f"Agent launched for profile {co.api.Config().default_profile}")
+        print(f"Agent launched for profile {api.Config().default_profile}")
+
+    config = api.Config()
+    if config.default_profile != config.get("general", "default"):
+        print("To set this profile as the default for command line usage:")
+        print(f"conducto-profile set-default {config.default_profile}")
 
 
 def profile_stop_agent(id=None):

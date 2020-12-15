@@ -96,6 +96,11 @@ class Auth:
         )
         return self._get_data(response)
 
+    def signout(self, token: t.Token = None):
+        headers = api_utils.get_auth_headers(token)
+        response = request_utils.post(self.url + "/auth/signout", headers=headers)
+        return self._get_data(response)
+
     def get_credentials(self, token: t.Token = None, force_refresh=False) -> dict:
         headers = api_utils.get_auth_headers(token, force_refresh=force_refresh)
         response = request_utils.get(self.url + "/auth/creds", headers=headers)

@@ -91,6 +91,15 @@ class Config:
         if write:
             self.write()
 
+    def is_valid_profile(self, profile):
+        if not profile:
+            return False
+        configdir = constants.ConductoPaths.get_local_base_dir()
+        # We don't set the bar being very high in this check for a valid
+        # profile.  One could check for valid values for token & url.  This
+        # check is quick and does not touch the network.
+        return os.path.exists(os.path.join(configdir, profile, "config"))
+
     def profile_sections(self):
         configdir = constants.ConductoPaths.get_local_base_dir()
         if not os.path.exists(configdir):
@@ -701,7 +710,10 @@ commands:
         else:
             # update profile with fresh token unless skipped
             if not skip_profile:
-                config.write_profile(auth.url, account_token, default="first")
+                current_valid = config.is_valid_profile(
+                    config.get("general", "default")
+                )
+                config.write_profile(auth.url, account_token, default=not current_valid)
             return t.Token(account_token)
 
     # This is equally a method of config & auth so priviledge neither as self.

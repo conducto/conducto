@@ -529,7 +529,11 @@ class Path:
         # may not the same host machine as the one that made the serialization and
         # it may need to be interactive with the user.
 
-        if constants.ExecutionEnv.value() != constants.ExecutionEnv.EXTERNAL:
+        if (
+            constants.ExecutionEnv.value()
+            not in {constants.ExecutionEnv.EXTERNAL}
+            | constants.ExecutionEnv.manager_all
+        ):
             raise RuntimeError(
                 "this is an interactive function and has no manager (or worker) implementation"
             )

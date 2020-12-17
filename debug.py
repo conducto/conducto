@@ -126,23 +126,46 @@ async def start_container(pipeline, payload, live, token):
     options.append(f'--cpus {get_param(payload, "cpu")}')
     options.append(f'--memory {get_param(payload, "mem") * 1024**3}')
 
-    # TODO: Should actually pass these variables from manager, iff local
-    local_basedir = constants.ConductoPaths.get_profile_base_dir()
-    local_basedir = imagepath.Path.from_localhost(local_basedir)
+    in_manager = constants.ExecutionEnv.value() in constants.ExecutionEnv.manager_all
+    in_cloud = constants.ExecutionEnv.value() in constants.ExecutionEnv.cloud
+
+    if in_manager and not in_cloud:
+        out, err = await async_utils.run_and_check(
+            "docker",
+            "inspect",
+            "-f",
+            "'{{json .Mounts}}'",
+            f"conducto_manager_{pipeline['pipeline_id']}",
+        )
+        out_s = out.decode("utf-8").strip()
+
+        # for some reason its enclosed in quotes
+        if out_s.startswith("'"):
+            out_s = out_s[1:-1]
+        mounts = json.loads(out_s)
+        for mount in mounts:
+            if mount["Destination"].startswith("/root/.conducto"):
+                local_basedir = mount["Source"]
+                break
+        else:
+            raise Exception(
+                "Inspected manager container and no ~/.conducto mount found."
+            )
+    else:
+        # TODO: Should actually pass these variables from manager, iff local
+        local_basedir = constants.ConductoPaths.get_profile_base_dir()
+        local_basedir = imagepath.Path.from_localhost(local_basedir).to_docker_mount()
 
     profile = api.Config().default_profile
-
-    if live:
-
-        image_home_dir, image_work_dir = await asyncio.gather(
-            get_home_dir_for_image(image_name), get_work_dir_for_image(image_name)
-        )
-
+    image_home_dir, image_work_dir = await asyncio.gather(
+        get_home_dir_for_image(image_name), get_work_dir_for_image(image_name)
+    )
+    if not in_cloud:
         remote_basedir = f"{image_home_dir}/.conducto/{profile}"
 
-        # TODO (apeng) confirm my suspicion that this mount should be live debug only
-        options.append(f"-v {local_basedir.to_docker_mount()}:{remote_basedir}")
+        options.append(f"-v {local_basedir}:{remote_basedir}")
 
+    if live:
         for external, internal in image["path_map"].items():
             external = imagepath.Path.from_dockerhost_encoded(external)
 
@@ -153,6 +176,11 @@ async def start_container(pipeline, payload, live, token):
                 internal = f"{image_work_dir}/internal"
 
             mount = os.path.normpath(external.to_docker_mount())
+
+            if live and in_manager:
+                assert mount.startswith("/mnt/external")
+                mount = mount[13:]
+
             console.print(
                 f"Mounting [bold blue]{mount}[/bold blue] "
                 f"at [bold blue]{internal}[/bold blue]"
@@ -332,6 +360,8 @@ def start_remote_shell(remote_callback, container_name, env_list, shell):
                     pass
                 else:
                     break
+        except:
+            pass
         finally:
             close()
             await async_utils.run_and_check("docker", "kill", container_name)

@@ -189,7 +189,7 @@ def subprocess_streaming(
 
     cmd = " ".join(shlex.quote(a) for a in args)
     if input is not None:
-        log.log(f"stdin: {input}")
+        log.debug(f"stdin: {input}")
         cmd = f"echo {shlex.quote(input.decode('utf-8'))} | {cmd}"
 
     cmd = f"sh -c {shlex.quote(cmd)}"
@@ -206,7 +206,7 @@ def subprocess_streaming(
         withexitstatus=1,
         **kwargs,
     )
-    log.log(f"Output {output}")
+    log.debug(f"Output {output}")
 
     if exitstatus != 0:
         output = bytes(buf[start_idx:])

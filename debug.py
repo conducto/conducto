@@ -1,12 +1,10 @@
 import asyncio
 import socket
-import functools
 import os
 import json
 import sys
 import re
 import subprocess
-import time
 import tarfile
 import io
 from conducto.shared.log import format
@@ -87,14 +85,11 @@ def get_param(payload, param, default=None):
     return default
 
 
-async def start_container(pipeline, payload, live, token):
+async def start_container(pipeline, payload, live, token, logger):
     import random
-    from rich.console import Console
     from . import api
 
     get_user_id_task = asyncio.create_task(api.AsyncAuth().get_user_id(token))
-
-    console = Console()
 
     image = get_param(payload, "image", default={})
     image_name = image["name_debug"]
@@ -110,11 +105,11 @@ async def start_container(pipeline, payload, live, token):
         container_utils.refresh_image, image_name, verbose=True
     )
 
-    console.print("Launching docker container...")
+    logger("Launching docker container...")
 
     if live:
-        console.print("Context will be mounted read-write")
-        console.print(
+        logger("Context will be mounted read-write")
+        logger(
             "Make modifications on your local machine, "
             "and they will be reflected in the container."
         )
@@ -181,14 +176,14 @@ async def start_container(pipeline, payload, live, token):
                 assert mount.startswith("/mnt/external")
                 mount = mount[13:]
 
-            console.print(
-                f"Mounting [bold blue]{mount}[/bold blue] "
-                f"at [bold blue]{internal}[/bold blue]"
+            logger(
+                f"Mounting {format(mount, color='blue')} "
+                f"at {format(internal, color='blue')}"
             )
             options.append(f"-v {mount}:{internal}")
 
     if pipeline["user_id"] != await get_user_id_task:
-        console.print(
+        logger(
             "Debugging another user's command, so their secrets are not available. "
             "This may cause unexpected behavior."
         )
@@ -208,7 +203,7 @@ async def start_container(pipeline, payload, live, token):
     return container_name
 
 
-async def dump_command(container_name, command, shell):
+async def dump_command(container_name, command, shell, logger):
     # Create in-memory tar file since docker will take that on stdin with no
     # tempfile needed.
     tario = io.BytesIO()
@@ -229,7 +224,7 @@ async def dump_command(container_name, command, shell):
     await execute_in(container_name, f"chmod u+x /cmd.conducto")
 
     shell_alias = {"/bin/sh": "sh", "/bin/bash": "bash"}.get(shell, shell)
-    print(
+    logger(
         f"Execute command by running {format(f'{shell_alias} /cmd.conducto', color='cyan')}"
     )
 
@@ -297,7 +292,7 @@ async def execute_in(container_name, command):
     return out
 
 
-async def print_editor_commands(container_name):
+async def print_editor_commands(container_name, logger):
     flavor = await get_linux_flavor(container_name)
     if flavor == "ubuntu":
         uid_str = await execute_in(container_name, "id -u")
@@ -313,12 +308,12 @@ async def print_editor_commands(container_name):
         return
 
     editors = {"vim": "blue", "emacs": "cyan", "nano": "green"}
-    print("To install an editor, run:", end="")
+    logger("To install an editor, run:", end="")
     sep = ""
     for editor, color in editors.items():
-        print(sep, format(f"{base} && {each} {editor}", color=color), end="")
+        logger(sep, format(f"{base} && {each} {editor}", color=color), end="")
         sep = " or"
-    print()
+    logger()
 
 
 def start_shell(container_name, env_list, shell):
@@ -372,7 +367,7 @@ def start_remote_shell(remote_callback, container_name, env_list, shell):
     return child.send, buf, close, finish_task, child.setwinsize
 
 
-async def _debug(id, node, live, timestamp, remote_callback=None):
+async def _debug(id, node, live, timestamp, remote_callback=None, logger=print):
     from . import api
 
     pl = constants.PipelineLifecycle
@@ -388,7 +383,7 @@ async def _debug(id, node, live, timestamp, remote_callback=None):
         pipeline = await api.AsyncPipeline().get(pipeline_id, token=token)
     except api.InvalidResponse as e:
         if "not found" in str(e):
-            print(str(e), file=sys.stderr)
+            logger(str(e), file=sys.stderr)
             sys.exit(1)
         else:
             raise
@@ -396,7 +391,7 @@ async def _debug(id, node, live, timestamp, remote_callback=None):
     status = pipeline["status"]
 
     if status not in pl.active | pl.standby:
-        print(
+        logger(
             f"The pipeline {pipeline_id} is sleeping.  Wake with `conducto show` and retry this command to debug.",
             file=sys.stderr,
         )
@@ -421,7 +416,7 @@ async def _debug(id, node, live, timestamp, remote_callback=None):
             elif host != None:
                 m += f" Try debugging it from '{host}' with conducto debug."
 
-            print(m, file=sys.stderr)
+            logger(m, file=sys.stderr)
             sys.exit(1)
 
     env_dict = get_param(payload, "Env", default={})
@@ -462,22 +457,24 @@ async def _debug(id, node, live, timestamp, remote_callback=None):
                 *cmd, input=token.encode("utf-8")
             )
         except client_utils.CalledProcessError as e:
-            print(e)
-            print(
+            logger(e)
+            logger(
                 f"error logging into https://{docker_domain}; unable to debug\n{e}",
                 file=sys.stderr,
             )
             sys.exit(1)
 
-    container_name = await start_container(pipeline, payload, live, token)
+    container_name = await start_container(pipeline, payload, live, token, logger)
 
     shell = get_param(payload, "image", default={}).get("shell", "/bin/sh")
     dump_command_task = asyncio.create_task(
-        dump_command(container_name, get_param(payload, "commandSummary"), shell)
+        dump_command(
+            container_name, get_param(payload, "commandSummary"), shell, logger
+        )
     )
 
     if not live:
-        await print_editor_commands(container_name)
+        await print_editor_commands(container_name, logger)
 
     await dump_command_task
     if remote_callback:
@@ -486,13 +483,15 @@ async def _debug(id, node, live, timestamp, remote_callback=None):
         start_shell(container_name, env_list, shell)
 
 
-async def remote_debug(remote_callback, id, node, live, timestamp=None):
-    return await _debug(id, node, live, timestamp, remote_callback)
+async def remote_debug(send_to_ws, remote_callback, id, node, live, timestamp=None):
+    # TODO (apeng) this will also cause all the logging in the manager to get messed up, find another solution
+    # os.environ["TERM"] = ":)"  # hack to make format() work
+    return await _debug(id, node, live, timestamp, remote_callback, send_to_ws)
 
 
 async def debug(id, node, timestamp=None):
-    await _debug(id, node, False, timestamp)
+    await _debug(id, node, False, timestamp, logger=print)
 
 
 async def livedebug(id, node, timestamp=None):
-    await _debug(id, node, True, timestamp)
+    await _debug(id, node, True, timestamp, logger=print)

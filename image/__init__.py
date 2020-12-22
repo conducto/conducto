@@ -3,7 +3,6 @@ import contextlib
 import concurrent.futures
 import functools
 import hashlib
-import io
 import json
 import os
 import subprocess
@@ -734,8 +733,9 @@ class Image:
         self.history.append(entry)
         try:
             yield entry
-        except subprocess.CalledProcessError as e:
-            entry.finish(e.stdout, e.stderr)
+        except subprocess.CalledProcessError:
+            # note that self.buf should contain the output of any subprocess
+            entry.finish()
             if callback:
                 await callback(status, Status.ERROR, entry)
             self.history.append(HistoryEntry(Status.ERROR, finish=True))
@@ -1100,7 +1100,7 @@ class Image:
                 break
             except subprocess.CalledProcessError as e:
                 last = tries == attempts - 1
-                if not last and "toomanyrequests" in e.stdout.decode("utf8"):
+                if not last and "toomanyrequests" in e.stdout:
                     await asyncio.sleep(2)
                     continue
                 else:
@@ -1214,7 +1214,9 @@ class HistoryEntry:
                     f"Error in <HistoryEntry status={self.status}> after it was finished"
                 )
             if issubclass(exc_type, subprocess.CalledProcessError):
-                self.finish(stdout=exc_val.stdout, stderr=exc_val.stderr)
+                # note that self.buf should contain the output of any
+                # subprocess
+                self.finish()
             else:
                 self.finish(stderr=traceback.format_exc())
 

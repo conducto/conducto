@@ -369,11 +369,13 @@ class Block:
 class CONFIG_EVENTS:
     PR = "pr"
     PUSH = "push"
-    CREATE = "create"
-    DELETE = "delete"
+    CREATE_BRANCH = "create-branch"
+    DELETE_BRANCH = "delete-branch"
+    CREATE_TAG = "create-tag"
+    DELETE_TAG = "delete-tag"
     CRON = "cron"
 
-    events = {PR, PUSH, CREATE, DELETE, CRON}
+    events = {PR, PUSH, CREATE_BRANCH, DELETE_BRANCH, CREATE_TAG, DELETE_TAG, CRON}
 
 
 # remote docker instant statuses

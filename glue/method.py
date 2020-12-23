@@ -14,7 +14,7 @@ import fnmatch
 import re
 
 
-from ..shared import client_utils, constants, log, types as t, path_utils
+from ..shared import client_utils, constants, log, types as t, path_utils, github_utils
 from .._version import __version__, __sha1__
 
 from .. import api, callback, image as image_mod, pipeline
@@ -865,6 +865,7 @@ def run_cfg(
     *,
     callback_after_create_before_build: typing.Callable = None,
     callback_on_event_deferred: typing.Callable = None,
+    callback_on_event_suppressed: typing.Callable = None,
     substitutions: dict = None,
     slack_doc=None,
 ):
@@ -901,6 +902,7 @@ def run_cfg(
             unique_tag=unique_tag,
             callback_after_create_before_build=callback_after_create_before_build,
             callback_on_event_deferred=callback_on_event_deferred,
+            callback_on_event_suppressed=callback_on_event_suppressed,
             substitutions=substitutions,
             slack_doc=slack_doc,
         )
@@ -923,6 +925,7 @@ def run_cfg(
                 unique_tag=unique_tag,
                 callback_after_create_before_build=callback_after_create_before_build,
                 callback_on_event_deferred=callback_on_event_deferred,
+                callback_on_event_suppressed=callback_on_event_suppressed,
                 substitutions=substitutions,
                 slack_doc=slack_doc,
             )
@@ -958,6 +961,7 @@ def run_cfg_section(
     *,
     callback_after_create_before_build: typing.Callable = None,
     callback_on_event_deferred: typing.Callable = None,
+    callback_on_event_suppressed: typing.Callable = None,
     substitutions: dict = None,
     slack_doc=None,
 ):
@@ -977,6 +981,8 @@ def run_cfg_section(
                 log.log(
                     f"No pipeline launch, suppressing duplicates for unique_tag={unique_tag}"
                 )
+                if callback_on_event_suppressed:
+                    callback_on_event_suppressed()
                 return None
             elif dup_action == "ALLOW":
                 pass
@@ -1082,6 +1088,25 @@ def run_cfg_section(
         output.on_running(running_callback)
         output.on_done(done_error_callback)
         output.on_error(done_error_callback)
+
+    # git- integrations status callback injection
+    # first, homogenize the git vars to an expected state
+    if git_urls is None and "url" in substitutions:
+        git_urls = [substitutions["url"]]
+    if "sha" in substitutions and "url" in substitutions:
+        url = git_urls[0]
+        sha = substitutions["sha"]
+        root = output.root
+        # add pipeline-level QPRDE status updates
+        cb = callback.github_pipeline_status(url, sha, inherited=True)
+        root.on_state_change(cb)
+        if root.callback_data is None:
+            root.callback_data = dict()
+        root.callback_data["github_status_action"] = section_name
+    else:
+        log.log(
+            f"has NO sha or url so not adding integrations status callbacks: git_urls:{git_urls}"
+        )
 
     # Normally `co.Image` looks through the stack to infer the repo, but the stack
     # doesn't go through the CFG file. Specify `_CONTEXT` as a workaround.

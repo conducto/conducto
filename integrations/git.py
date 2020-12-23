@@ -61,8 +61,15 @@ def clone_url(url: str, token: t.Token = None) -> str:
     return query_url
 
 
-def add_status_callback(node: co.Node, url, sha):
-    cb = callback.github_status(url, sha)
+def add_status_callback(
+    node: co.Node, url: str, sha: str, *, inherited=False, user_display=True
+):
+    from conducto.shared import log
+
+    """Enable automatic Github Checks status updating for a node or nodes; and toggle their display in the Callbacks listing in the UI"""
+    cb = callback.github_status(
+        url, sha, inherited=inherited, user_display=user_display
+    )
     node.on_state_change(cb)
 
 

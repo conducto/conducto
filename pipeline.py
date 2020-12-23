@@ -74,6 +74,9 @@ class Node:
         to complete successfully. If a Node exceeds this time, it will be killed. The
         duration string must be a positive decimal with a suffix of 's, 'm', 'h', or 'd',
         indicating seconds, minutes, hours, or days respectively.
+    :param max_concurrent: int, default `None`, If set it limits the number of
+        descendant Exec nodes that can run concurrently. Only applies to `Serial`
+        and `Parallel` nodes.
 
     :param name: If creating Node inside a context manager, you may pass
         `name=...` instead of using normal dict assignment.
@@ -150,6 +153,7 @@ class Node:
         "_callbacks",
         "suppress_errors",
         "max_time",
+        "max_concurrent",
         "container_reuse_context",
         "env",
         "doc",
@@ -175,6 +179,7 @@ class Node:
         requires_docker=None,
         suppress_errors=False,
         max_time: typing.Union[int, float, str] = None,
+        max_concurrent=None,
         container_reuse_context=None,
         same_container=constants.SameContainer.INHERIT,  # deprecated
         image: typing.Union[str, image_mod.Image] = None,
@@ -215,6 +220,7 @@ class Node:
         self._name = "/"
         self.suppress_errors = False
         self.max_time = None
+        self.max_concurrent = None
         self.container_reuse_context = None
         self.callback_data = callback_data
 
@@ -240,6 +246,7 @@ class Node:
             requires_docker=requires_docker,
             suppress_errors=suppress_errors,
             max_time=max_time,
+            max_concurrent=max_concurrent,
             container_reuse_context=container_reuse_context,
             image=image,
             image_name=image_name,
@@ -262,6 +269,7 @@ class Node:
         requires_docker=None,
         suppress_errors=None,
         max_time: typing.Union[int, float, str] = None,
+        max_concurrent=None,
         container_reuse_context=None,
         image: typing.Union[str, image_mod.Image] = None,
         image_name=None,
@@ -321,6 +329,13 @@ class Node:
             self.suppress_errors = suppress_errors
         if max_time is not None:
             self.max_time = max_time
+        if max_concurrent is not None:
+            if max_concurrent == 0:
+                raise Exception("Cannot specify no concurrent nodes")
+            if type(Node) == Exec:
+                raise Exception("Cannot specify max_concurrent on an Exec node")
+            self.max_concurrent = max_concurrent
+
         if container_reuse_context is not None:
             self.container_reuse_context = container_reuse_context
         if file is not None:
@@ -554,6 +569,8 @@ class Node:
             output["suppress_errors"] = self.suppress_errors
         if self.max_time:
             output["max_time"] = self.max_time
+        if self.max_concurrent:
+            output["max_concurrent"] = self.max_concurrent
         if self.callback_data:
             output["callback_data"] = self.callback_data
         if isinstance(self, Serial):
@@ -966,6 +983,7 @@ class Serial(Node):
         stop_on_error=True,
         suppress_errors=False,
         max_time=None,
+        max_concurrent=None,
         container_reuse_context=None,
         same_container=constants.SameContainer.INHERIT,  # deprecated
         image: typing.Union[str, image_mod.Image] = None,
@@ -986,6 +1004,7 @@ class Serial(Node):
             requires_docker=requires_docker,
             suppress_errors=suppress_errors,
             max_time=max_time,
+            max_concurrent=max_concurrent,
             container_reuse_context=container_reuse_context,
             same_container=same_container,
             image=image,

@@ -290,7 +290,7 @@ class ShellUI(object):
 
                         pl = constants.PipelineLifecycle
                         if self.pipeline["status"] in pl.sleeping and self.allow_sleep:
-                            self.quit(display_reconnect=True)
+                            self.quit()
                         elif self.pipeline["status"] not in pl.active:
                             for listener in self.listeners:
                                 listener.update_node("/", self.pipeline["meta"])
@@ -299,7 +299,7 @@ class ShellUI(object):
 
     def ctrl_c(self, a, b=None):
         # This is the windows control C handler
-        self.quit(display_reconnect=True)
+        self.quit()
         return True
 
     async def key_loop(self):
@@ -315,7 +315,7 @@ class ShellUI(object):
                 # Ctrl+c (sigint) & Ctrl+d (eof) get captured as a non-printing
                 # characters with ASCII code 3 & 4 respectively. Quit
                 # gracefully.
-                self.quit(display_reconnect=True)
+                self.quit()
             elif ord(char) == 26:
                 # Ctrl+z gets captured as a non-printing character with ASCII
                 # code 26. Send SIGSTOP and reset the terminal.
@@ -372,28 +372,13 @@ class ShellUI(object):
                 listener.shutdown()
 
     def disconnect(self):
-        self.quit(display_reconnect=True)
+        self.quit()
 
-    def quit(self, display_reconnect=False):
+    def quit(self):
         """
         Make all event loops quit
         """
         self.reset_stdin()
-        if display_reconnect:
-            # Observe the end of line handling:
-            # 1) bare \n prints differently if in stdin in raw mode so that
-            #    \r\n is really what we want here.
-            # 2) elect end="" here because that leaves the cursor at a spot
-            #    consistent with the one_line renderer (i.e. in the middle of
-            #    no-where)
-            print(
-                log.format(
-                    f"\r\nTo reconnect, run:"
-                    f"\r\n{hostdet.host_exec()} -m conducto show --id={self.pipeline['pipeline_id']}",
-                    color="cyan",
-                ),
-                end="",
-            )
         self.quitting = True
         self.gather_handle.cancel()
 

@@ -115,7 +115,7 @@ class OneLineDisplay(Listener):
 
     # Rendering
     def state_count_str(self, state):
-        count = self.state_counts[state] + self.state_counts[State.skip(state)]
+        count = int(self.state_counts[state] + self.state_counts[State.skip(state)])
         return log.format(count, bold=True, color=STATE_TO_COLOR[state])
 
     def render(self):

@@ -16,26 +16,26 @@ class base:
         return [self.name, d]
 
 
-def retry(max_num_retries):
+def retry(max_num_retries, *, inherited=False):
     """
     Retry the given node `max_num_retries` number of times.
     :param max_num_retries: Max iterations.
     :return:
     """
-    return base("retry", max_num_retries=max_num_retries)
+    return base("retry", max_num_retries=max_num_retries, inherited=inherited)
 
 
-def retry_then_skip(max_num_retries):
+def retry_then_skip(max_num_retries, *, inherited=False):
     """
     Retry the given node `max_num_retries` number of times. If it still hasn't
     succeeded, skip it.
     :param max_num_retries: Max iterations.
     :return:
     """
-    return base("retry_then_skip", max_num_retries=max_num_retries)
+    return base("retry_then_skip", max_num_retries=max_num_retries, inherited=inherited)
 
 
-def retry_with_double_mem(max_num_retries):
+def retry_with_double_mem(max_num_retries, *, inherited=False):
     """
     Retry the given node `max_num_retries` number of times, doubling the memory
     estimate each time. The memory request will be capped at the limits
@@ -43,30 +43,32 @@ def retry_with_double_mem(max_num_retries):
     :param max_num_retries: Max iterations.
     :return:
     """
-    return base("retry_with_double_mem", max_num_retries=max_num_retries)
+    return base(
+        "retry_with_double_mem", max_num_retries=max_num_retries, inherited=inherited
+    )
 
 
-def skip_some_errors(max_num_errors):
+def skip_some_errors(max_num_errors, *, inherited=False):
     """
     If the node fails with <= `max_num_errors` descendants that have errored, it
     will skip those nodes and reset them, thus passing over them.
     :param max_num_errors: Max errors to skip + reset.
     :return:
     """
-    return base("skip_some_errors", max_num_errors=max_num_errors)
+    return base("skip_some_errors", max_num_errors=max_num_errors, inherited=inherited)
 
 
-def email(to=None, cc=None):
+def email(to=None, cc=None, *, inherited=False):
     """
     When the node finishes, send a summary email to the specified recipients.
     :param to: Recipients in the "To" field
     :param cc: Recipients in the "CC" field
     :return:
     """
-    return base("email", to=to, cc=cc)
+    return base("email", to=to, cc=cc, inherited=inherited)
 
 
-def slack_status(recipient, message=None, node_summary=False):
+def slack_status(recipient, message=None, node_summary=False, *, inherited=False):
     """
     Post a summary of the node in the specified slack channel via the Slack integration.
     :param recipient: where to send the updates to, channel id or user id
@@ -76,9 +78,28 @@ def slack_status(recipient, message=None, node_summary=False):
     """
 
     return base(
-        "slack_status", recipient=recipient, message=message, node_summary=node_summary
+        "slack_status",
+        recipient=recipient,
+        message=message,
+        node_summary=node_summary,
+        inherited=inherited,
     )
 
 
-def github_status(url, sha):
-    return base("github_status", url=url, sha=sha)
+def github_status(url, sha, *, inherited=False, user_display=True):
+    return base(
+        "github_status",
+        url=url,
+        sha=sha,
+        inherited=inherited,
+        user_display=user_display,
+    )
+
+
+def github_pipeline_status(url, sha, *, inherited=False):
+    from conducto.shared import log
+
+    """reports QPRDE counts for entire pipeline (root)
+    regardless of node the event is attached to. However,
+    inheritance increases the sensitivity of updates to include the subtree"""
+    return base("github_pipeline_status", url=url, sha=sha, inherited=inherited)

@@ -1,3 +1,4 @@
+import sys
 import pipes
 import asyncio, functools, logging, time
 import concurrent.futures
@@ -6,6 +7,12 @@ import inspect
 
 logger = logging.getLogger("conducto_async_utils")
 logger.setLevel(logging.INFO)
+
+if sys.version_info < (3, 7):
+    # create_task is stdlib in 3.7, but we can declare it as a synonym for the
+    # 3.6 ensure_future
+    asyncio.create_task = asyncio.ensure_future
+
 
 """Asyncio cheat sheet
 

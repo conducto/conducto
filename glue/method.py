@@ -41,17 +41,17 @@ CONDUCTO_ARGS = FLAG_ARGS + VALUE_ARGS
 OPS = {"||", "&&", "!=", "==", "(", ")", "!"}
 
 
-def lazy_shell(command, env=None, **exec_args) -> pipeline.Node:
+def lazy_shell(command, env=None, **exec_args) -> pipeline.Serial:
     output = Lazy(command, **exec_args)
     output.env = env
     return output
 
 
-def lazy_py(func, *args, **kwargs) -> pipeline.Node:
+def lazy_py(func, *args, **kwargs) -> pipeline.Serial:
     return Lazy(func, *args, **kwargs)
 
 
-def Lazy(command_or_func, *args, **kwargs) -> pipeline.Node:
+def Lazy(command_or_func, *args, **kwargs) -> pipeline.Serial:
     """
     This node constructor returns a co.Serial containing a pair of nodes. The
     first, **`Generate`**, runs `func(*args, **kwargs)` and prints out the
@@ -1069,8 +1069,9 @@ def run_cfg_section(
     output.doc = (
         conducto_kwargs.pop("doc", None)
         or output.doc
-        or conducto_kwargs.pop("default_doc")
+        or conducto_kwargs.pop("default_doc", None)
     )
+
     conducto_kwargs.pop("default_doc", None)
 
     if output.title is not None:

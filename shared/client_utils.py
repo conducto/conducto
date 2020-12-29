@@ -1,7 +1,13 @@
+import sys
 import shlex
 import subprocess
 from . import log
 import asyncio
+
+if sys.version_info < (3, 7):
+    # create_task is stdlib in 3.7, but we can declare it as a synonym for the
+    # 3.6 ensure_future
+    asyncio.create_task = asyncio.ensure_future
 
 
 def schedule_instance_async_non_concurrent(async_fxn):

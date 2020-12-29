@@ -20,6 +20,11 @@ import conducto.internal.host_detection as hostdet
 NULL = subprocess.DEVNULL
 PIPE = subprocess.PIPE
 
+if sys.version_info < (3, 7):
+    # create_task is stdlib in 3.7, but we can declare it as a synonym for the
+    # 3.6 ensure_future
+    asyncio.create_task = asyncio.ensure_future
+
 
 # Several debug modes:
 # - "copy": shows command + environment variables, as it appears

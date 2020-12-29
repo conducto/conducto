@@ -64,7 +64,7 @@ class Color:
             raise Exception(msg)
 
 
-def format(s, color=None, bold=True, underline=False, dim=False):
+def format(s, color=None, bold=True, underline=False, dim=False, force=False):
     """
     Return a string representation of the given object, augmented with VT100 control
     codes to effect the requested appearance modifications.
@@ -74,7 +74,7 @@ def format(s, color=None, bold=True, underline=False, dim=False):
     equates to specifying cyan).
 
     """
-    if "TERM" not in os.environ and not is_windows():
+    if not force and ("TERM" not in os.environ and not is_windows()):
         # Some terminals cannot handle colors, so don't add any codes.
         return s
 

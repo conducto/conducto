@@ -58,7 +58,8 @@ class UnauthorizedResponse(InvalidResponse):
 
 async def eval_in_thread(pool, cb, *args, **kwargs):
     # with pool: will cause the pool to shut down after executing and is only good for one call
-    return await asyncio.get_running_loop().run_in_executor(
+    # (NOTE: prefer get_running_loop here, but that does not exist in py36)
+    return await asyncio.get_event_loop().run_in_executor(
         pool, functools.partial(cb, *args, **kwargs)
     )
 

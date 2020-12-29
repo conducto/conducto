@@ -10,8 +10,16 @@ import sys
 import time
 import traceback
 import typing
+import itertools
 
-from conducto.shared import async_utils, client_utils, constants, imagepath, types as t
+from conducto.shared import (
+    async_utils,
+    client_utils,
+    constants,
+    imagepath,
+    types as t,
+    log,
+)
 import conducto
 from . import dockerfile as dockerfile_mod, names
 
@@ -1203,6 +1211,77 @@ class HistoryEntry:
             self.stdout += "\n\n" + _to_str(stdout)
         if stderr:
             self.stdout += "\n\n" + _to_str(stderr)
+
+        try:
+            # use a terminal emulator to shrink the size of our stdout
+            import pyte
+
+            print(f"Using terminal emulator!", flush=True)
+            orig_stdout_size = len(self.stdout)
+            # this should be some default standardized between the backend and the frontend
+            columns = 80
+
+            # couldn't figure out how to get the terminal to auto resize when we exceeded the number of lines
+            # hack solution: exponential search for the correct number of lines in O(N * log(line_count))
+            # since we terminate early, if cursor jumps to new lines are distributed uniformly, the complexity
+            # becomes O(N)
+            def check_lines(n_lines):
+
+                screen = pyte.Screen(lines=n_lines, columns=columns)
+                stream = pyte.Stream(screen)
+
+                for char in self.stdout:
+                    # Note: we cannot check the cursor position and call screen.resize above a certain
+                    # threshold, since  you can move up and down an arbitrary of lines,
+                    # and resize also resets the cursor position
+                    stream.feed(char)
+                    y = screen.cursor.y
+                    if y == n_lines - 1:
+                        return False
+                return screen
+
+            def display(screen):
+                def render(line):
+                    if not line:
+                        return
+                    # TODO (apeng) also preserve italics, background color, strikethrough
+                    # wrap format() around more than one line to not repeat escape sequences
+                    for (color, bold, underline), group in itertools.groupby(
+                        [line[i] for i in range(max(line) + 1)],
+                        key=lambda x: (x.fg, x.bold, x.underscore),
+                    ):
+                        yield log.format(
+                            "".join(i.data for i in group),
+                            color=None if color == "default" else color,
+                            bold=bold,
+                            underline=underline,
+                            force=True,
+                        )
+
+                return ["".join(render(screen.buffer[y])) for y in range(screen.lines)]
+
+            lines = 20
+            while True:
+                out = check_lines(lines)
+                if out:
+                    back_line = out.default_char.data * columns
+                    d = display(out)
+                    while d and d[-1] == back_line:
+                        d.pop()
+                    self.stdout = "\r\n".join(i.rstrip() for i in d)
+                    break
+                lines *= 2
+            print(
+                f"Reduced stdout size {orig_stdout_size} -> {len(self.stdout)}",
+                flush=True,
+            )
+        except ModuleNotFoundError:
+            pass
+        except:
+            import traceback
+
+            print("Error reducing stdout", traceback.format_exc(), flush=True)
+            raise
 
     def __aenter__(self):
         return self

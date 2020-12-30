@@ -16,6 +16,16 @@ class base:
         return [self.name, d]
 
 
+def _parse(cb_literal):
+    name, cb_kwargs = cb_literal
+    cb_func = globals()[name]
+    return cb_func(**cb_kwargs)
+
+
+def deserialize_into_node(target):
+    return base("deserialize_into_node", target=target)
+
+
 def retry(max_num_retries, *, inherited=False):
     """
     Retry the given node `max_num_retries` number of times.

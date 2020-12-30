@@ -143,23 +143,39 @@ def _load_file_module(filename):
     return module
 
 
-def iterate(file_to_execute, pipeline_id):
-    from importlib import reload
+def share_directory(
+    name,
+    relative,
+):
+    from conducto.image import Image
 
-    while True:
-        try:
-            module = _load_file_module(file_to_execute)
-            module = reload(module)
-            variables = {k: getattr(module, k) for k in dir(module)}
-            co.main(
-                variables=variables,
-                argv=[f"--pipeline_id={pipeline_id}", "--local"],
-                filename=file_to_execute,
-            )
-        except:
-            import traceback
+    Image.share_directory(name, relative)
 
-            traceback.print_exc()
+
+def build(
+    shell=False,
+    app=True,
+    local=False,
+    cloud=False,
+    retention=7,
+    is_public=False,
+):
+    from conducto.internal import build
+
+    assert local ^ cloud, "An invalid number of build modes were specified"
+
+    serialization = sys.stdin.read()
+    node = co.Node.deserialize(serialization)
+    build.build(
+        node,
+        use_shell=shell,
+        use_app=app,
+        build_mode=constants.BuildMode.LOCAL
+        if local
+        else constants.BuildMode.DEPLOY_TO_CLOUD,
+        retention=retention,
+        is_public=is_public,
+    )
 
 
 def main():
@@ -174,53 +190,36 @@ def main():
         "livedebug",
         "init",
         "dump-serialization",
+        "share-directory",
+        "build",
         "sleep",
         "discover",
     ):
         variables = {
+            "build": build,
             "show": show,
             "debug": debug,
             "livedebug": livedebug,
+            "share-directory": share_directory,
             "dump-serialization": dump_serialization,
             "sleep": sleep,
             "discover": discover_cli,
         }
         co.main(variables=variables)
     else:
+        file_to_execute, *arguments = args
 
-        def step():
-            file_to_execute, *arguments = args
+        if not os.path.exists(file_to_execute):
+            print(f"No such file or directory: '{file_to_execute}'", file=sys.stderr)
+            sys.exit(1)
 
-            if not os.path.exists(file_to_execute):
-                print(
-                    f"No such file or directory: '{file_to_execute}'", file=sys.stderr
-                )
-                sys.exit(1)
-
-            if file_to_execute.endswith(".cfg"):
-                with open(file_to_execute) as f:
-                    co.glue.run_cfg(f, arguments)
-            else:
-                module = _load_file_module(file_to_execute)
-                variables = {k: getattr(module, k) for k in dir(module)}
-                co.main(variables=variables, argv=arguments, filename=file_to_execute)
-
-        if os.getenv("CONDUCTO_ITERATE"):
-            import time
-
-            while True:
-                try:
-                    step()
-                except KeyboardInterrupt:
-                    exit(1)
-                except:
-                    import traceback
-
-                    traceback.print_exc()
-                time.sleep(1)
-
+        if file_to_execute.endswith(".cfg"):
+            with open(file_to_execute) as f:
+                co.glue.run_cfg(f, arguments)
         else:
-            step()
+            module = _load_file_module(file_to_execute)
+            variables = {k: getattr(module, k) for k in dir(module)}
+            co.main(variables=variables, argv=arguments, filename=file_to_execute)
 
 
 if __name__ == "__main__":

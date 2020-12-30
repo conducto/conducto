@@ -66,9 +66,7 @@ def Lazy(command_or_func, *args, **kwargs) -> pipeline.Serial:
     output = pipeline.Serial()
     output["Generate"] = pipeline.Exec(command_or_func, *args, **kwargs)
     output["Execute"] = pipeline.Parallel()
-    output["Generate"].on_done(
-        callback.base("deserialize_into_node", target=output["Execute"])
-    )
+    output["Generate"].on_done(callback.deserialize_into_node(target=output["Execute"]))
     return output
 
 
@@ -283,57 +281,6 @@ class Wrapper(object):
             return func._conducto_wrapper
         else:
             return Wrapper(func)
-
-
-def _get_common(parent_dict, child_dicts):
-    common_in_children = None
-    set_in_parent = {k: v for k, v in parent_dict.items() if v is not None}
-
-    for d in child_dicts:
-        # Find all key/value pairs that are identical among all children and are unset
-        # in the parent
-        if common_in_children is None:
-            common_in_children = {
-                k: v
-                for k, v in d.items()
-                if v is not None and parent_dict.get(k) is None
-            }
-        else:
-            for common_k, common_v in list(common_in_children.items()):
-                if d.get(common_k, _UNSET) != common_v:
-                    del common_in_children[common_k]
-
-        # Find all key/value pairs where the child's value either is unset or is
-        # identical to that of the parent
-        for key, value in list(set_in_parent.items()):
-            child_value = d.get(key)
-            if child_value is not None and child_value != value:
-                del set_in_parent[key]
-
-    # There should be no overlap between these two dicts: keys in set_in_parent must
-    # have had non-None value in the parent, whereas keys in common_in_children must
-    # have been None in the parent. Anything in either can be pulled up to the parent.
-    return {**set_in_parent, **common_in_children}
-
-
-def simplify_attributes(root):
-    for node in root.stream(reverse=True):
-        if node.children:
-            # Propagate user_set attributes, setting them to None in the children
-            common_attrs = _get_common(
-                node.user_set, [c.user_set for c in node.children.values()]
-            )
-            for k, v in common_attrs.items():
-                node.user_set[k] = v
-                for child in node.children.values():
-                    child.user_set[k] = None
-
-            # Propagate environment variables, removing them from the children
-            common_env = _get_common(node.env, [c.env for c in node.children.values()])
-            for k, v in common_env.items():
-                node.env[k] = v
-                for child in node.children.values():
-                    child.env.pop(k, None)
 
 
 def beautify(function, name, space):
@@ -1338,14 +1285,16 @@ def main(
         pipeline_id = conducto_state.pop("pipeline_id")
         will_build = is_cloud or is_local or pipeline_id
 
-        simplify_attributes(output)
-
         if will_build:
             BM = constants.BuildMode
             try:
                 if pipeline_id:
+                    from conducto.internal.build import validate_tree
+
                     if output.image is None:
                         output.image = image_mod.Image(name="conducto-default")
+                    validate_tree(output, cloud=False, check_images=False)
+
                     asyncio.get_event_loop().run_until_complete(
                         update_serialization(output.serialize(), pipeline_id)
                     )
@@ -1369,6 +1318,11 @@ def main(
             if t.Bool(os.getenv("__RUN_BY_WORKER__")):
                 # Variable is set in conducto_worker/__main__.py to avoid
                 # printing ugly serialization when not needed.
+
+                from conducto.internal.build import validate_tree
+
+                validate_tree(output, cloud=False, check_images=False)
+
                 s = output.serialize()
                 print(f"\n<__conducto_serialization>{s}</__conducto_serialization>\n")
             print(output.pretty(strict=False))

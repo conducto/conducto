@@ -10,9 +10,11 @@ import pprint
 import re
 import traceback
 import typing
+import inspect
 
 from .shared import constants, log, types as t, imagepath
 from . import api, callback, image as image_mod
+import inspect
 
 State = constants.State
 
@@ -29,15 +31,9 @@ def jsonable(obj):
         return False
 
 
-def load_node(**kwargs):
-    if kwargs["type"] == "Exec":
-        return Exec(**kwargs)
-    elif kwargs["type"] == "Serial":
-        return Serial(**kwargs)
-    elif kwargs["type"] == "Parallel":
-        return Parallel(**kwargs)
-    else:
-        raise TypeError(f"Type {kwargs['type']} not a valid node type")
+def load_node(kwargs):
+    use_cls = {"Exec": Exec, "Serial": Serial, "Parallel": Parallel}[kwargs["type"]]
+    return use_cls(**{k: v for k, v in kwargs.items() if k in KEY_PARAMS})
 
 
 class Node:
@@ -233,8 +229,8 @@ class Node:
                 raise ValueError(
                     "same_container is deprecated in favor of container_reuse_context, please don't use both."
                 )
-
-        self.file, self.line = self._get_file_and_line()
+        if file is None:
+            self.file, self.line = self._get_file_and_line()
 
         self.set(
             env=env,
@@ -579,17 +575,35 @@ class Node:
             output["command"] = self.command
         return output
 
+    @staticmethod
+    def deserialize(string) -> "Node":
+        string = gzip.decompress(base64.b64decode(string))
+        data = json.loads(string)
+        nodes = {n["id"]: load_node(n) for n in data["nodes"]}
+
+        for i in data["nodes"]:
+            for event, cb_literal in i.get("callbacks", []):
+                cb = callback._parse(cb_literal)
+                nodes[i["id"]]._callbacks.append((event, cb))
+
+        for parent, child, name in data["edges"]:
+            nodes[parent][name] = nodes[child]
+
+        root = nodes[data["nodes"][0]["id"]]
+
+        # initialize the repo here because we update its attributes in _pull()
+        root._repo = image_mod.Repository()
+        for name, image in data["images"].items():
+            image = image_mod.Image(**image)
+            root._repo.add(image)
+
+        root.token = data.get("token")
+        root._sleep_when_done = data.get("sleep_when_done", False)
+        root._autorun = data.get("autorun")
+
+        return root
+
     def serialize(self, pretty=False):
-        def validate_env(node):
-            for key, value in node.env.items():
-                if not isinstance(key, str):
-                    raise TypeError(
-                        f"{node} has {type(key).__name__} in env key when str is required"
-                    )
-                if not isinstance(value, str):
-                    raise TypeError(
-                        f"{node} has {type(value).__name__} in env value for {key} when str is required"
-                    )
 
         res = {
             "edges": [],
@@ -603,7 +617,6 @@ class Node:
         queue = collections.deque([self])
         while queue:
             node = queue.popleft()
-            validate_env(node)
             node._pull()
             res["nodes"].append(
                 {k: v for k, v in node.describe().items() if v is not None}
@@ -696,7 +709,9 @@ class Node:
             sleep_when_done=sleep_when_done,
         )
 
-    def _build(
+    # optimized build that directly calls build.build,
+    # no additional subprocesses, serialization is only performed once on the node
+    def _build_optim(
         self,
         build_mode=constants.BuildMode.LOCAL,
         shell=False,
@@ -709,20 +724,78 @@ class Node:
         if self.image is None:
             self.image = image_mod.Image(name="conducto-default")
 
-        self.check_images()
-
         self._autorun = run
         self._sleep_when_done = sleep_when_done
-
         from conducto.internal import build
 
-        return build.build(
+        build.build(
             self,
             build_mode,
             use_shell=shell,
             use_app=app,
             retention=retention,
             is_public=public,
+        )
+
+    # emulate node.build from another language
+    # this does not return the pipeline id, and incurs additional overhead
+    # this is how .build in another language should be implemented
+    def _build_multilang(
+        self,
+        build_mode=constants.BuildMode.LOCAL,
+        shell=False,
+        app=False,
+        retention=7,
+        run=False,
+        sleep_when_done=False,
+        public=False,
+    ):
+        if self.image is None:
+            self.image = image_mod.Image(name="conducto-default")
+
+        self._autorun = run
+        self._sleep_when_done = sleep_when_done
+
+        args = ["conducto", "build"]
+        if shell:
+            args.append("--shell")
+        if app:
+            args.append("--app")
+        if build_mode == constants.BuildMode.LOCAL:
+            args.append("--local")
+        else:
+            args.append("--cloud")
+        args.append(f"--retention={retention}")
+        if public:
+            args.append("--public")
+
+        import subprocess
+
+        subprocess.run(args, input=self.serialize().encode("utf-8"))
+
+    def _build(
+        self,
+        build_mode=constants.BuildMode.LOCAL,
+        shell=False,
+        app=False,
+        retention=7,
+        run=False,
+        sleep_when_done=False,
+        public=False,
+    ):
+        build_func = (
+            self._build_multilang
+            if os.getenv("CONDUCTO_EMULATE_MULTILANG")
+            else self._build_optim
+        )
+        build_func(
+            build_mode=build_mode,
+            shell=shell,
+            app=app,
+            retention=retention,
+            run=run,
+            sleep_when_done=sleep_when_done,
+            public=public,
         )
 
     def check_images(self):
@@ -1021,3 +1094,5 @@ class Serial(Node):
 _abspath = functools.lru_cache(1000)(os.path.abspath)
 _isabs = functools.lru_cache(1000)(os.path.isabs)
 _conducto_dir = os.path.dirname(__file__) + os.path.sep
+
+KEY_PARAMS = set(inspect.signature(Serial.__init__).parameters) | {"command"}

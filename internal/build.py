@@ -19,6 +19,83 @@ from conducto.shared import (
 )
 import conducto.internal.host_detection as hostdet
 
+_UNSET = object()
+
+
+def _get_common(parent_dict, child_dicts):
+    common_in_children = None
+    set_in_parent = {k: v for k, v in parent_dict.items() if v is not None}
+
+    for d in child_dicts:
+        # Find all key/value pairs that are identical among all children and are unset
+        # in the parent
+        if common_in_children is None:
+            common_in_children = {
+                k: v
+                for k, v in d.items()
+                if v is not None and parent_dict.get(k) is None
+            }
+        else:
+            for common_k, common_v in list(common_in_children.items()):
+                if d.get(common_k, _UNSET) != common_v:
+                    del common_in_children[common_k]
+
+        # Find all key/value pairs where the child's value either is unset or is
+        # identical to that of the parent
+        for key, value in list(set_in_parent.items()):
+            child_value = d.get(key)
+            if child_value is not None and child_value != value:
+                del set_in_parent[key]
+
+    # There should be no overlap between these two dicts: keys in set_in_parent must
+    # have had non-None value in the parent, whereas keys in common_in_children must
+    # have been None in the parent. Anything in either can be pulled up to the parent.
+    return {**set_in_parent, **common_in_children}
+
+
+def simplify_attributes(root):
+    for node in root.stream(reverse=True):
+        if node.children:
+            # Propagate user_set attributes, setting them to None in the children
+            common_attrs = _get_common(
+                node.user_set, [c.user_set for c in node.children.values()]
+            )
+            for k, v in common_attrs.items():
+                node.user_set[k] = v
+                for child in node.children.values():
+                    child.user_set[k] = None
+
+            # Propagate environment variables, removing them from the children
+            common_env = _get_common(node.env, [c.env for c in node.children.values()])
+            for k, v in common_env.items():
+                node.env[k] = v
+                for child in node.children.values():
+                    child.env.pop(k, None)
+
+
+def validate_tree(node, cloud, check_images=True):
+    def validate_env(desc):
+        for key, value in desc.env.items():
+            if not isinstance(key, str):
+                raise TypeError(
+                    f"{desc} has {type(key).__name__} in env key when str is required"
+                )
+            if not isinstance(value, str):
+                raise TypeError(
+                    f"{desc} has {type(value).__name__} in env value for {key} when str is required"
+                )
+
+    node.repo.finalize()
+    if check_images:
+        node.check_images()
+    for desc in node.stream():
+        validate_env(desc)
+
+    if cloud:
+        _check_nodes_for_cloud(node)
+
+    simplify_attributes(node)
+
 
 def build(
     node,
@@ -49,11 +126,12 @@ def build(
     if token is None and sys.stdin.isatty():
         token = api.Auth().get_token_from_shell(force=True, force_new=True)
     node.token = token
-
     command = " ".join(pipes.quote(a) for a in sys.argv)
 
     # Register pipeline, get <pipeline_id>
     cloud = build_mode == constants.BuildMode.DEPLOY_TO_CLOUD
+
+    validate_tree(node, cloud)
     if constants.ExecutionEnv.images_only():
         pipeline_id = "zzz-zzz"
     else:
@@ -66,9 +144,6 @@ def build(
             title=node.title,
             is_public=is_public,
         )
-
-    if cloud:
-        _check_nodes_for_cloud(node)
 
     serialization = node.serialize()
 

@@ -199,7 +199,8 @@ def subprocess_streaming(
         cmd = f"echo {shlex.quote(input.decode('utf-8'))} | {cmd}"
 
     cmd = f"sh -c {shlex.quote(cmd)}"
-    log.log(f"Running: {cmd}")
+
+    log.debug(f"Running: {cmd}")
 
     # `buf` may already be populated. Record its current length so that if we have an
     # error message we can include only the portion from this command.

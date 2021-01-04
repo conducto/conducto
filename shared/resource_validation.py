@@ -1,6 +1,6 @@
-import re
 import bisect
 import functools
+import shlex
 
 from conducto.shared import parse_utils
 
@@ -33,6 +33,7 @@ FG.ALLOWED = [
     *[FG(2, x) for x in range(4, 17)],
     *[FG(4, x) for x in range(8, 31)],
 ]
+EXCLUDED_DOCKER_RUN_ARGS = {"--cpus", "--memory", "--network"}
 
 
 class InvalidCloudParams(ValueError):
@@ -119,3 +120,28 @@ def exectime(arg):
     if isinstance(arg, (datetime.time, datetime.datetime)):
         return arg
     raise ValueError(f"Invalid exectime: {repr(arg)}")
+
+
+def docker_run_args(arg):
+    if arg is None:
+        return None
+    if isinstance(arg, str):
+        output = shlex.split(arg)
+    else:
+        try:
+            output = list(arg)
+        except TypeError:
+            raise ValueError(
+                f"Invalid value for docker_run_args, str or List[str] required: {repr(arg)}"
+            )
+        if not all(isinstance(a, str) for a in output):
+            raise ValueError(
+                f"Invalid value for docker_run_args, str or List[str] required: {repr(arg)}"
+            )
+    for a in output:
+        prefix = a.split("=", 1)[0]
+        if prefix in EXCLUDED_DOCKER_RUN_ARGS:
+            raise ValueError(
+                f"Invalid value for docker_run_args, cannot specify any of {EXCLUDED_DOCKER_RUN_ARGS}: {repr(arg)}"
+            )
+    return output

@@ -98,16 +98,26 @@ class Image:
     """
     :param image:  Specify the base image to start from. Code can be added with
         various context* variables, and packages with reqs_* variables.
-    :param dockerfile:  Use instead of image and pass a path to a Dockerfile.
+    :type image: `str`
+
+    :param dockerfile:  Use instead of :code:`image` and pass a path to a Dockerfile.
         Relative paths are evaluated starting from the file where this code is
-        written. Unless otherwise specified, it uses the directory of the
+        written. Unless :code:`context` is specified, it uses the directory of the
         Dockerfile as the build context
-    :param docker_build_args: Dict mapping names of arguments to `docker
-        --build-args` to values
-    :param docker_auto_workdir: `bool`, default `True`, set the work-dir to the
-        destination of `copy_dir`
+    :type dockerfile: `str`
+
+    :param docker_build_args: Dict mapping names of arguments to
+        :code:`docker --build-args` to values
+    :type docker_build_args: `dict`
+
+    :param docker_auto_workdir: Set the work-dir to the destination of
+        :code:`copy_dir`. Default: :code:`True`
+    :type docker_auto_workdir: `bool`
+
     :param context:  Use this to specify a custom docker build context when
-        using `dockerfile`.
+        using :code:`dockerfile`.
+    :type context: `str`
+
     :param copy_repo:  Set to `True` to automatically copy the entire current Git repo
         into the Docker image. Use this so that a single Image definition can either use
         local code or can fetch from a remote repo.
@@ -117,32 +127,54 @@ class Image:
 
         **copy_url mode**: Specify `copy_branch` to use a remote repository. This is
         commonly done for CI/CD. When specified, `copy_url` will be auto-populated.
+    :type copy_repo: `bool`
 
     :param copy_dir:  Path to a directory. All files in that directory (and its
         subdirectories) will be copied into the generated Docker image.
+    :type copy_dir: `str`
+
     :param copy_url:  URL to a Git repo. Conducto will clone it and copy its
         contents into the generated Docker image. Authenticate to private
         GitHub repos with a URL like `https://{user}:{token}@github.com/...`.
         See secrets for more info on how to store this securely. Must also
         specify copy_branch.
+    :type copy_url: `str`
+
     :param copy_branch:  A specific branch name to clone. Required if using copy_url.
+    :type copy_branch: `str`
+
     :param path_map:  Dict that maps external_path to internal_path. Needed for
-        live debug and :py:func:`conducto.Lazy`. It can be inferred from
-        `copy_dir`; if not using that, you must specify `path_map`.
-    :param reqs_py:  List of Python packages for Conducto to pip install --use-feature=2020-resolver into
+        live debug and for passing callables to :py:class:`Exec` & :py:class:`Lazy`.
+        It can be inferred from :code:`copy_dir`, :code:`copy_url`, or :code:`copy_repo`;
+        if not using one of those, you must specify :code:`path_map` explicitly. This
+        typically happens when a user-generated Dockerfile copies the code into the image.
+    :type path_map: `None`
+
+    :param reqs_py:  List of Python packages for Conducto to :code:`pip install` into
         the generated Docker image.
+    :type reqs_py: `List[str]`
+
     :param reqs_packages: List of packages to install with the appropriate Linux package
         manager for this image's flavor.
-    :param reqs_docker: `bool` for whether to install Docker.
-    :param shell: Which shell to use in this container. Defaults to `co.Image.AUTO` to
-        auto-detect. `AUTO` will prefer `/bin/bash` when available, and fall back to
-        `/bin/sh` otherwise.
+    :type reqs_packages: `List[str]`
+
+    :param reqs_docker: If :code:`True`, install Docker during build time.
+    :type reqs_docker: `bool`
+
+    :param shell: Which shell to use in this container. Defaults to :code:`co.Image.AUTO` to
+        auto-detect. :code:`AUTO` will prefer :code:`/bin/bash` when available, and fall back to
+        :code:`/bin/sh` otherwise.
+    :type shell: `str`
+
     :param name: Name this `Image` so other Nodes can reference it by name. If
         no name is given, one will automatically be generated from a list of
         our favorite Pokemon. I choose you, angry-bulbasaur!
+    :type name: `str`
+
     :param instantiation_directory: The directory of the file in which this image object was created. This is
         used to determine where relative paths passed into co.Image are relative from. This is
         automatically populated internally by conducto.
+    :type instantiation_directory: `str`
     """
 
     _CONTEXT = None

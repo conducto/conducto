@@ -12,7 +12,7 @@ import traceback
 import typing
 import inspect
 
-from .shared import constants, log, types as t, imagepath
+from .shared import constants, log, types as t, imagepath, resource_validation as rv
 from . import api, callback, image as image_mod
 import inspect
 
@@ -43,42 +43,73 @@ class Node:
     directly to `Exec` nodes and as defaults on `Serial` and `Parallel` for the
     sub-nodes.
 
-    :param cpu: `float`, default 1, Number of CPUs to allocate to the Node.
-        Must be >0 if assigned.
-    :param mem: `float`, default 2, GB of memory to allocate to the Node. Must
-        be >0 if assigned.
-    :param requires_docker: `bool`, default `False`, If True, enable the Node
-        to use
-    :param env: `dict` with keys environment variables and the values
+    :param cpu: Number of CPUs to allocate to the Node. Must be >0 if assigned.
+        Default: :code:`1`
+    :type cpu: `float`
 
-    :param image: :py:class:`conducto.Image` or `str`, Run Node in container
-        using the given :py:class:`conducto.Image` or image identified
-        by name in Docker.
-    :param image_name: `str`, Reference an :py:class:`conducto.Image` by
+    :param mem: GB of memory to allocate to the Node. Must be >0 if assigned.
+        Default: :code:`2`
+    :type mem: `float`
+
+    :param requires_docker: If True, enable the Node to use. Default: :code:`False`
+    :type requires_docker: `bool`
+
+    :param env: Mapping containing environment variables as its keys and values.
+        Default: :code:`{}`
+    :type env: `dict`
+
+    :param image: Run Node in container using the given :py:class:`Image`
+        or image identified by name in Docker.
+    :type image: :py:class:`Image` or `str`.
+
+    :param image_name: Reference an :py:class:`Image` by
         name instead of passing it explicitly. The Image must have been
-        registered with :py:func:`conducto.Node.register_image`.
+        registered with :py:func:`Node.register_image`.
+    :type image_name: `str`
+
     :param container_reuse_context: See :ref:`Running Exec nodes` for details. Note this
         has special inheritance rules when propagating to child nodes.
 
-    :param skip: bool, default `False`, If False the Node will be run normally.
-        If True execution will pass over it and it will not be run.
-    :param suppress_errors: bool, default `False`, If True the Node will go to
-        the Done state when finished, even if some children have failed. If False,
-        any failed children will cause it to go to the Error state.
-    :param max_time: Union[int, float, str], default `'4h'`, An int or float value of
-        seconds, or a duration string, representing the maximum time a Node may take
-        to complete successfully. If a Node exceeds this time, it will be killed. The
-        duration string must be a positive decimal with a suffix of 's, 'm', 'h', or 'd',
-        indicating seconds, minutes, hours, or days respectively.
-    :param max_concurrent: int, default `None`, If set it limits the number of
-        descendant Exec nodes that can run concurrently. Only applies to `Serial`
-        and `Parallel` nodes.
+    :param skip: If False the Node will be run normally. If True execution will pass
+        over it and it will not be run. Default: :code:`False`
+    :type skip: `bool`
 
-    :param name: If creating Node inside a context manager, you may pass
-        `name=...` instead of using normal dict assignment.
+    :param suppress_errors: If True the Node will go to the Done state when finished,
+        even if some children have failed. If False, any failed children will cause
+        it to go to the Error state. Default: :code:`False`
+    :type suppress_errors: `bool`
 
-    All of these arguments, except for `name`, may be set in the Node
-    constructor or later. For example, `n = co.Parallel(cpu=2)` and
+    :param max_time: An int or float value of seconds, or a duration string, representing
+        the maximum time a Node may take to complete successfully. If a Node exceeds this
+        time, it will be killed. The duration string must be a positive decimal with a
+        suffix of 's', 'm', 'h', or 'd', indicating seconds, minutes, hours, or days
+        respectively. Default: :code:`'4h'`
+    :type max_time: `int` or `float` or `str`
+
+    :param max_concurrent: If set it limits the number of
+        descendant Exec nodes that can run concurrently. Only applies to
+        :py:class:`Serial` and :py:class:`Parallel` nodes.
+        Default: :code:`None`
+    :type max_concurrent: `int`
+
+    :param docker_run_args: Additional arguments to pass to
+        :code:`docker run` when starting the container that runs the Exec node.
+        Default: :code:`None`
+
+        Caution: the arguments specified here are passed directly to :code:`docker run`.
+        They may cause the command to fail, in which case affected Exec nodes will
+        not run. If you create orphaned Docker containers, clean them up with
+        :code:`docker container list` and :code:`docker kill`. Use with care.
+
+        **Only allowed for local mode**
+    :type docker_run_args: `str` or `List[str]`
+
+    :param name: If creating Node inside a context manager, you may pass :code:`name=...`
+        instead of using normal dict assignment. Default: :code:`None`
+    :type name: `str`
+
+    All of these arguments, except for :code:`name`, may be set in the Node
+    constructor or later. For example, :code:`n = co.Parallel(cpu=2)` and
 
     .. code-block::
 
@@ -89,10 +120,10 @@ class Node:
 
     :ivar name: Immutable. The name of this Node must be unique among sibling
         Nodes. It is most commonly set through dict assignment with
-        `parent['nodename'] = co.Parallel()`. It may also be set in the
-        constructor with `co.Parallel(name='nodename')` if you're using another
-        Node as a context manager. It may not contain a `/`, as `/` is reserved
-        as the path separator.
+        :code:`parent['nodename'] = co.Parallel()`. It may also be set in the
+        constructor with :code:`co.Parallel(name='nodename')` if you're using
+        another Node as a context manager. It may not contain a :code:`/`, as
+        :code:`/` is reserved as the path separator.
     """
 
     # We define __iter__ as None, so that python will error early if Node is used in a
@@ -180,6 +211,7 @@ class Node:
         same_container=constants.SameContainer.INHERIT,  # deprecated
         image: typing.Union[str, image_mod.Image] = None,
         image_name=None,
+        docker_run_args=None,
         doc=None,
         title=None,
         tags: typing.Iterable = None,
@@ -207,6 +239,7 @@ class Node:
             "gpu": None,
             "mem": None,
             "requires_docker": None,
+            "docker_run_args": None,
         }
         self.image = None
         self.env = {}
@@ -239,6 +272,7 @@ class Node:
             cpu=cpu,
             gpu=gpu,
             mem=mem,
+            docker_run_args=docker_run_args,
             requires_docker=requires_docker,
             suppress_errors=suppress_errors,
             max_time=max_time,
@@ -269,6 +303,7 @@ class Node:
         container_reuse_context=None,
         image: typing.Union[str, image_mod.Image] = None,
         image_name=None,
+        docker_run_args=None,
         doc=None,
         title=None,
         tags: typing.Iterable = None,
@@ -295,6 +330,8 @@ class Node:
             self.user_set["requires_docker"] = requires_docker
         if image_name is not None:
             self.user_set["image_name"] = image_name
+        if docker_run_args is not None:
+            self.user_set["docker_run_args"] = rv.docker_run_args(docker_run_args)
 
         if image is not None:
             self.image = image
@@ -400,6 +437,10 @@ class Node:
         return self.user_set["cpu"]
 
     @property
+    def docker_run_args(self):
+        return self.user_set.get("docker_run_args")
+
+    @property
     def requires_docker(self):
         return self.user_set.get("requires_docker")
 
@@ -418,6 +459,10 @@ class Node:
     @cpu.setter
     def cpu(self, val):
         self.user_set["cpu"] = val
+
+    @docker_run_args.setter
+    def docker_run_args(self, val):
+        self.user_set["docker_run_args"] = val
 
     @property
     def image(self) -> typing.Optional[image_mod.Image]:
@@ -455,8 +500,6 @@ class Node:
         Register a named Image for use by descendant Nodes that specify
         image_name. This is especially useful with lazy pipeline creation to
         ensure that the correct base image is used.
-
-        :param image: :py:class:`conducto.Image`
         """
         self.repo.add(image)
 
@@ -684,17 +727,24 @@ class Node:
         """
         Launch directly from python.
 
-        :param use_shell: If True (default) it will connect to the running
-            pipeline using the shell UI. Otherwise just launch the pipeline and
-            then exit.
+        :param use_shell: If True connect to the running pipeline using
+            the shell UI. Otherwise just launch the pipeline and
+            then exit. Default: :code:`True`
+        :type use_shell: `bool`
+
         :param retention: Once the pipeline is put to sleep, its logs and
             :ref:`data` will be deleted after `retention` days of inactivity.
-            Until then it can be woken up and interacted with.
+            Until then it can be woken up and interacted with. Default: :code:`7`
+        :type retention: `int`
+
         :param run: If True the pipeline will run immediately upon launching.
-            Otherwise (default) it will stay Pending until the user starts it.
+            Otherwise it will stay Pending until the user starts it. Default: :code:`False`
+        :type run: `bool`
+
         :param sleep_when_done: If True the pipeline will sleep -- manager
             exits with recoverable state -- when the root node successfully
-            gets to the Done state.
+            gets to the Done state. Default: :code:`False`
+        :type sleep_when_done: `bool`
         """
 
         # TODO:  Do we want these params? They seem sensible and they were documented at one point.
@@ -891,6 +941,7 @@ class Exec(Node):
     A node that contains an executable command
 
     :param command: A shell command to execute or a python callable
+    :type command: `str`
 
     If a Python callable is specified for the command the `args` and `kwargs`
     are serialized and a `conducto` command line is constructed to launch the
@@ -1025,7 +1076,7 @@ class Exec(Node):
 class Parallel(Node):
     """
     Node that has child Nodes and runs them at the same time.
-    Same interface as :py:func:`conducto.Node`.
+    Same interface as :py:class:`Node`.
     """
 
     __slots__ = []
@@ -1034,11 +1085,14 @@ class Parallel(Node):
 
 class Serial(Node):
     """
-    Node that has child Nodes and runs them one after
-    another. Same interface as :py:func:`conducto.Node`, plus
-    the following:
+    Node that has child Nodes and runs them one after another. Same interface as
+    :py:class:`Node`, plus the following:
 
-    :param stop_on_error: bool, default `True`, If True the Serial will Error when one of its children Errors, leaving subsequent children Pending. If False and a child Errors the Serial will still run the rest of its children and then Error, defaults to True
+    :param stop_on_error: If True the :code:`Serial` will Error when one of its
+        children Errors, leaving subsequent children Pending. If `False` and a
+        child Errors the :code:`Serial` will still run the rest of its children
+        and then Error. Default: :code:`True`
+    :type stop_on_error: `bool`
     """
 
     __slots__ = ["stop_on_error"]

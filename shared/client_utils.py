@@ -195,12 +195,12 @@ def subprocess_streaming(
 
     cmd = " ".join(shlex.quote(a) for a in args)
     if input is not None:
-        log.debug(f"stdin: {input}")
+        log.info(f"stdin: {input}")
         cmd = f"echo {shlex.quote(input.decode('utf-8'))} | {cmd}"
 
     cmd = f"sh -c {shlex.quote(cmd)}"
 
-    log.debug(f"Running: {cmd}")
+    log.info(f"Running: {cmd}")
 
     # `buf` may already be populated. Record its current length so that if we have an
     # error message we can include only the portion from this command.
@@ -213,7 +213,6 @@ def subprocess_streaming(
         withexitstatus=1,
         **kwargs,
     )
-    log.debug(f"Output {output}")
 
     if exitstatus != 0:
         output = bytes(buf[start_idx:])

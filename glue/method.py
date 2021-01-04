@@ -53,14 +53,19 @@ def lazy_py(func, *args, **kwargs) -> pipeline.Serial:
 
 def Lazy(command_or_func, *args, **kwargs) -> pipeline.Serial:
     """
-    This node constructor returns a co.Serial containing a pair of nodes. The
-    first, **`Generate`**, runs `func(*args, **kwargs)` and prints out the
-    resulting pipeline. The second, **`Execute`**, imports that pipeline into the
-    current one and runs it.
-    :param command_or_func: A shell command to execute or a python callable
-    If a Python callable is specified for the command the `args` and `kwargs`
-    are serialized and a `conducto` command line is constructed to launch the
-    function for that node in the pipeline.
+    This node constructor returns a :py:class:`Serial` containing a pair of nodes.
+
+    The first, :code:`Generate`, runs `func(*args, **kwargs)` and prints out the
+    resulting pipeline.
+
+    The second, :code:`Execute`, imports that pipeline into the current one and
+    runs it.
+
+    :param command_or_func: A shell command to execute or a python callable. If a
+        Python callable is specified for the command the `args` and `kwargs` are
+        serialized and a `conducto` command line is constructed to launch the
+        function for that node in the pipeline.
+    :type command_or_func: `str` or `Callable`
     """
 
     output = pipeline.Serial()
@@ -835,9 +840,17 @@ def run_cfg(
     config_event = " ".join(argv[:idx])
     remainder = argv[idx:]
 
+    if git_urls is None and "url" in substitutions:
+        git_urls = [substitutions["url"]]
+    if "sha" in substitutions and "url" in substitutions:
+        url = git_urls[0]
+        sha = substitutions["sha"]
+    else:
+        url = sha = None
+
     # First look for an exact match of the config event.
     if config_event in cp.sections():
-        return run_cfg_section(
+        pipeline_id = run_cfg_section(
             section=cp[config_event],
             section_name=config_event,
             argv=remainder,
@@ -853,6 +866,11 @@ def run_cfg(
             substitutions=substitutions,
             slack_doc=slack_doc,
         )
+        if pipeline_id is not None:
+            log.log(
+                f"Successfully launched pipeline {pipeline_id} for config section {config_event}"
+            )
+        return pipeline_id
 
     # Try every section that matches or starts with the config_event.
     # If no exact match, try sections that start with config_event and
@@ -914,6 +932,14 @@ def run_cfg_section(
 ):
     import conducto as co
 
+    # before we do anything else, check the filters
+    section_filter = section.get("filter")
+    if section_filter and not evaluate_filter(section_filter, substitutions):
+        log.log(
+            f"No pipeline launch, {section_name} filter did not match: {section_filter}"
+        )
+        return None
+
     # See if this user is already a running pipeline for this unique_tag
     if unique_tag is not None:
         pipe_api = co.api.Pipeline()
@@ -942,7 +968,7 @@ def run_cfg_section(
             elif dup_action == "DEFER":
                 if callback_on_event_deferred:
                     log.log(
-                        f"Existing pipeline found for unique_tag={unique_tag}, deferring subsequent launch"
+                        f"Existing pipeline found for unique_tag={unique_tag}, deferring subsequent launch and\npipeline matches: {matches}"
                     )
                     callback_on_event_deferred()
                 else:
@@ -990,13 +1016,6 @@ def run_cfg_section(
             copy_url = git_urls[0]
 
     # Build the output node
-
-    section_filter = section.get("filter")
-    if section_filter and not evaluate_filter(section_filter, substitutions):
-        log.log(
-            f"No pipeline launch, {section_name} filter did not match: {section_filter}"
-        )
-        return None
 
     try:
         command = command_template.format(**substitutions)
@@ -1169,10 +1188,26 @@ def main(
 ):
     """
     Command-line helper that allows you from the shell to easily execute methods that return Conducto nodes.
-    :param default:  Specify a method that is the default to run if the user doesn't specify one on the command line.
-    :param image: Specify a default docker image for the pipeline. (See also :py:class:`conducto.Image`).
-    :param env, cpu, mem, requires_docker: Computational attributes to set on any Node called through `co.main`.
-    See :ref:`Node Methods and Attributes` for more details.
+
+    :param default: Specify a method that is the default to run if the user doesn't specify one on the command line.
+    :type default: `Callable`
+
+    :param image: Specify a default docker image for the pipeline. (See also :py:class:`Image`).
+    :type image: :py:class:`Image`
+
+    :param cpu: If specified, set the `cpu` for any Node called through `co.main`.
+    :type cpu: `float`
+
+    :param mem: If specified, set the `mem` for any Node called through `co.main`.
+    :type mem: `float`
+
+    :param env: If specified, set the `env` for any Node called through `co.main`.
+    :type env: `dict`
+
+    :param requires_docker: If specified, set `requires_docker` for any Node called through `co.main`.
+    :type requires_docker: `bool`
+
+    See :py:class:`Node` for more details.
     """
 
     if sys.platform.startswith("win"):

@@ -517,6 +517,11 @@ def _check_nodes_for_cloud(root):
 
     adjusted_nodes = []
     for n in root.stream():
+        if n.docker_run_args is not None:
+            raise resource_validation.InvalidCloudParams(
+                f"Node {n} uses docker_run_args, which is not supported for cloud mode.\n"
+                f"  docker_run_args: {n.docker_run_args}"
+            )
         if n.cpu is not None or n.mem is not None:
             req_cpu = n.get_inherited_attribute("cpu")
             req_mem = n.get_inherited_attribute("mem")

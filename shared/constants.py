@@ -392,3 +392,46 @@ class InstanceStatus:
 class InstanceTransitionLimits:
     MAX_START = 120
     MAX_STOP = 600
+
+
+class IntegrationStatus:
+    # stored in sql db as MessageID (Integer)
+    # printed to user as Message (String)
+    class MessageID:
+        # this may just be premature optimization
+        # but I'm worried how we can't perfectly
+        # clean up the database.
+        NONE = "0"
+        PENDING = "1"
+        SUCCESS = "2"
+        DEFERRED_CLOUD = "3"
+        DEFERRED_LOCAL = "4"
+        SUPPRESSED = "5"
+        MISSING_CFG = "6"
+        LAUNCH_ERROR = "7"
+        INVALID_RESPONSE = "8"
+
+    class Message:
+        NONE = "<NO MESSAGE SET>"
+        PENDING = ""
+        SUCCESS = ""
+        DEFERRED_CLOUD = "Deferred (.conducto.cfg setting)"
+        DEFERRED_LOCAL = (
+            "Suppressed (Deferral not available in local mode) (.conducto.cfg setting)"
+        )
+        SUPPRESSED = "Suppressed (.conducto.cfg setting)"
+        MISSING_CFG = "Missing .conducto.cfg"
+        LAUNCH_ERROR = "Launch error"
+        INVALID_RESPONSE = "Invalid response"
+
+    messageID_to_UI = {
+        MessageID.NONE: Message.NONE,
+        MessageID.PENDING: Message.PENDING,
+        MessageID.SUCCESS: Message.SUCCESS,
+        MessageID.DEFERRED_CLOUD: Message.DEFERRED_CLOUD,
+        MessageID.DEFERRED_LOCAL: Message.DEFERRED_LOCAL,
+        MessageID.SUPPRESSED: Message.SUPPRESSED,
+        MessageID.MISSING_CFG: Message.MISSING_CFG,
+        MessageID.LAUNCH_ERROR: Message.LAUNCH_ERROR,
+        MessageID.INVALID_RESPONSE: Message.INVALID_RESPONSE,
+    }

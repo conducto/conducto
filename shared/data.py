@@ -577,7 +577,7 @@ class pipeline(superuser):
 
 class user(superuser):
     """
-    See also :py:class:`data.pipeline` which has an identical interface.
+    See also :py:class:`pipeline` which has an identical interface.
     """
 
     @staticmethod

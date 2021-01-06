@@ -126,6 +126,9 @@ async def start_container(pipeline, payload, live, token, logger):
     options.append(f'--cpus {get_param(payload, "cpu")}')
     options.append(f'--memory {get_param(payload, "mem") * 1024**3}')
 
+    if get_param(payload, "docker_run_args"):
+        options += get_param(payload, "docker_run_args")
+
     in_manager = constants.ExecutionEnv.value() in constants.ExecutionEnv.manager_all
     in_cloud = constants.ExecutionEnv.value() in constants.ExecutionEnv.cloud
 

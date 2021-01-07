@@ -126,14 +126,10 @@ async def text_for_install(image, reqs_py, reqs_packages, reqs_docker):
                     f"COPY --from={conducto_image} /tmp/conducto /tmp/conducto"
                 )
                 # Use the 2020 resolver with conducto reqs
-                lines.append(
-                    f"RUN {py_binary} -m pip install --use-feature=2020-resolver -e /tmp/conducto"
-                )
+                lines.append(f"RUN {py_binary} -m pip install -e /tmp/conducto")
             else:
                 # Use the 2020 resolver with conducto reqs
-                lines.append(
-                    f"RUN {py_binary} -m pip install --use-feature=2020-resolver conducto=={__version__}"
-                )
+                lines.append(f"RUN {py_binary} -m pip install conducto=={__version__}")
 
     # Reset the uid to its original value, if needed
     if uid != 0:

@@ -416,9 +416,7 @@ class IntegrationStatus:
         PENDING = ""
         SUCCESS = ""
         DEFERRED_CLOUD = "Deferred (.conducto.cfg setting)"
-        DEFERRED_LOCAL = (
-            "Suppressed (Deferral not available in local mode) (.conducto.cfg setting)"
-        )
+        DEFERRED_LOCAL = "Deferred (.conducto.cfg setting)"
         SUPPRESSED = "Suppressed (.conducto.cfg setting)"
         MISSING_CFG = "Missing .conducto.cfg"
         LAUNCH_ERROR = "Launch error"

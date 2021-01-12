@@ -121,6 +121,10 @@ class BuildMode:
     ALREADY_IN_CLOUD = (
         "already_in_cloud"  # If it's already in AWS and now needs to be run
     )
+    DEPLOY_TO_K8S = "deploy_to_k8s"  # From a local machine, send to kubernetes
+    ALREADY_IN_K8S = (
+        "already_in_k8s"  # If it's already in kubernetes and now needs to run
+    )
 
 
 class ManagerAppParams:
@@ -241,17 +245,30 @@ class ExecutionEnv:
     WORKER_CLOUD = "worker_cloud"
     DEBUG_CLOUD = "debug_cloud"
 
+    # Kubernetes states
+    MANAGER_K8S = "manager_k8s"
+    WORKER_K8S = "worker_k8s"
+    DEBUG_K8S = "debug_k8s"
+
     # Interactive state
     EXTERNAL = "external"
 
     local = {MANAGER_LOCAL, WORKER_LOCAL, DEBUG_LOCAL, AGENT_LOCAL}
     cloud = {MANAGER_CLOUD, WORKER_CLOUD, DEBUG_CLOUD}
+    k8s = {MANAGER_K8S, WORKER_K8S, DEBUG_K8S}
 
-    worker_all = {DEBUG_LOCAL, DEBUG_CLOUD, WORKER_LOCAL, WORKER_CLOUD}
-    worker = {WORKER_LOCAL, WORKER_CLOUD}
-    debug = {DEBUG_LOCAL, DEBUG_CLOUD}
-    manager_all = {MANAGER_LOCAL, MANAGER_CLOUD, AGENT_LOCAL}
-    manager = {MANAGER_LOCAL, MANAGER_CLOUD}
+    worker_all = {
+        DEBUG_LOCAL,
+        DEBUG_CLOUD,
+        DEBUG_K8S,
+        WORKER_LOCAL,
+        WORKER_CLOUD,
+        WORKER_K8S,
+    }
+    worker = {WORKER_LOCAL, WORKER_CLOUD, WORKER_K8S}
+    debug = {DEBUG_LOCAL, DEBUG_CLOUD, DEBUG_K8S}
+    manager_all = {MANAGER_LOCAL, MANAGER_CLOUD, MANAGER_K8S, AGENT_LOCAL}
+    manager = {MANAGER_LOCAL, MANAGER_CLOUD, MANAGER_K8S}
     agent = {AGENT_LOCAL}
 
     @staticmethod

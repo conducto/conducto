@@ -121,10 +121,8 @@ class Image:
     :param copy_repo:  Set to `True` to automatically copy the entire current Git repo
         into the Docker image. Use this so that a single Image definition can either use
         local code or can fetch from a remote repo.
-
         **copy_dir mode**: Normal use of this parameter uses local code, so it sets
         `copy_dir` to point to the root of the Git repo of the calling code.
-
         **copy_url mode**: Specify `copy_branch` to use a remote repository. This is
         commonly done for CI/CD. When specified, `copy_url` will be auto-populated.
     :type copy_repo: `bool`
@@ -194,6 +192,7 @@ class Image:
         copy_branch=None,
         docker_auto_workdir=True,
         reqs_py=None,
+        reqs_npm=None,
         reqs_packages=None,
         reqs_docker=False,
         path_map=None,
@@ -225,6 +224,7 @@ class Image:
         self.copy_branch = copy_branch
         self.docker_auto_workdir = docker_auto_workdir
         self.reqs_py = reqs_py
+        self.reqs_npm = reqs_npm
         self.reqs_packages = reqs_packages
         self.reqs_docker = reqs_docker
         self.path_map = path_map or {}
@@ -272,6 +272,7 @@ class Image:
             "copy_url": self.copy_url,
             "copy_branch": self.copy_branch,
             "reqs_py": self.reqs_py,
+            "reqs_npm": self.reqs_npm,
             "reqs_packages": self.reqs_packages,
             "reqs_docker": self.reqs_docker,
             "path_map": self._serialize_pathmap(self.path_map),

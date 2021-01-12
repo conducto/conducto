@@ -42,6 +42,7 @@ class Config:
     class Location:
         LOCAL = "local"
         AWS = "aws"
+        K8S = "k8s"
 
     def __init__(self):
         self.reload()
@@ -494,8 +495,11 @@ commands:
         return url
 
     def get_location(self):
-        if constants.ExecutionEnv.value() in constants.ExecutionEnv.cloud:
+        execution_env = constants.ExecutionEnv.value()
+        if execution_env in constants.ExecutionEnv.cloud:
             return Config.Location.AWS
+        elif execution_env in constants.ExecutionEnv.k8s:
+            return Config.Location.K8S
         else:
             return Config.Location.LOCAL
 

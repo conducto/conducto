@@ -152,6 +152,21 @@ def share_directory(
     Image.share_directory(name, relative)
 
 
+def validate_serialization():
+    serialization = sys.stdin.read()
+    node = co.Node.deserialize(serialization)
+    if os.getenv("__RUN_BY_WORKER__"):
+        # Variable is set in conducto_worker/__main__.py to avoid
+        # printing ugly serialization when not needed.
+        from conducto.internal.build import validate_tree
+
+        validate_tree(node, cloud=False, check_images=False, set_default=False)
+
+        s = node.serialize()
+        print(f"\n<__conducto_serialization>{s}</__conducto_serialization>\n")
+    print(node.pretty(strict=False))
+
+
 def build(
     shell=False,
     app=True,
@@ -188,8 +203,8 @@ def main():
         "show",
         "debug",
         "livedebug",
-        "init",
         "dump-serialization",
+        "validate-serialization",
         "share-directory",
         "build",
         "sleep",
@@ -200,14 +215,31 @@ def main():
             "show": show,
             "debug": debug,
             "livedebug": livedebug,
-            "share-directory": share_directory,
             "dump-serialization": dump_serialization,
+            "validate-serialization": validate_serialization,
+            "share-directory": share_directory,
             "sleep": sleep,
             "discover": discover_cli,
         }
         co.main(variables=variables)
     else:
         file_to_execute, *arguments = args
+
+        if file_to_execute.endswith(".js"):
+            fxn, props = arguments
+
+            script = f'let out = require("./{file_to_execute}").{fxn}({props});'
+            script += (
+                'if(typeof(out) == "object") { '
+                "let cls_name = out.constructor.name;  "
+                'if(cls_name == "Exec" || cls_name == "Parallel" || cls_name == "Serial") out.output();}'
+            )
+
+            to_exec = f"node -r esm -e '{script}'"
+            import subprocess
+
+            subprocess.run(to_exec, shell=True, check=True)
+            return
 
         if not os.path.exists(file_to_execute):
             print(f"No such file or directory: '{file_to_execute}'", file=sys.stderr)

@@ -1019,6 +1019,21 @@ class Exec(Node):
     def append_child(self, node):
         raise NotImplementedError("Exec nodes have no children")
 
+    def resolve_intermediate_paths(self):
+        if "__conducto_intermediate_path" in self.command:
+            prefix = "__conducto_intermediate_path:"
+            suffix = ":endpath__"
+
+            intermediate_path = re.search(
+                f"{prefix}(.*?){suffix}", self.command
+            ).group()
+
+            abspath = intermediate_path[len(prefix) : -len(suffix)]
+            ctxpath = image_mod.Image.get_contextual_path(abspath)
+
+            serialized_path = f"__conducto_path:{ctxpath.linear()}:endpath__"
+            self.command = self.command.replace(intermediate_path, serialized_path)
+
     def expanded_command(self, strict=True):
         if "__conducto_path:" in self.command:
             img = self.image

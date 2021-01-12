@@ -11,7 +11,7 @@ from .._version import __version__
 from ..shared import async_utils, constants
 
 
-async def text_for_install(image, reqs_py, reqs_packages, reqs_docker):
+async def text_for_install(image, reqs_py, reqs_packages, reqs_docker, reqs_npm):
     lines = [f"FROM {image}"]
 
     linux_flavor, linux_version, linux_name = None, None, None
@@ -130,6 +130,42 @@ async def text_for_install(image, reqs_py, reqs_packages, reqs_docker):
             else:
                 # Use the 2020 resolver with conducto reqs
                 lines.append(f"RUN {py_binary} -m pip install conducto=={__version__}")
+
+    # Install npm packages
+    if reqs_npm:
+        # TODO: check for and install node
+        lines.append(f"RUN mkdir -p {constants.ConductoPaths.COPY_LOCATION}")
+        if reqs_npm is True:
+            lines.append(f"RUN cd {constants.ConductoPaths.COPY_LOCATION} && npm i")
+        else:
+            non_conducto_reqs_npm = [i for i in reqs_npm if i != "conducto"]
+            if "conducto" in reqs_npm and "esm" not in reqs_npm:
+                non_conducto_reqs_npm.append("esm")
+
+            lines.append(
+                f"RUN cd {constants.ConductoPaths.COPY_LOCATION} && npm i "
+                + " ".join(i for i in reqs_npm if i != "conducto")
+            )
+
+    if type(reqs_npm) == list and "conducto" in reqs_npm:
+        tag = api.Config().get_image_tag()
+        if tag:
+            conducto_image = "conductojs"
+            registry = os.environ.get("CONDUCTO_DEV_REGISTRY")
+            if registry:
+                conducto_image = f"{registry}/{conducto_image}"
+            conducto_image = f"{conducto_image}:{tag}"
+            lines.append(
+                f"COPY --from={conducto_image} /tmp/conductojs /tmp/conductojs"
+            )
+            lines.append(f"RUN cd /tmp/conductojs && npm i")
+
+            lines.append(
+                f"RUN cd {constants.ConductoPaths.COPY_LOCATION} && npm i /tmp/conductojs"
+            )
+        else:
+            # need to make an actual node package
+            lines.append(f"RUN npm i conducto")
 
     # Reset the uid to its original value, if needed
     if uid != 0:

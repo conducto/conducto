@@ -41,10 +41,16 @@ def url(url: str, token: t.Token = None) -> str:
 
 
 def clone_url(url: str, token: t.Token = None) -> str:
-    # Non-GitHub URLs should be passed through unchanged
-    if not _is_github_url(url):
+    if _is_github_url(url):
+        return _github_clone_url(url, token)
+    elif _is_bitbucket_url(url):
+        return _bitbucket_clone_url(url, token)
+    else:
+        # Non-GitHub URLs should be passed through unchanged
         return url
 
+
+def _github_clone_url(url: str, token: t.Token = None) -> str:
     # Custom override to use username/token from secrets
     if t.Bool(os.getenv("CONDUCTO_GITHUB_USE_SECRETS")):
         secrets = api.Secrets().get_user_secrets(token=token, include_org_secrets=True)
@@ -58,6 +64,25 @@ def clone_url(url: str, token: t.Token = None) -> str:
     if token is None:
         token = co.api.Config().get_token(refresh=True)
     query_url = f"{api.Config().get_url()}/integrations/github/clone_url/{token}/{url}"
+    return query_url
+
+
+def _bitbucket_clone_url(url: str, token: t.Token = None) -> str:
+    # Custom override to use username/token from secrets
+    if t.Bool(os.getenv("CONDUCTO_BITBUCKET_USE_SECRETS")):
+        secrets = api.Secrets().get_user_secrets(token=token, include_org_secrets=True)
+        user = secrets.get("BITBUCKET_USER")
+        gh_token = secrets.get("BITBUCKET_TOKEN")
+        owner, repo = _parse_bitbucket_url(url)
+        return f"https://{user}:{gh_token}@bitbucket.org/{owner}/{repo}.git"
+
+    # Default action is to pass this through the GitHub integration, which will add the
+    # appropriate auth and redirect to GitHub.
+    if token is None:
+        token = co.api.Config().get_token(refresh=True)
+    query_url = (
+        f"{api.Config().get_url()}/integrations/bitbucket/clone_url/{token}/{url}"
+    )
     return query_url
 
 
@@ -235,6 +260,27 @@ def _parse_github_url(url):
     m = re.search(r"github\.com(?:-.*?)?[/:]([^/]+)/(.+?)\.git$", url)
     if not m:
         raise ValueError(f"{url} is not a valid github url.")
+
+    owner, repo = m.group(1, 2)
+    return owner, repo
+
+
+def _is_bitbucket_url(url):
+    return "bitbucket.org" in url
+
+
+def _parse_bitbucket_url(url):
+    """
+    Handle URLs of the form:
+     - git://bitbucket.org/conducto/super.git
+     - git@bitbucket.org:conducto/super.git
+     - https://bitbucket.org/conducto/super.git
+     - git@bitbucket.org-user/conducto/super.git
+    Look for "bitbucket.org/{owner}/{repo}.git" or "bitbucket.com:{owner}/{repo}.git" or "bitbucket.com-user:{owner}/{repo}.git"
+    """
+    m = re.search(r"bitbucket\.org(?:-.*?)?[/:]([^/]+)/(.+?)\.git$", url)
+    if not m:
+        raise ValueError(f"{url} is not a valid bitbucket url.")
 
     owner, repo = m.group(1, 2)
     return owner, repo

@@ -13,7 +13,6 @@ import typing
 import fnmatch
 import re
 
-
 from ..shared import client_utils, constants, log, types as t, path_utils, github_utils
 from .._version import __version__, __sha1__
 
@@ -24,6 +23,7 @@ _UNSET = object()
 FLAG_ARGS = [
     "cloud",
     "local",
+    "k8s",
     "run",
     "shell",
     "app",
@@ -176,8 +176,7 @@ class Wrapper(object):
         return args
 
     def to_command(self, *args, **kwargs):
-        abspath = os.path.realpath(inspect.getfile(self.callFunc))
-        ctxpath = image_mod.Image.get_contextual_path(abspath)
+        abspath = f"__conducto_intermediate_path:{os.path.realpath(inspect.getfile(self.callFunc))}:endpath__"
 
         parts = [self.callFunc.__name__]
 
@@ -196,8 +195,7 @@ class Wrapper(object):
                 parts += [f"--{k}={t.serialize(v)}"]
         quoted = [shlex.quote(part) for part in parts]
 
-        serialized = f"__conducto_path:{ctxpath.linear()}:endpath__"
-        command = [Wrapper.EXE, serialized] + quoted
+        command = [Wrapper.EXE, abspath] + quoted
 
         return " ".join(command)
 
@@ -472,7 +470,7 @@ def _make_usage_message(methods):
     prog = _get_calling_filename()
 
     if returns_node:
-        commands = "[--local | --cloud] [--run] [--sleep-when-done]"
+        commands = "[--local | --cloud | --k8s] [--run] [--sleep-when-done]"
         node_l1 = commands
         node_l2 = "[--app | --no-app] [--shell | --no-shell]"
         node_usage = "\n".join([" " * (len(prog) + 8) + l for l in [node_l1, node_l2]])
@@ -586,6 +584,7 @@ def _get_state(callFunc, remainder):
 def _add_argparse_options_for_node(parser):
     parser.add_argument("--cloud", action="store_true")
     parser.add_argument("--local", action="store_true")
+    parser.add_argument("--k8s", action="store_true")
     parser.add_argument("--run", action="store_true")
     _bool_mutex_group(parser, "shell", default=_get_default_shell())
     _bool_mutex_group(parser, "app", default=_get_default_app())
@@ -1317,8 +1316,9 @@ def main(
         # Read command-line args
         is_cloud = conducto_state.pop("cloud")
         is_local = conducto_state.pop("local")
+        is_k8s = conducto_state.pop("k8s")
         pipeline_id = conducto_state.pop("pipeline_id")
-        will_build = is_cloud or is_local or pipeline_id
+        will_build = is_cloud or is_local or is_k8s or pipeline_id
 
         if will_build:
             BM = constants.BuildMode
@@ -1326,17 +1326,21 @@ def main(
                 if pipeline_id:
                     from conducto.internal.build import validate_tree
 
-                    if output.image is None:
-                        output.image = image_mod.Image(name="conducto-default")
                     validate_tree(output, cloud=False, check_images=False)
-
                     asyncio.get_event_loop().run_until_complete(
                         update_serialization(output.serialize(), pipeline_id)
                     )
                 else:
+                    build_mode = BM.DEPLOY_TO_CLOUD
+                    if is_local:
+                        build_mode = BM.LOCAL
+                    elif is_k8s:
+                        build_mode = BM.DEPLOY_TO_K8S
                     try:
+                        from conducto.internal.build import validate_tree
+
                         output._build(
-                            build_mode=BM.LOCAL if is_local else BM.DEPLOY_TO_CLOUD,
+                            build_mode=build_mode,
                             **conducto_state,
                         )
                     except api.api_utils.InvalidResponse as e:
@@ -1353,10 +1357,11 @@ def main(
             if t.Bool(os.getenv("__RUN_BY_WORKER__")):
                 # Variable is set in conducto_worker/__main__.py to avoid
                 # printing ugly serialization when not needed.
-
                 from conducto.internal.build import validate_tree
 
-                validate_tree(output, cloud=False, check_images=False)
+                validate_tree(
+                    output, cloud=False, check_images=False, set_default=False
+                )
 
                 s = output.serialize()
                 print(f"\n<__conducto_serialization>{s}</__conducto_serialization>\n")

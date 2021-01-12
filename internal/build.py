@@ -73,7 +73,7 @@ def simplify_attributes(root):
                     child.env.pop(k, None)
 
 
-def validate_tree(node, cloud, check_images=True):
+def validate_tree(node, cloud, check_images=True, set_default=True):
     def validate_env(desc):
         for key, value in desc.env.items():
             if not isinstance(key, str):
@@ -85,11 +85,19 @@ def validate_tree(node, cloud, check_images=True):
                     f"{desc} has {type(value).__name__} in env value for {key} when str is required"
                 )
 
+    if set_default and node.image is None:
+        from conducto.image import Image
+
+        node.image = Image(name="conducto-default")
+
+    for desc in node.stream():
+        validate_env(desc)
+        if hasattr(desc, "command"):
+            desc.resolve_intermediate_paths()
+
     node.repo.finalize()
     if check_images:
         node.check_images()
-    for desc in node.stream():
-        validate_env(desc)
 
     if cloud:
         _check_nodes_for_cloud(node)
@@ -129,9 +137,10 @@ def build(
     command = " ".join(pipes.quote(a) for a in sys.argv)
 
     # Register pipeline, get <pipeline_id>
-    cloud = build_mode == constants.BuildMode.DEPLOY_TO_CLOUD
+    cloud = build_mode != constants.BuildMode.LOCAL
 
     validate_tree(node, cloud)
+
     if constants.ExecutionEnv.images_only():
         pipeline_id = "zzz-zzz"
     else:
@@ -176,8 +185,7 @@ def launch_from_serialization(
                 if k.startswith("CONDUCTO_GIT_"):
                     inject_env[k] = v
 
-        # Get a token, serialize, and then deploy to AWS. Once that
-        # returns, connect to it using the shell_ui.
+        # Get a token, serialize, and then deploy to AWS.
         pipeline_api = api.Pipeline()
         pipeline_api.save_serialization(pipeline_id, serialization, token=token)
         try:
@@ -190,7 +198,31 @@ def launch_from_serialization(
             else:
                 msg = f"Failed to launch cloud manager for pipeline {pipeline_id}. Please try again and/or contact us on Slack at ConductoHQ."
             raise api.api_utils.NoTracebackError(msg)
-        log.debug(f"Connecting to pipeline_id={pipeline_id}")
+
+    def k8s_deploy():
+        if t.Bool(os.getenv("CONDUCTO_INHERIT_GIT_VARS")):
+            for k, v in os.environ.items():
+                if k.startswith("CONDUCTO_GIT_"):
+                    inject_env[k] = v
+
+        # Get a token, serialize, and then deploy to k8s.
+        # TODO: This saves to our S3, make it optionally save to user-specified S3.
+        pipeline_api = api.Pipeline()
+        pipeline_api.save_serialization(pipeline_id, serialization, token=token)
+
+        # Generate job.yaml
+        job_yaml = get_k8s_job_yaml(pipeline_id, token, inject_env)
+
+        # Submit manager job to k8s cluster.
+        kubectl_cmd_parts = ["kubectl", "apply", "-f", "-"]
+        try:
+            client_utils.subprocess_streaming(
+                *kubectl_cmd_parts,
+                buf=client_utils.ByteBuffer(),
+                input=job_yaml.encode(),
+            )
+        except client_utils.CalledProcessError as e:
+            raise Exception(e.output)
 
     def local_deploy():
         if not constants.ExecutionEnv.images_only():
@@ -218,6 +250,9 @@ def launch_from_serialization(
 
     if build_mode == constants.BuildMode.DEPLOY_TO_CLOUD:
         func = cloud_deploy
+        starting = False
+    elif build_mode == constants.BuildMode.DEPLOY_TO_K8S:
+        func = k8s_deploy
         starting = False
     else:
         func = local_deploy
@@ -490,6 +525,105 @@ def run_in_local_container(
             )
 
         log.debug(f"Manager docker connected to gw pipeline_id={pipeline_id}")
+
+
+def get_k8s_job_yaml(pipeline_id, token, inject_env):
+    # Set additional CONDUCTO_ environment variables.
+    if inject_env is None:
+        inject_env = {}
+    if t.Bool(os.getenv("CONDUCTO_INHERIT_GIT_VARS")):
+        for k, v in os.environ.items():
+            if k.startswith("CONDUCTO_GIT_"):
+                inject_env[k] = v
+    for env_var in (
+        "CONDUCTO_URL",
+        "CONDUCTO_DEV_REGISTRY",
+        "CONDUCTO_USE_TEST_IMAGES",
+        "CONDUCTO_USE_ID_TOKEN",
+        "CONDUCTO_LOCAL_STANDBY",
+        "CONDUCTO_HOST_ID",
+        "CONDUCTO_IMAGES_ONLY",
+    ):
+        if os.environ.get(env_var):
+            inject_env[env_var] = os.environ[env_var]
+    inject_env["CONDUCTO_EXECUTION_ENV"] = constants.ExecutionEnv.MANAGER_K8S
+    inject_env["DOCKER_HOST"] = "tcp://localhost:2375"
+
+    # Create yaml with environment variables.
+    e = """
+            - name: {}
+              value: \"{}\" """
+    env = ""
+    for k, v in inject_env.items():
+        env += e.format(k, v)
+
+    # Get manager image.
+    config = api.Config()
+    tag = config.get_image_tag()
+    is_test = os.environ.get("CONDUCTO_USE_TEST_IMAGES")
+    manager_image = constants.ImageUtil.get_manager_image(tag, is_test)
+
+    # Set port for manager to serve on.
+    manager_port = 55555
+
+    # Generate yaml for manager job.
+    return f"""
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: conducto-manager-{pipeline_id}
+spec:
+  template:
+    spec:
+      containers:
+        - name: conducto-manager
+          image: {manager_image}
+          command: [
+            "python",
+            "-m",
+            "manager.src",
+            "-p",
+            "{pipeline_id}",
+            "--token",
+            "{token}",
+            "--k8s"
+          ]
+          #resources:
+          #  limits:
+          #    cpu: 0.5
+          #    memory: 250M
+          env:{env}
+            - name: CONDUCTO_MANAGER_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: CONDUCTO_MANAGER_PORT
+              value: "{manager_port}"
+          ports:
+            - containerPort: {manager_port}
+          imagePullPolicy: Always
+        - name: dind-daemon
+          image: docker:19.03-dind
+          #resources:
+          #  limits:
+          #    cpu: 0.5
+          #    memory: 250M
+          env:
+            - name: DOCKER_TLS_CERTDIR
+              value: ""
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: docker-graph-storage
+              mountPath: /var/lib/docker
+      volumes:
+        - name: docker-graph-storage
+          emptyDir: {{}}
+      imagePullSecrets:
+        - name: regcred
+      restartPolicy: Never
+  backoffLimit: 0
+"""
 
 
 def clean_log_dirs(token):

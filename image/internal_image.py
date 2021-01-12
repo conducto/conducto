@@ -87,6 +87,7 @@ class Image:
         copy_branch=None,
         docker_auto_workdir=True,
         reqs_py=None,
+        reqs_npm=None,
         reqs_packages=None,
         reqs_docker=False,
         path_map=None,
@@ -146,6 +147,7 @@ class Image:
         self.copy_branch = copy_branch
         self.docker_auto_workdir = docker_auto_workdir
         self.reqs_py = reqs_py
+        self.reqs_npm = reqs_npm
         self.reqs_packages = reqs_packages
         self.reqs_docker = reqs_docker
         self.path_map = path_map or {}
@@ -340,6 +342,7 @@ class Image:
             "copy_url": self.copy_url,
             "copy_branch": self.copy_branch,
             "reqs_py": self.reqs_py,
+            "reqs_npm": self.reqs_npm,
             "reqs_packages": self.reqs_packages,
             "reqs_docker": self.reqs_docker,
             "path_map": self._serialize_pathmap(self.path_map),
@@ -656,7 +659,7 @@ class Image:
                 await callback(Status.ERROR, Status.ERROR, self.history[-1])
             raise
         except Exception:
-            entry.finish(None, traceback.format_exc())
+            entry.finish(None, "\r\n".join(traceback.format_exc().splitlines()))
             if callback:
                 await callback(status, Status.ERROR, entry)
             self.history.append(HistoryEntry(Status.ERROR, finish=True))
@@ -856,7 +859,11 @@ class Image:
         # Create dockerfile from stdin. Replace "-f <dockerfile> <copy_dir>"
         # with "-"
         text = await dockerfile_mod.text_for_install(
-            self.name_built, self.reqs_py, self.reqs_packages, self.reqs_docker
+            self.name_built,
+            self.reqs_py,
+            self.reqs_packages,
+            self.reqs_docker,
+            self.reqs_npm,
         )
 
         # Only in test setting, if the conducto image is used, pull it!
@@ -925,6 +932,9 @@ class Image:
         dockerignore_text = dockerfile_mod.dockerignore_for_copy(
             context, preserve_git=self.copy_repo or self.needs_cloning()
         )
+        if self.reqs_npm:
+            dockerignore_text += "\nnode_modules"
+
         dockerfile_path = f"/tmp/{self.name}/Dockerfile"
         dockerignore_path = f"/tmp/{self.name}/Dockerfile.dockerignore"
         os.makedirs(f"/tmp/{self.name}", exist_ok=True)

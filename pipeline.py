@@ -547,6 +547,8 @@ class Node:
             path, new = name.rsplit("/", 1)
             self[path][new] = node
             return
+        if not name:
+            raise ValueError("Name cannot be empty")
         if name in self.children or node.root == self.root or node.root != node:
             raise TreeError(
                 f"Adding node {name} violates the integrity of the pipeline"

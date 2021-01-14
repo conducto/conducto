@@ -450,3 +450,6 @@ class IntegrationStatus:
         MessageID.LAUNCH_ERROR: Message.LAUNCH_ERROR,
         MessageID.INVALID_RESPONSE: Message.INVALID_RESPONSE,
     }
+
+
+DEV_DOCKER_K8S_SECRET_NAME = "conducto-dev-docker-config"

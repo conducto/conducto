@@ -887,7 +887,13 @@ class Image:
                 pass
 
             if pull_image and conducto_image not in Image._PULLED_IMAGES:
-                await async_utils.run_and_check("docker", "pull", conducto_image)
+                env = os.environ.copy()
+                exec_env = os.environ.get("CONDUCTO_EXECUTION_ENV")
+                if exec_env == constants.ExecutionEnv.MANAGER_K8S:
+                    env["DOCKER_CONFIG"] = "/root/.conducto/.docker"
+                await async_utils.run_and_check(
+                    "docker", "pull", conducto_image, env=env
+                )
                 Image._PULLED_IMAGES.add(conducto_image)
 
         pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID", self._pipeline_id)
@@ -978,7 +984,8 @@ class Image:
 
         if "/" in worker_image:
             pull_worker = True
-            if os.environ.get("CONDUCTO_DEV_REGISTRY"):
+            is_dev = os.environ.get("CONDUCTO_DEV_REGISTRY") is not None
+            if is_dev:
                 # If this is dev/test, we may or may not have the image
                 # locally, decline the pull accordingly.
                 try:
@@ -987,7 +994,11 @@ class Image:
                 except subprocess.CalledProcessError:
                     pass
             if pull_worker and worker_image not in Image._PULLED_IMAGES:
-                await async_utils.run_and_check("docker", "pull", worker_image)
+                env = os.environ.copy()
+                exec_env = os.environ.get("CONDUCTO_EXECUTION_ENV")
+                if is_dev and exec_env == constants.ExecutionEnv.MANAGER_K8S:
+                    env["DOCKER_CONFIG"] = "/root/.conducto/.docker"
+                await async_utils.run_and_check("docker", "pull", worker_image, env=env)
                 Image._PULLED_IMAGES.add(worker_image)
 
         await st.run(

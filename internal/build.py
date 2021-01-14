@@ -543,6 +543,7 @@ def get_k8s_job_yaml(pipeline_id, token, inject_env):
         "CONDUCTO_LOCAL_STANDBY",
         "CONDUCTO_HOST_ID",
         "CONDUCTO_IMAGES_ONLY",
+        "CONDUCTO_IMAGE_TAG",
     ):
         if os.environ.get(env_var):
             inject_env[env_var] = os.environ[env_var]
@@ -556,6 +557,31 @@ def get_k8s_job_yaml(pipeline_id, token, inject_env):
     env = ""
     for k, v in inject_env.items():
         env += e.format(k, v)
+
+    # Create yaml elements for docker config.
+    if os.environ.get("CONDUCTO_DEV_REGISTRY"):
+        dev_docker_config_mount = """
+          volumeMounts:
+            - name: docker-config
+              mountPath: /root/.conducto/.docker/
+              readOnly: true
+"""
+        dev_docker_volume = f"""
+        - name: docker-config
+          secret:
+            secretName: {constants.DEV_DOCKER_K8S_SECRET_NAME}
+            items:
+              - key: .dockerconfigjson
+                path: config.json
+"""
+        dev_docker_secret = f"""
+      imagePullSecrets:
+        - name: {constants.DEV_DOCKER_K8S_SECRET_NAME}
+"""
+    else:
+        dev_docker_config_mount = ""
+        dev_docker_volume = ""
+        dev_docker_secret = ""
 
     # Get manager image.
     config = api.Config()
@@ -601,6 +627,7 @@ spec:
               value: "{manager_port}"
           ports:
             - containerPort: {manager_port}
+          {dev_docker_config_mount}
           imagePullPolicy: Always
         - name: dind-daemon
           image: docker:19.03-dind
@@ -619,8 +646,8 @@ spec:
       volumes:
         - name: docker-graph-storage
           emptyDir: {{}}
-      imagePullSecrets:
-        - name: regcred
+        {dev_docker_volume}
+      {dev_docker_secret}
       restartPolicy: Never
   backoffLimit: 0
 """

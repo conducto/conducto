@@ -42,11 +42,16 @@ def shrink_stdout_screen(stdout):
                 raise Exception
 
             for i in range(len(out) - 1, -1, -1):
-                if out[i].startswith("#"):
-                    end_idx = i
+                if out[i]:
+                    #  sometimes there will be an additional new input line in the shell
+                    #  once we see output, if we see blank shell line (starts with #), then we don't want to include
+                    #  it, otherwise its still part of output from cat {raw.name}
+                    end_idx = i + int(not out[i].startswith("#"))
                     break
             else:
                 raise Exception
+            if begin_idx >= end_idx:
+                log.log(f"Parsing issue {out}")
             return "\r\n".join(out[begin_idx:end_idx])
 
 

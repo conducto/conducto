@@ -213,11 +213,13 @@ def launch_from_serialization(
         # Generate job.yaml
         job_yaml = get_k8s_job_yaml(pipeline_id, token, inject_env)
 
+        opts = os.environ.get("CONDUCTO_KUBECTL_OPTIONS", "")
+        kubectl_cmd = f"kubectl {opts} apply -f -"
+
         # Submit manager job to k8s cluster.
-        kubectl_cmd_parts = ["kubectl", "apply", "-f", "-"]
         try:
             client_utils.subprocess_streaming(
-                *kubectl_cmd_parts,
+                *kubectl_cmd.split(),
                 buf=client_utils.ByteBuffer(),
                 input=job_yaml.encode(),
             )
@@ -544,6 +546,8 @@ def get_k8s_job_yaml(pipeline_id, token, inject_env):
         "CONDUCTO_HOST_ID",
         "CONDUCTO_IMAGES_ONLY",
         "CONDUCTO_IMAGE_TAG",
+        "CONDUCTO_KUBECTL_OPTIONS",
+        "CONDUCTO_K8S_SERVICE_ACCOUNT_NAME",
     ):
         if os.environ.get(env_var):
             inject_env[env_var] = os.environ[env_var]
@@ -591,6 +595,10 @@ def get_k8s_job_yaml(pipeline_id, token, inject_env):
 
     # Set port for manager to serve on.
     manager_port = 55555
+
+    service_account_name = os.environ.get(
+        "CONDUCTO_K8S_SERVICE_ACCOUNT_NAME", "default"
+    )
 
     # Generate yaml for manager job.
     return f"""
@@ -649,6 +657,7 @@ spec:
         {dev_docker_volume}
       {dev_docker_secret}
       restartPolicy: Never
+      serviceAccountName: {service_account_name}
   backoffLimit: 0
 """
 

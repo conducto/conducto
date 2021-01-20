@@ -10,7 +10,6 @@ import sys
 import time
 import traceback
 import typing
-import itertools
 
 from conducto.shared import (
     async_utils,
@@ -533,7 +532,7 @@ class Image:
         Generator that pulls/builds/extends/pushes this Image.
         """
         if self.history and self.history[-1].end is None:
-            self.history[-1].finish()
+            await self.history[-1].finish()
             if callback:
                 await callback(Status.PENDING, Status.DONE, self.history[-1])
 
@@ -543,9 +542,9 @@ class Image:
                 if force_rebuild or not self._clone_complete():
                     await callback()
                     await self._clone(st)
-                    st.finish()
+                    await st.finish()
                 else:
-                    st.finish("Using cached clone")
+                    await st.finish("Using cached clone")
         yield
 
         # Copy from S3 if needed
@@ -554,9 +553,9 @@ class Image:
                 if force_rebuild or not self._sync_s3_complete():
                     await callback()
                     await self._sync_s3(st)
-                    st.finish()
+                    await st.finish()
                 else:
-                    st.finish("Using cached s3 copy")
+                    await st.finish("Using cached s3 copy")
 
         # Pull the image if needed
         if await self.needs_pulling():
@@ -564,9 +563,9 @@ class Image:
                 if force_rebuild or not await self._image_exists(self.image):
                     await callback()
                     await self._pull(st)
-                    st.finish()
+                    await st.finish()
                 else:
-                    st.finish("Image already pulled")
+                    await st.finish("Image already pulled")
         yield
 
         # Build the image if needed
@@ -575,9 +574,9 @@ class Image:
                 if force_rebuild or not await self._image_exists(self.name_built):
                     await callback()
                     await self._build(st)
-                    st.finish()
+                    await st.finish()
                 else:
-                    st.finish("Dockerfile already built")
+                    await st.finish("Dockerfile already built")
         yield
 
         # Install packages if needed
@@ -586,9 +585,9 @@ class Image:
                 if force_rebuild or not await self._image_exists(self.name_installed):
                     await callback()
                     await self._install(st)
-                    st.finish()
+                    await st.finish()
                 else:
-                    st.finish("Python libraries already installed.")
+                    await st.finish("Python libraries already installed.")
         yield
 
         # Copy files if needed
@@ -597,33 +596,33 @@ class Image:
                 if force_rebuild or not await self._image_exists(self.name_copied):
                     await callback()
                     await self._copy(st)
-                    st.finish()
+                    await st.finish()
                 else:
-                    st.finish("Code already copied.")
+                    await st.finish("Code already copied.")
         yield
 
         async with self._new_status(Status.EXTENDING, callback) as st:
             if force_rebuild or not await self._image_exists(self.name_local_extended):
                 await callback()
                 await self._extend(st)
-                st.finish()
+                await st.finish()
             else:
-                st.finish("Conducto toolchain already added")
+                await st.finish("Conducto toolchain already added")
         yield
 
         if push_to_cloud:
             async with self._new_status(Status.PUSHING, callback) as st:
                 await callback()
                 await self._push(st)
-                st.finish()
+                await st.finish()
 
-        self._mark_done()
+        await self._mark_done()
         if callback:
             await callback(Status.DONE, Status.DONE, self.history[-1])
 
-    def _mark_done(self):
+    async def _mark_done(self):
         if self.history and self.history[-1].end is None:
-            self.history[-1].finish()
+            await self.history[-1].finish()
         if not self.history or self.history[-1].status != Status.DONE:
             self.history.append(HistoryEntry(Status.DONE, finish=True))
 
@@ -643,7 +642,7 @@ class Image:
             yield entry
         except subprocess.CalledProcessError:
             # note that self.buf should contain the output of any subprocess
-            entry.finish()
+            await entry.finish()
             if callback:
                 await callback(status, Status.ERROR, entry)
             self.history.append(HistoryEntry(Status.ERROR, finish=True))
@@ -651,7 +650,7 @@ class Image:
                 await callback(Status.ERROR, Status.ERROR, self.history[-1])
             raise
         except (asyncio.CancelledError, concurrent.futures.CancelledError):
-            entry.finish(None, None)
+            await entry.finish(None, None)
             if callback:
                 await callback(status, Status.CANCELLED, entry)
             self.history.append(HistoryEntry(Status.CANCELLED, finish=True))
@@ -659,7 +658,7 @@ class Image:
                 await callback(Status.ERROR, Status.ERROR, self.history[-1])
             raise
         except Exception:
-            entry.finish(None, "\r\n".join(traceback.format_exc().splitlines()))
+            await entry.finish(None, "\r\n".join(traceback.format_exc().splitlines()))
             if callback:
                 await callback(status, Status.ERROR, entry)
             self.history.append(HistoryEntry(Status.ERROR, finish=True))
@@ -668,7 +667,7 @@ class Image:
             raise
         else:
             if not entry.end:
-                entry.finish()
+                await entry.finish()
             if callback:
                 await callback(status, None, entry)
 
@@ -1103,7 +1102,8 @@ class HistoryEntry:
         self.stderr = None
         self.buf = client_utils.ByteBuffer()
         if finish:
-            self.finish()
+            self.stdout = ""
+            self.end = time.time()
 
     async def run(self, *args, input: bytes = None, **kwargs):
         await async_utils.eval_in_thread(
@@ -1121,7 +1121,7 @@ class HistoryEntry:
             setattr(self, k, v)
         return self
 
-    def finish(self, stdout=None, stderr=None):
+    async def finish(self, stdout=None, stderr=None):
         self.end = time.time()
         self.stdout = _to_str(bytes(self.buf))
 
@@ -1129,77 +1129,12 @@ class HistoryEntry:
             self.stdout += "\n\n" + _to_str(stdout)
         if stderr:
             self.stdout += "\n\n" + _to_str(stderr)
+        if self.stdout:
+            from .stdout_handler import shrink_stdout_piecewise
 
-        try:
-            # use a terminal emulator to shrink the size of our stdout
-            import pyte
-
-            orig_stdout_size = len(self.stdout)
-            # this should be some default standardized between the backend and the frontend
-            columns = 80
-
-            # couldn't figure out how to get the terminal to auto resize when we exceeded the number of lines
-            # hack solution: exponential search for the correct number of lines in O(N * log(line_count))
-            # since we terminate early, if cursor jumps to new lines are distributed uniformly, the complexity
-            # becomes O(N)
-            def check_lines(n_lines):
-
-                screen = pyte.Screen(lines=n_lines, columns=columns)
-                stream = pyte.Stream(screen)
-
-                for char in self.stdout:
-                    # Note: we cannot check the cursor position and call screen.resize above a certain
-                    # threshold, since  you can move up and down an arbitrary of lines,
-                    # and resize also resets the cursor position
-                    stream.feed(char)
-                    y = screen.cursor.y
-                    if y == n_lines - 1:
-                        return False
-                return screen
-
-            def display(screen):
-                def render(line):
-                    if not line:
-                        return
-                    # TODO (apeng) also preserve italics, background color, strikethrough
-                    # wrap format() around more than one line to not repeat escape sequences
-                    for (color, bold, underline), group in itertools.groupby(
-                        [line[i] for i in range(max(line) + 1)],
-                        key=lambda x: (x.fg, x.bold, x.underscore),
-                    ):
-
-                        yield log.format(
-                            "".join(i.data for i in group),
-                            color=color if color in log.Color.MAP else None,
-                            bold=bold,
-                            underline=underline,
-                            force=True,
-                        )
-
-                return ["".join(render(screen.buffer[y])) for y in range(screen.lines)]
-
-            lines = 20
-            while True:
-                out = check_lines(lines)
-                if out:
-                    back_line = out.default_char.data * columns
-                    d = display(out)
-                    while d and d[-1] == back_line:
-                        d.pop()
-                    self.stdout = "\r\n".join(i.rstrip() for i in d)
-                    break
-                lines *= 2
-            print(
-                f"Reduced stdout size {orig_stdout_size} -> {len(self.stdout)}",
-                flush=True,
+            self.stdout = await (
+                async_utils.to_async(shrink_stdout_piecewise)(self.stdout)
             )
-        except ModuleNotFoundError:
-            pass
-        except:
-            import traceback
-
-            print("Error reducing stdout", traceback.format_exc(), flush=True)
-            raise
 
     def __aenter__(self):
         return self
@@ -1213,9 +1148,9 @@ class HistoryEntry:
             if issubclass(exc_type, subprocess.CalledProcessError):
                 # note that self.buf should contain the output of any
                 # subprocess
-                self.finish()
+                await self.finish()
             else:
-                self.finish(stderr=traceback.format_exc())
+                await self.finish(stderr=traceback.format_exc())
 
     def to_dict(self):
         return {

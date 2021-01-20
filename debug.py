@@ -148,7 +148,7 @@ async def start_container(pipeline, payload, live, token, logger):
         mounts = json.loads(out_s)
         for mount in mounts:
             if mount["Destination"].startswith("/root/.conducto"):
-                local_basedir = mount["Source"]
+                local_base = mount["Source"]
                 break
         else:
             raise Exception(
@@ -156,17 +156,20 @@ async def start_container(pipeline, payload, live, token, logger):
             )
     else:
         # TODO: Should actually pass these variables from manager, iff local
-        local_basedir = constants.ConductoPaths.get_profile_base_dir()
-        local_basedir = imagepath.Path.from_localhost(local_basedir).to_docker_mount()
+        local_base = constants.ConductoPaths.get_profile_base_dir()
+        local_base = imagepath.Path.from_localhost(local_base).to_docker_mount()
 
     profile = api.Config().default_profile
     image_home_dir, image_work_dir = await asyncio.gather(
         get_home_dir_for_image(image_name), get_work_dir_for_image(image_name)
     )
     if not in_cloud:
-        remote_basedir = f"{image_home_dir}/.conducto/{profile}"
+        remote_base = f"{image_home_dir}/.conducto/{profile}"
+        pid = pipeline["pipeline_id"]
 
-        options.append(f"-v {local_basedir}:{remote_basedir}")
+        options.append(f"-v {local_base}:{remote_base}")
+        options.append(f"-v {local_base}/data:/conducto/data/user")
+        options.append(f"-v {local_base}/pipelines/{pid}/data:/conducto/data/pipeline")
 
     if live:
         for external, internal in image["path_map"].items():
@@ -227,7 +230,7 @@ async def dump_command(container_name, command, shell, logger):
     try:
         out, err = await async_utils.run_and_check(*args, input=tario.getvalue())
     except client_utils.CalledProcessError as e:
-        raise RuntimeError(f"Error placing cmd.conduct: ({e})")
+        raise RuntimeError(f"Error placing /cmd.conducto: ({e})")
 
     await execute_in(container_name, f"chmod u+x /cmd.conducto")
 

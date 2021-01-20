@@ -395,7 +395,7 @@ class CONFIG_EVENTS:
     events = {PR, PUSH, CREATE_BRANCH, DELETE_BRANCH, CREATE_TAG, DELETE_TAG, CRON}
 
 
-# remote docker instant statuses
+# ec2provision instance statuses
 class InstanceStatus:
     AVAILABLE = 0
     RESERVED = 1

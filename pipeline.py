@@ -1132,6 +1132,7 @@ class Serial(Node):
         same_container=constants.SameContainer.INHERIT,  # deprecated
         image: typing.Union[str, image_mod.Image] = None,
         image_name=None,
+        docker_run_args=None,
         doc=None,
         title=None,
         tags: typing.Iterable = None,
@@ -1153,6 +1154,7 @@ class Serial(Node):
             same_container=same_container,
             image=image,
             image_name=image_name,
+            docker_run_args=docker_run_args,
             doc=doc,
             title=title,
             tags=tags,

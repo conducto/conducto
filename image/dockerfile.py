@@ -11,6 +11,9 @@ from .._version import __version__
 from ..shared import async_utils, constants
 
 
+_ROOT_USER_STRS = {"", "0", "root"}
+
+
 async def text_for_install(image, reqs_py, reqs_packages, reqs_docker, reqs_npm):
     lines = [f"FROM {image}"]
 
@@ -30,8 +33,8 @@ async def text_for_install(image, reqs_py, reqs_packages, reqs_docker, reqs_npm)
             lines.append(cmd)
 
     # All installs should be done as root, so set uid=0 if needed
-    uid = await _get_uid(image)
-    if uid != 0:
+    user_str = await _get_user_str(image)
+    if user_str not in _ROOT_USER_STRS:
         lines.append("USER 0")
 
     # Install any packages the user requests
@@ -167,9 +170,9 @@ async def text_for_install(image, reqs_py, reqs_packages, reqs_docker, reqs_npm)
             # need to make an actual node package
             lines.append(f"RUN npm i conducto")
 
-    # Reset the uid to its original value, if needed
-    if uid != 0:
-        lines.append(f"USER {uid}")
+    # Reset the user to its original value, if needed
+    if user_str not in _ROOT_USER_STRS:
+        lines.append(f"USER {user_str}")
 
     return "\n".join(lines)
 
@@ -234,8 +237,8 @@ async def text_for_extend(user_image, labels):
         line = out.decode().splitlines()[0]
         _, default_python = _parse_type_command(line)
 
-    uid = await _get_uid(user_image)
-    if uid != 0:
+    user_str = await _get_user_str(user_image)
+    if user_str not in _ROOT_USER_STRS:
         lines.append("USER 0")
 
     if _is_debian(linux_flavor):
@@ -305,8 +308,8 @@ async def text_for_extend(user_image, labels):
         "RUN /tmp/conducto_venv/bin/python3 -m conducto_worker --version  "
         "# Image building should fail if conducto_worker can't be imported"
     )
-    if uid != 0:
-        lines.append(f"USER {uid}")
+    if user_str not in _ROOT_USER_STRS:
+        lines.append(f"USER {user_str}")
 
     # Record the old entrypoint and clear it in the new image. For more info, see:
     # https://docs.docker.com/engine/reference/builder/#entrypoint
@@ -531,17 +534,12 @@ async def _get_linux_flavor_and_version(user_image):
     return flavor, version, pretty_name
 
 
-async def _get_uid(image_name):
+async def _get_user_str(image_name):
     out, _err = await async_utils.run_and_check(
         "docker", "inspect", "--format", "{{json .}}", image_name
     )
     d = json.loads(out)
-    uid_str = d["Config"]["User"]
-    if uid_str == "":
-        uid = 0
-    else:
-        uid = int(uid_str)
-    return uid
+    return d["Config"]["User"]
 
 
 async def _get_entrypoint(image_name):

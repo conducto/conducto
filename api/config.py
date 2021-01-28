@@ -314,9 +314,17 @@ commands:
         if self.default_profile and os.path.exists(
             self._get_profile_config_file(self.default_profile)
         ):
+            # While e-mail & password login works from the CLI to set up a
+            # local profile, the most general way to create/re-credential a
+            # local profile is to use the token delivered from the app to start
+            # a local agent.  This is the only way to create a local profile
+            # for an oauth login from google/github.
+            user_fix = f"Update the credentials on this computer by going to {self.get_url()}/app/agents and run the appropriate 'Start a Local Agent' command for your platform."
             token = self._profile_general(self.default_profile).get("token", None)
             if not token:
-                raise PermissionError("Credentials are missing in the local profile.")
+                raise PermissionError(
+                    f"Credentials are missing in the local profile.  {user_fix}"
+                )
             if token and (refresh or force_refresh):
                 try:
                     new_token = auth.get_refreshed_token(
@@ -324,10 +332,8 @@ commands:
                     )
                 except (jose.exceptions.JWTError, api.api_utils.UnauthorizedResponse):
                     raise PermissionError(
-                        "Credentials stored in the local profile are expired."
-                    )
-                    token = None
-                    new_token = None
+                        f"Credentials stored in the local profile are expired.  {user_fix}"
+                    ) from None
                 if new_token and token != new_token:
                     Config._log_new_expiration_time(auth, new_token, loc="config file")
                     self.set_profile_general(self.default_profile, "token", new_token)

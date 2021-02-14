@@ -210,6 +210,28 @@ def dockerignore_for_copy(context, preserve_git):
     return text
 
 
+async def text_for_extend_rust(user_image, labels):
+    # Copy the conducto-worker files at the end to preserve the caching of the
+    # python install
+    tag = "musl-x64"
+    image = "conducto/worker"
+    config = api.Config()
+    dev_tag = config.get_image_tag()
+    if dev_tag is not None:
+        image = f"worker-dev"
+        tag += f"-{dev_tag}"
+        registry = os.environ.get("CONDUCTO_DEV_REGISTRY")
+        if registry:
+            image = f"{registry}/{image}"
+    elif os.environ.get("CONDUCTO_USE_TEST_IMAGES"):
+        tag += "-test"
+    worker_image = f"{image}:{tag}"
+
+    lines = [f"FROM {user_image}"]
+    lines.append(f"COPY --from={worker_image} /conducto-worker /")
+    return "\n".join(lines), worker_image
+
+
 async def text_for_extend(user_image, labels):
     lines = [f"FROM {user_image}"]
 

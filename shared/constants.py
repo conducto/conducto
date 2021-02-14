@@ -138,7 +138,7 @@ class ManagerAppParams:
     FREE_ACTIVE_LIMIT = 5
 
     WORKER_MAX_CONCURRENT = 200
-    FREE_WORKER_MAX_CONCURRENT = 1
+    FREE_WORKER_MAX_CONCURRENT = 2
 
 
 class GwParams:

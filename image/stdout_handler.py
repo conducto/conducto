@@ -39,7 +39,7 @@ def shrink_stdout_screen(stdout):
                     begin_idx = i + 1
                     break
             else:
-                raise Exception
+                raise Exception(str(out))
 
             for i in range(len(out) - 1, -1, -1):
                 if out[i]:
@@ -49,7 +49,7 @@ def shrink_stdout_screen(stdout):
                     end_idx = i + int(not out[i].startswith("#"))
                     break
             else:
-                raise Exception
+                raise Exception(str(out))
             if begin_idx >= end_idx:
                 log.log(f"Parsing issue {out}")
             return "\r\n".join(out[begin_idx:end_idx])
@@ -117,10 +117,16 @@ def shrink_stdout_pyte(stdout):
 
 
 def shrink_stdout_piecewise(stdout):
-    fn = shrink_stdout_pyte if len(stdout) < 100000 else shrink_stdout_screen
-    t = time.time()
-    out = fn(stdout)
-    log.log(
-        f"Shrank {len(stdout)} -> {len(out)} in {time.time() - t} with {fn.__name__}"
-    )
-    return out
+    try:
+        fn = shrink_stdout_pyte if len(stdout) < 100000 else shrink_stdout_screen
+        t = time.time()
+        out = fn(stdout)
+        log.log(
+            f"Shrank {len(stdout)} -> {len(out)} in {time.time() - t} with {fn.__name__}"
+        )
+        return out
+    except:
+        import traceback
+
+        log.log(f"Error shrinking stdout {traceback.format_exc()}")
+        return stdout

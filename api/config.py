@@ -231,6 +231,16 @@ commands:
         except configparser.NoSectionError:
             return {}
 
+    def get_repo_name(self):
+        org_id = os.environ.get("CONDUCTO_USER_ORG_ID", self.get("general", "org_id"))
+        if not org_id:
+            dir_api = api.dir.Dir()
+            u = dir_api.user()
+            org_id = u["org_id"]
+        url = self.get_url()
+        prefix = url.split("https://")[1].split(".")[0]
+        return f"{prefix}-{org_id}"
+
     ############################################################
     # specific methods
     ############################################################
@@ -257,15 +267,6 @@ commands:
                 return res._replace(netloc=netloc).geturl()
 
         return result
-
-    def get_docker_domain(self):
-        url = self.get_url()
-        if url in ("https://conducto.com", "https://www.conducto.com"):
-            return "docker.conducto.com"
-        else:
-            docker_url = url.replace(".conducto.", "-docker.conducto.", 1)
-            netloc = urllib.parse.urlparse(docker_url).netloc
-            return netloc
 
     def get_token(self, refresh: bool, force_refresh=False) -> typing.Optional[t.Token]:
         auth = api.Auth()

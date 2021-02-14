@@ -11,6 +11,7 @@ import functools
 from conducto import api
 from . import constants, types as t, path_utils
 import threading
+from conducto.shared.constants import ExecutionEnv
 
 
 class ContextError(Exception):
@@ -559,6 +560,9 @@ class pipeline(superuser):
     def _get_uri():
         if _Data._pipeline_id:
             if _Data._local:
+                if ExecutionEnv.value() in ExecutionEnv.worker_all:
+                    return "/conducto/data/pipeline"
+
                 return (
                     constants.ConductoPaths.get_local_path(
                         _Data._pipeline_id, expand=False
@@ -583,6 +587,8 @@ class user(superuser):
     @staticmethod
     def _get_uri():
         if _Data._local:
+            if ExecutionEnv.value() in ExecutionEnv.worker_all:
+                return "/conducto/data/user"
             return constants.ConductoPaths.get_profile_base_dir(expand=False) + "/data/"
         else:
             credentials = Credentials.creds()

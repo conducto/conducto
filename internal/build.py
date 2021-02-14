@@ -4,6 +4,7 @@ import shutil
 import socket
 import sys
 import time
+import datetime
 from http import HTTPStatus as hs
 
 from conducto import api
@@ -283,7 +284,8 @@ def run(token, pipeline_id, func, use_app, use_shell, msg, starting):
         manager_image = constants.ImageUtil.get_manager_image(tag, is_test)
         container_utils.refresh_image(manager_image, verbose=False)
 
-    print(f"{msg} pipeline {pipeline_id}.")
+    timestamp = datetime.datetime.now().strftime("%c")
+    print(f"{msg} pipeline {pipeline_id} [{timestamp}]")
 
     func()
 
@@ -696,14 +698,14 @@ def _check_nodes_for_cloud(root):
             req_cpu = n.get_inherited_attribute("cpu")
             req_mem = n.get_inherited_attribute("mem")
             try:
-                new_cpu, new_mem = resource_validation.round_resources_for_fargate(
+                new_cpu, new_mem = resource_validation.round_resources_for_cloud(
                     req_cpu, req_mem
                 )
             except resource_validation.InvalidCloudParams:
                 raise resource_validation.InvalidCloudParams(
                     f"Node {n} will not fit in the cloud. Limits:\n"
                     f"  cpu<=4 (requested: {req_cpu})\n"
-                    f"  mem<=30 (requested: {req_mem})"
+                    f"  mem<=32 (requested: {req_mem})"
                 )
             if new_cpu != req_cpu or new_mem != req_mem:
                 adjusted_nodes.append((req_cpu, req_mem, new_cpu, new_mem, str(n)))

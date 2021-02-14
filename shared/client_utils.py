@@ -3,6 +3,7 @@ import shlex
 import subprocess
 from . import log
 import asyncio
+import time
 
 if sys.version_info < (3, 7):
     # create_task is stdlib in 3.7, but we can declare it as a synonym for the
@@ -42,6 +43,21 @@ def schedule_instance_async_non_concurrent(async_fxn):
         self.last_task = asyncio.create_task(_coro())
 
     return inner
+
+
+def cache_with_expiry(timeout=1):
+    def decorator(fxn):
+        all_keys = {}
+
+        def _wraps(*args):
+            key = tuple(args)
+            if time.time() - all_keys.get(key, (None, 0))[-1] >= timeout:
+                all_keys[key] = (fxn(*args), time.time())
+            return all_keys[key][0]
+
+        return _wraps
+
+    return decorator
 
 
 def isiterable(o):

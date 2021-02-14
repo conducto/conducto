@@ -12,6 +12,7 @@ import types
 import typing
 import fnmatch
 import re
+import traceback
 
 from ..shared import client_utils, constants, log, types as t, path_utils, github_utils
 from .._version import __version__, __sha1__
@@ -529,7 +530,7 @@ def _get_state(callFunc, remainder):
 
     return_type = typing.get_type_hints(callFunc).get("return")
     if isinstance(return_type, pipeline.Node):
-        raise TypeError(
+        raise ValueError(
             f"'{callFunc.__name__}' returns an instance of Node, but it should return a Node type"
         )
     elif isinstance(return_type, type) and issubclass(return_type, pipeline.Node):
@@ -570,8 +571,7 @@ def _get_state(callFunc, remainder):
     try:
         bound = signature.bind(*args, **kwargs)
     except TypeError as e:
-        print(f"{prog}: {e}", file=sys.stderr)
-        sys.exit(1)
+        raise api.api_utils.NoTracebackError(f"wrong arguments to {prog}: {e.message}")
 
     # Parse the arguments according to their types
     call_state = {
@@ -615,13 +615,15 @@ def _parse_args(parser, argv):
     elif len(positionals) == 1:
         action = positionals[0]
         if action.nargs != argparse.REMAINDER:
-            raise Exception(
+            raise api.api_utils.NoTracebackError(
                 f"Cannot parse position argument: {action} with nargs={action.nargs}"
             )
         wildcard = action.dest
         kwargs[wildcard] = []
     else:
-        raise Exception(f"Cannot handle multiple positional arguments: {positionals}")
+        raise api.api_utils.NoTracebackError(
+            f"Cannot handle multiple positional arguments: {positionals}"
+        )
 
     while i < len(argv):
         arg = argv[i]
@@ -635,7 +637,7 @@ def _parse_args(parser, argv):
                 action = parser._option_string_actions[key]
             except KeyError:
                 if wildcard is None:
-                    raise ValueError(f"Unknown argument: {arg}")
+                    raise api.api_utils.NoTracebackError(f"Unknown argument: {arg}")
                 kwargs[wildcard].append(arg)
                 if i + 1 < len(argv) and not argv[i + 1].startswith("--"):
                     kwargs[wildcard].append(argv[i + 1])
@@ -649,12 +651,12 @@ def _parse_args(parser, argv):
                     i += 1
             elif isinstance(action, argparse._StoreConstAction):
                 if value is not None:
-                    raise ValueError(
-                        f"--{key} accepts no arguments. Got: {repr(value)}"
+                    raise api.api_utils.NoTracebackError(
+                        f"--{key} accepts no arguments, but got: {repr(value)}"
                     )
                 value = action.const
             else:
-                raise Exception(f"Cannot handle argparse action: {action}")
+                raise api.api_utils.NoTracebackError(f"Unknown action: {action}")
             kwargs[action.dest] = value
         else:
             if wildcard is not None:
@@ -743,12 +745,14 @@ def evaluate_filter(s, substitutions):
         elif token == ")":
             pass
         else:
-            raise Exception
+            raise api.api_utils.NoTracebackError(
+                f"Unknown token '{token}' in .conducto.cfg file expression: {s}"
+            )
     try:
         expr = " ".join(tokens)
         return bool(eval(expr))
     except Exception as e:
-        raise SyntaxError(
+        raise api.api_utils.NoTracebackError(
             f"Cannot evaluate filter expression: {expr}, tokens={tokens}, mapping={mapping}"
         )
 
@@ -774,8 +778,8 @@ def _parse_config_args_from_cmdline(argv):
             if basekey in CONDUCTO_ARGS:
                 if basekey not in VALUE_ARGS:
                     if value is not None:
-                        raise ValueError(
-                            f"Invalid argument '{arg}'. --{key} takes no argument."
+                        raise api.api_utils.NoTracebackError(
+                            f"--{key} accepts no arguments, but got: {arg}"
                         )
                     conducto_kwargs[basekey] = True
                     i += 1
@@ -788,8 +792,8 @@ def _parse_config_args_from_cmdline(argv):
                     i += 1
             elif basekey in ("no_shell", "no_app"):
                 if value is not None:
-                    raise ValueError(
-                        f"Invalid argument '{arg}'. --{key} takes no argument."
+                    raise api.api_utils.NoTracebackError(
+                        f"--{key} accepts no arguments, but got: {arg}"
                     )
                 conducto_kwargs[basekey.replace("no_", "")] = False
                 i += 1
@@ -801,7 +805,9 @@ def _parse_config_args_from_cmdline(argv):
                 substitutions[basekey] = value
                 i += 1
         else:
-            raise NotImplementedError("Better error message for invalid substitutions")
+            raise api.api_utils.NoTracebackError(
+                f"Unknown command line parameter '{arg}'"
+            )
     return conducto_kwargs, substitutions
 
 
@@ -1112,7 +1118,7 @@ def run_cfg_section(
         print(output.pretty(strict=False))
 
 
-def _get_pipeline_validated(token, pipeline_id):
+def _get_pipeline_validated(token, pipeline_id, owned_by_self=False):
     try:
         pipeline = api.Pipeline().get(pipeline_id, token=token)
     except api.InvalidResponse as e:
@@ -1121,12 +1127,15 @@ def _get_pipeline_validated(token, pipeline_id):
         else:
             raise
 
+    if owned_by_self and pipeline["user_id"] != api.Auth().get_user_id(token):
+        raise api.api_utils.NoTracebackError("The pipeline must be owned by yourself.")
+
     return pipeline
 
 
 def return_serialization(pipeline_id):
     token = api.Config().get_token_from_shell(force=True)
-    pipeline = _get_pipeline_validated(token, pipeline_id)
+    pipeline = _get_pipeline_validated(token, pipeline_id, owned_by_self=True)
 
     status = pipeline["status"]
     pl = constants.PipelineLifecycle
@@ -1140,7 +1149,7 @@ def return_serialization(pipeline_id):
     else:
         import conducto.api.pipeline as pipemod
 
-        serialization = pipemod.get_serialization_s3(token, pipeline["program_path"])
+        serialization = pipemod.get_serialization_s3(pipeline["program_path"], token)
     return serialization
 
 
@@ -1172,7 +1181,7 @@ async def update_serialization(serialization, pipeline_id, token=None):
     await websocket.close()
 
 
-def main(
+def _main(
     variables=None,
     default=None,
     argv=None,
@@ -1185,30 +1194,6 @@ def main(
     filename=None,
     printer=pprint.pprint,
 ):
-    """
-    Command-line helper that allows you from the shell to easily execute methods that return Conducto nodes.
-
-    :param default: Specify a method that is the default to run if the user doesn't specify one on the command line.
-    :type default: `Callable`
-
-    :param image: Specify a default docker image for the pipeline. (See also :py:class:`Image`).
-    :type image: :py:class:`Image`
-
-    :param cpu: If specified, set the `cpu` for any Node called through `co.main`.
-    :type cpu: `float`
-
-    :param mem: If specified, set the `mem` for any Node called through `co.main`.
-    :type mem: `float`
-
-    :param env: If specified, set the `env` for any Node called through `co.main`.
-    :type env: `dict`
-
-    :param requires_docker: If specified, set `requires_docker` for any Node called through `co.main`.
-    :type requires_docker: `bool`
-
-    See :py:class:`Node` for more details.
-    """
-
     if sys.platform.startswith("win"):
         try:
             import colorama
@@ -1227,7 +1212,11 @@ def main(
         argv = list(sys.argv[1:])
     if variables is None:
         stack = inspect.stack()
+        # get info from 1 caller back in stack
         frame, path, _, source, _, _ = stack[1]
+        if source == "main":
+            # get info from 2 callers back in stack
+            frame, path, _, source, _, _ = stack[2]
         log.debug("Reading locals from", source, "in", path)
         variables = dict(frame.f_locals)
         if not filename:
@@ -1267,8 +1256,7 @@ def main(
         if inspect.isawaitable(output):
             output = asyncio.get_event_loop().run_until_complete(output)
     except api.UserInputValidation as e:
-        print(str(e), file=sys.stderr)
-        sys.exit(1)
+        raise api.api_utils.NoTracebackError(str(e))
 
     # There are two possibilities with buildable methods (ones returning a Node):
     # - If user requested --build, then call build()
@@ -1292,7 +1280,7 @@ def main(
             if value is not None:
                 existing_value = getattr(output, key, None)
                 if existing_value is not None and existing_value != value:
-                    raise Exception(
+                    raise api.api_utils.NoTracebackError(
                         f"Trying to overwrite `{key}`={value} that is already set."
                     )
                 setattr(output, key, value)
@@ -1322,35 +1310,31 @@ def main(
 
         if will_build:
             BM = constants.BuildMode
-            try:
-                if pipeline_id:
+            if pipeline_id:
+                from conducto.internal.build import validate_tree
+
+                validate_tree(output, cloud=False, check_images=False)
+                asyncio.get_event_loop().run_until_complete(
+                    update_serialization(output.serialize(), pipeline_id)
+                )
+            else:
+                build_mode = BM.DEPLOY_TO_CLOUD
+                if is_local:
+                    build_mode = BM.LOCAL
+                elif is_k8s:
+                    build_mode = BM.DEPLOY_TO_K8S
+                try:
                     from conducto.internal.build import validate_tree
 
-                    validate_tree(output, cloud=False, check_images=False)
-                    asyncio.get_event_loop().run_until_complete(
-                        update_serialization(output.serialize(), pipeline_id)
+                    output._build(
+                        build_mode=build_mode,
+                        **conducto_state,
                     )
-                else:
-                    build_mode = BM.DEPLOY_TO_CLOUD
-                    if is_local:
-                        build_mode = BM.LOCAL
-                    elif is_k8s:
-                        build_mode = BM.DEPLOY_TO_K8S
-                    try:
-                        from conducto.internal.build import validate_tree
-
-                        output._build(
-                            build_mode=build_mode,
-                            **conducto_state,
-                        )
-                    except api.api_utils.InvalidResponse as e:
-                        if str(e).find("Cloud mode must be enabled") >= 0:
-                            raise api.api_utils.NoTracebackError(e.message)
-                        else:
-                            raise
-            except api.UserInputValidation as e:
-                print(str(e), file=sys.stderr)
-                sys.exit(1)
+                except api.api_utils.InvalidResponse as e:
+                    if str(e).find("Cloud mode must be enabled") >= 0:
+                        raise api.api_utils.NoTracebackError(e.message)
+                    else:
+                        raise
         elif t.Bool(os.getenv("CONDUCTO_GLUE_DEBUG")):
             print(output.serialize(pretty=True))
         else:
@@ -1360,7 +1344,11 @@ def main(
                 from conducto.internal.build import validate_tree
 
                 validate_tree(
-                    output, cloud=False, check_images=False, set_default=False
+                    output,
+                    cloud=constants.ExecutionEnv.value()
+                    == constants.ExecutionEnv.WORKER_CLOUD,
+                    check_images=False,
+                    set_default=False,
                 )
 
                 s = output.serialize()
@@ -1369,4 +1357,70 @@ def main(
     elif output is not None:
         printer(output)
 
+    return output
+
+
+# wrapper for the actual main ("_main")
+# allowing single location error-catching
+def main(
+    variables=None,
+    default=None,
+    argv=None,
+    env=None,
+    cpu=None,
+    gpu=None,
+    mem=None,
+    requires_docker=False,
+    image: typing.Union[None, str, image_mod.Image] = None,
+    filename=None,
+    printer=pprint.pprint,
+):
+    """
+    Command-line helper that allows you from the shell to easily execute methods that return Conducto nodes.
+
+    :param default: Specify a method that is the default to run if the user doesn't specify one on the command line.
+    :type default: `Callable`
+
+    :param image: Specify a default docker image for the pipeline. (See also :py:class:`Image`).
+    :type image: :py:class:`Image`
+
+    :param cpu: If specified, set the `cpu` for any Node called through `co.main`.
+    :type cpu: `float`
+
+    :param mem: If specified, set the `mem` for any Node called through `co.main`.
+    :type mem: `float`
+
+    :param env: If specified, set the `env` for any Node called through `co.main`.
+    :type env: `dict`
+
+    :param requires_docker: If specified, set `requires_docker` for any Node called through `co.main`.
+    :type requires_docker: `bool`
+
+    See :py:class:`Node` for more details.
+    """
+
+    try:
+        output = _main(
+            variables=variables,
+            default=default,
+            argv=argv,
+            env=env,
+            cpu=cpu,
+            gpu=gpu,
+            mem=mem,
+            requires_docker=requires_docker,
+            image=image,
+            filename=filename,
+            printer=printer,
+        )
+    # catch known errors that have user-friendly messages,
+    # and don't show the stacktrace unless debug mode is enabled
+    except api.api_utils.NoTracebackError as e:
+        msg = str(e)
+        if t.Bool(os.getenv("CONDUCTO_GLUE_DEBUG")):
+            msg = (
+                "".join(traceback.format_exception(etype=type(e), value=e, tb=None))
+                + msg
+            )
+        sys.exit(msg)
     return output

@@ -1,38 +1,15 @@
-import bisect
 import functools
 import shlex
 
 from conducto.shared import parse_utils
 
 
-# Fargate supports different configurations of cpu/mem.
-# See https://aws.amazon.com/fargate/pricing/
-#
-#     Mem                  1 1 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2 2 2 3
-# CPU|.5 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0
-# .25| X X X
-#  .5|   X X X X
-#   1|     X X X X X X X
-#   2|         X X X X X X X X X X X X X
-#   4|                 X X X X X X X X X X X X X X X X X X X X X X X
-#
-# Make a list of them and binary search through it
-class FG:
-    def __init__(self, cpu, mem):
-        self.cpu = cpu
-        self.mem = mem
+# cpu: [mem...]
+ALLOWED_UNITS = {0.25: [0.5, 1], 0.5: [1, 2], 1: [2, 4], 2: [4, 8, 16], 4: [8, 16, 32]}
 
-    def __lt__(self, other):
-        return self.cpu < other.cpu or self.mem < other.mem
+CPU_KEYS = sorted(ALLOWED_UNITS)
 
 
-FG.ALLOWED = [
-    *[FG(0.25, x) for x in [0.5, 1, 2]],
-    *[FG(0.5, x) for x in range(1, 5)],
-    *[FG(1, x) for x in range(2, 9)],
-    *[FG(2, x) for x in range(4, 17)],
-    *[FG(4, x) for x in range(8, 31)],
-]
 EXCLUDED_DOCKER_RUN_ARGS = {"--cpus", "--memory", "--network"}
 
 
@@ -41,13 +18,13 @@ class InvalidCloudParams(ValueError):
 
 
 @functools.lru_cache(1000)
-def round_resources_for_fargate(cpu, mem):
-    i = bisect.bisect_left(FG.ALLOWED, FG(cpu, mem))
-    try:
-        res = FG.ALLOWED[i]
-    except IndexError:
-        raise InvalidCloudParams(f"Cannot fit cpu={cpu} and mem={mem} into Fargate")
-    return res.cpu, res.mem
+def round_resources_for_cloud(cpu, mem):
+    for c in CPU_KEYS:
+        if c >= cpu:
+            for m in ALLOWED_UNITS[c]:
+                if m >= mem:
+                    return c, m
+    raise InvalidCloudParams(f"Cannot fit cpu={cpu} and mem={mem} into Conducto Cloud")
 
 
 def cpu(arg):

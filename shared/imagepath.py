@@ -164,7 +164,7 @@ class Path:
                 # performance to zero. Error if we're in that state. Stupid Docker
                 # Desktop.
                 if not os.path.exists(path) and os.path.exists(bugpath):
-                    raise Exception(
+                    log.log(
                         """
     Docker Desktop for Mac (v2.4.0 through v2.5.0.1) has a bug with gRPC FUSE
     that breaks Conducto. To disable it go to 'Docker Desktop > Preferences'
@@ -175,6 +175,7 @@ class Path:
     us know that you saw this error, as it is more widespread than we believed.
 """
                     )
+                    return bugpath
                 else:
                     return path
         else:

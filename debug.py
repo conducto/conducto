@@ -171,6 +171,13 @@ async def start_container(pipeline, payload, live, token, logger):
         options.append(f"-v {local_base}/data:/conducto/data/user")
         options.append(f"-v {local_base}/pipelines/{pid}/data:/conducto/data/pipeline")
 
+    elif in_manager:
+        # web debug gets epic s3fs mount
+        options.append("-v /home/conducto/.conducto/data:/conducto/data/user")
+        options.append(
+            f"-v /home/conducto/.conducto/pipelines/{pipeline['pipeline_id']}/data:/conducto/data/pipeline"
+        )
+
     if live:
         for external, internal in image["path_map"].items():
             external = imagepath.Path.from_dockerhost_encoded(external)
@@ -214,7 +221,7 @@ async def start_container(pipeline, payload, live, token, logger):
     return container_name
 
 
-async def dump_command(container_name, command, shell, logger):
+async def dump_command(container_name, command, shell, logger, create_launch_json, env):
     # Create in-memory tar file since docker will take that on stdin with no
     # tempfile needed.
     tario = io.BytesIO()
@@ -233,6 +240,47 @@ async def dump_command(container_name, command, shell, logger):
         raise RuntimeError(f"Error placing /cmd.conducto: ({e})")
 
     await execute_in(container_name, f"chmod u+x /cmd.conducto")
+
+    if create_launch_json:
+        cmd_parts = command.split()
+        # TODO: handle non-python commands
+        if len(cmd_parts) > 1 and cmd_parts[0] == "python":
+            program = cmd_parts[1]
+            tario = io.BytesIO()
+            with tarfile.TarFile(fileobj=tario, mode="w") as cmdtar:
+                content = json.dumps(
+                    {
+                        "version": "0.2.0",
+                        "configurations": [
+                            {
+                                "name": "Debug Node",
+                                "type": "python",
+                                "request": "launch",
+                                "program": program,
+                                "args": [*cmd_parts[2:]] if len(cmd_parts) > 2 else [],
+                                "env": env,
+                            }
+                        ],
+                    }
+                )
+                tfile = tarfile.TarInfo(".vscode/launch.json")
+                tfile.size = len(content)
+                cmdtar.addfile(tfile, io.BytesIO(content.encode("utf-8")))
+
+            args = [
+                "docker",
+                "cp",
+                "-",
+                f"{container_name}:{constants.ConductoPaths.COPY_LOCATION}/",
+            ]
+            try:
+                out, err = await async_utils.run_and_check(
+                    *args, input=tario.getvalue()
+                )
+            except client_utils.CalledProcessError as e:
+                raise RuntimeError(
+                    f"Error placing {constants.ConductoPaths.COPY_LOCATION}/.vscode/launch.json: ({e})"
+                )
 
     shell_alias = {"/bin/sh": "sh", "/bin/bash": "bash"}.get(shell, shell)
     logger(
@@ -378,7 +426,9 @@ def start_remote_shell(remote_callback, container_name, env_list, shell):
     return child.send, buf, close, finish_task, child.setwinsize
 
 
-async def _debug(id, node, live, timestamp, remote_callback=None, logger=print):
+async def _debug(
+    id, node, live, timestamp, remote_callback=None, logger=print, start=True
+):
     from . import api
 
     pl = constants.PipelineLifecycle
@@ -446,41 +496,37 @@ async def _debug(id, node, live, timestamp, remote_callback=None, logger=print):
     else:
         outer_xid = ""
     autogen_dict["CONDUCTO_OUTER_OWNER"] = outer_xid
+    full_env_dict = {**env_dict, **secret_dict, **autogen_dict}
 
     env_list = []
-    for key, value in {**env_dict, **secret_dict, **autogen_dict}.items():
+    for key, value in full_env_dict.items():
         env_list += ["-e", f"{key}={value}"]
 
     if status in pl.cloud:
-        docker_domain = api.Config().get_docker_domain()
-
-        cmd = [
-            "docker",
-            "login",
-            "-u",
-            "conducto",
-            "--password-stdin",
-            f"https://{docker_domain}",
-        ]
+        (
+            docker_login_cmd,
+            docker_registry,
+        ) = await api.AsyncAuth().get_ecr_credentials()
 
         try:
-            _, stderr = await async_utils.run_and_check(
-                *cmd, input=token.encode("utf-8")
-            )
+            _, stderr = await async_utils.run_and_check(docker_login_cmd, shell=True)
         except client_utils.CalledProcessError as e:
             logger(e)
-            logger(
-                f"error logging into https://{docker_domain}; unable to debug\n{e}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            raise api.api_utils.NoTracebackError(
+                f"error logging into {docker_registry}; unable to debug\n{e}"
+            ) from None
 
     container_name = await start_container(pipeline, payload, live, token, logger)
 
     shell = get_param(payload, "image", default={}).get("shell", "/bin/sh")
     dump_command_task = asyncio.create_task(
         dump_command(
-            container_name, get_param(payload, "commandSummary"), shell, logger
+            container_name,
+            get_param(payload, "commandSummary"),
+            shell,
+            logger,
+            not start,
+            full_env_dict,
         )
     )
 
@@ -490,8 +536,10 @@ async def _debug(id, node, live, timestamp, remote_callback=None, logger=print):
     await dump_command_task
     if remote_callback:
         return start_remote_shell(remote_callback, container_name, env_list, shell)
-    else:
+    elif start:
         start_shell(container_name, env_list, shell)
+    else:
+        logger(container_name)
 
 
 async def remote_debug(send_to_ws, remote_callback, id, node, live, timestamp=None):
@@ -500,8 +548,8 @@ async def remote_debug(send_to_ws, remote_callback, id, node, live, timestamp=No
     return await _debug(id, node, live, timestamp, remote_callback, send_to_ws)
 
 
-async def debug(id, node, timestamp=None):
-    await _debug(id, node, False, timestamp, logger=print)
+async def debug(id, node, timestamp=None, shell=True):
+    await _debug(id, node, False, timestamp, logger=print, start=shell)
 
 
 async def livedebug(id, node, timestamp=None):

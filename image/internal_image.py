@@ -151,6 +151,21 @@ class Image:
         self.reqs_docker = reqs_docker
         self.path_map = path_map or {}
         self.shell = shell
+
+        self.auth = conducto.api.Auth()
+        self.cfg = conducto.api.Config()
+
+        try:
+            _, self.registry = self.auth.get_ecr_credentials()
+            self.repo_name = self.cfg.get_repo_name()
+        except Exception as e:
+            # User missing credentials, or endpoing not found:
+            # 1. workaround for 1st time deployment;
+            # 2. Sandbox scenario where we're only building images for local mode
+            print(e)
+            self.registry = None
+            self.repo_name = None
+
         if self.path_map:
             # on deserialize pathmaps are strings but they may also be strings when
             # being passed from the user.
@@ -491,8 +506,7 @@ class Image:
     def name_cloud_extended(self):
         if self._pipeline_id is None:
             raise ValueError("Must specify pipeline_id before pushing to cloud")
-        docker_domain = conducto.api.Config().get_docker_domain()
-        return f"{docker_domain}/{self._pipeline_id}:{self._get_image_tag()}"
+        return f"{self.registry}/{self.repo_name}:{self._get_image_tag()}_{self._pipeline_id}"
 
     @property
     def status(self):
@@ -977,9 +991,14 @@ class Image:
             f"com.conducto.profile={profile}",
             f"com.conducto.pipeline={pipeline_id}",
         ]
-        text, worker_image = await dockerfile_mod.text_for_extend(
-            self.name_copied, labels
-        )
+        if True:
+            text, worker_image = await dockerfile_mod.text_for_extend_rust(
+                self.name_copied, labels
+            )
+        else:
+            text, worker_image = await dockerfile_mod.text_for_extend(
+                self.name_copied, labels
+            )
 
         if "/" in worker_image:
             pull_worker = True
@@ -1013,8 +1032,6 @@ class Image:
     async def _push(self, st: "HistoryEntry"):
         # If push_to_cloud, tag the local image and push it
         cloud_tag = self.name_cloud_extended
-        if self._cloud_tag_convert and self.is_cloud_building():
-            cloud_tag = self._cloud_tag_convert(cloud_tag)
         await async_utils.run_and_check(
             "docker", "tag", self.name_local_extended, cloud_tag
         )

@@ -65,10 +65,23 @@ class Config:
         self.config = self._atomic_read_config(configFile)
 
         if os.environ.get("CONDUCTO_PROFILE", "") != "":
-            self.default_profile = os.environ["CONDUCTO_PROFILE"]
-            # we use this special value to explicitly clear the default
-            if self.default_profile == "__none__":
-                self.default_profile = None
+            profile = os.getenv("CONDUCTO_PROFILE")
+            if profile == "__none__":
+                # we use this special value to explicitly clear the default
+                profile = None
+
+            if (
+                profile
+                and profile != "DUMMY_PROFILE"
+                and not os.path.exists(
+                    constants.ConductoPaths.get_profile_base_dir(profile=profile)
+                )
+            ):
+                raise ValueError(
+                    f"The profile CONDUCTO_PROFILE={profile} does not exist."
+                )
+
+            self.default_profile = profile
         else:
             self.default_profile = self.get("general", "default")
 
@@ -237,7 +250,7 @@ commands:
             dir_api = api.dir.Dir()
             u = dir_api.user()
             org_id = u["org_id"]
-        url = self.get_url()
+        url = self.get_url(pretty=True)
         prefix = url.split("https://")[1].split(".")[0]
         return f"{prefix}-{org_id}"
 

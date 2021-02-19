@@ -21,7 +21,9 @@ def refresh_image(img, verbose=False):
         return
 
     try:
-        subprocess.check_call(["docker", "inspect", img], stdout=PIPE, stderr=PIPE)
+        subprocess.check_call(
+            ["docker", "inspect", img], stdout=DEVNULL, stderr=DEVNULL
+        )
     except subprocess.CalledProcessError:
         # Image not present so pull may take a while. Show the output of
         # 'docker pull' so user knows to wait

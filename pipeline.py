@@ -943,7 +943,7 @@ class Exec(Node):
     A node that contains an executable command
 
     :param command: A shell command to execute or a python callable
-    :type command: `str`
+    :type command: Union[`str`|`callable`]
 
     If a Python callable is specified for the command the `args` and `kwargs`
     are serialized and a `conducto` command line is constructed to launch the

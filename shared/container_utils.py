@@ -63,6 +63,41 @@ def is_windows_by_host_mnt():
         return False
 
 
+def _drives_by_bind_detection():
+    import string
+
+    detect_frag = "[ `ls /binds/{0} | wc -l` -ge 2 ] && echo detect {0}"
+
+    lines = ""
+    for letter in string.ascii_lowercase:
+        drive_binds = ["-v", f"/{letter}:/binds/{letter}"]
+        detects = [detect_frag.format(letter)]
+
+        cmd = [
+            "docker",
+            "run",
+            "--rm",
+            *drive_binds,
+            "alpine",
+            "sh",
+            "-c",
+            ";".join(detects),
+        ]
+
+        try:
+            proc = subprocess.run(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
+            )
+
+            lines += proc.stdout.decode("utf8")
+        except subprocess.CalledProcessError:
+            pass
+
+    # print(lines)
+
+    return [ll[7] for ll in lines.split("\n") if ll.startswith("detect")]
+
+
 @functools.lru_cache(None)
 def docker_available_drives():
     try:
@@ -71,6 +106,14 @@ def docker_available_drives():
         proc = subprocess.run(lsdrives, shell=True, **kwargs)
         return proc.stdout.decode("utf8").split()
     except subprocess.CalledProcessError:
+        pass
+
+    try:
+        return _drives_by_bind_detection()
+    except subprocess.CalledProcessError:
+        pass
+
+    if True:
         import string
         from ctypes import windll  # Windows only
 

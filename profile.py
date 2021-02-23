@@ -315,6 +315,9 @@ def profile_start_agent(id=None):
 
     token = api.Config().get_token_from_shell()
 
+    if os.getenv("CONDUCTO_OS", "").startswith("Windows"):
+        os.environ["WINDOWS_HOST"] = "plain"
+
     start_status = agent_utils.launch_agent(token=token)
 
     if start_status.startswith("running"):

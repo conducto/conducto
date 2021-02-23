@@ -28,9 +28,10 @@ def deserialize_into_node(target):
 
 def retry(max_num_retries, *, inherited=False, user_display=True):
     """
-    Retry the given node `max_num_retries` number of times.
+    If the node doesn't succeed, retry it `max_num_retries` times.
+
     :param max_num_retries: Max iterations.
-    :return:
+    :return: a callback object to associate with a :ref:`node event<Events>`
     """
     return base(
         "retry",
@@ -42,10 +43,11 @@ def retry(max_num_retries, *, inherited=False, user_display=True):
 
 def retry_then_skip(max_num_retries, *, inherited=False, user_display=True):
     """
-    Retry the given node `max_num_retries` number of times. If it still hasn't
-    succeeded, skip it.
+    If the node doesn't succeed, retry it `max_num_retries` number of
+    times. If it still hasn't succeeded, skip it.
+
     :param max_num_retries: Max iterations.
-    :return:
+    :return: a callback object to associate with a :ref:`node event<Events>`
     """
     return base(
         "retry_then_skip",
@@ -57,11 +59,12 @@ def retry_then_skip(max_num_retries, *, inherited=False, user_display=True):
 
 def retry_with_double_mem(max_num_retries, *, inherited=False, user_display=True):
     """
-    Retry the given node `max_num_retries` number of times, doubling the memory
+    Retry the given node `max_num_retries` times, doubling the memory
     estimate each time. The memory request will be capped at the limits
     permitted by the underlying service.
+
     :param max_num_retries: Max iterations.
-    :return:
+    :return: a callback object to associate with a :ref:`node event<Events>`
     """
     return base(
         "retry_with_double_mem",
@@ -73,10 +76,11 @@ def retry_with_double_mem(max_num_retries, *, inherited=False, user_display=True
 
 def skip_some_errors(max_num_errors, *, inherited=False, user_display=True):
     """
-    If the node fails with <= `max_num_errors` descendants that have errored, it
-    will skip those nodes and reset them, thus passing over them.
+    If the node fails with <= `max_num_errors` descendants that have
+    errored, skip those nodes and reset them, thereby ignoring their errors.
+
     :param max_num_errors: Max errors to skip + reset.
-    :return:
+    :return: a callback object to associate with a :ref:`node event<Events>`
     """
     return base(
         "skip_some_errors",
@@ -89,9 +93,10 @@ def skip_some_errors(max_num_errors, *, inherited=False, user_display=True):
 def email(to=None, cc=None, *, inherited=False, user_display=True):
     """
     When the node finishes, send a summary email to the specified recipients.
+
     :param to: Recipients in the "To" field
     :param cc: Recipients in the "CC" field
-    :return:
+    :return: a callback object to associate with a :ref:`node event<Events>`
     """
     return base("email", to=to, cc=cc, inherited=inherited, user_display=user_display)
 
@@ -101,10 +106,11 @@ def slack_status(
 ):
     """
     Post a summary of the node in the specified slack channel via the Slack integration.
+
     :param recipient: where to send the updates to, channel id or user id
     :param message: message to print, optional
     :param node_summary: print node summary, defaults to True if no message, False otherwise
-    :return:
+    :return: a callback object to associate with a :ref:`node event<Events>`
     """
 
     return base(

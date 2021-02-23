@@ -13,7 +13,11 @@ import typing
 import inspect
 
 from .shared import constants, log, types as t, imagepath, resource_validation as rv
-from . import api, callback, image as image_mod
+from . import api, image as image_mod, callback as _callback
+
+CallbackBase = _callback.base
+callback_parse = _callback._parse
+
 import inspect
 
 State = constants.State
@@ -503,29 +507,47 @@ class Node:
         """
         self.repo.add(image)
 
-    def on_done(self, cback):
-        assert isinstance(cback, callback.base)
-        self._callbacks.append((State.DONE, cback))
+    def on_done(self, callback):
+        """
+        Register a :ref:`callback<Callbacks>` for when this node enters the "done" state.
+        """
+        assert isinstance(callback, CallbackBase)
+        self._callbacks.append((State.DONE, callback))
 
-    def on_error(self, cback):
-        assert isinstance(cback, callback.base)
-        self._callbacks.append((State.ERROR, cback))
+    def on_error(self, callback):
+        """
+        Register a :ref:`callback<Callbacks>` for when this node enters the "error" state.
+        """
+        assert isinstance(callback, CallbackBase)
+        self._callbacks.append((State.ERROR, callback))
 
-    def on_queued(self, cback):
-        assert isinstance(cback, callback.base)
-        self._callbacks.append((State.QUEUED, cback))
+    def on_queued(self, callback):
+        """
+        Register a :ref:`callback<Callbacks>` for when this node enters the "queued" state.
+        """
+        assert isinstance(callback, CallbackBase)
+        self._callbacks.append((State.QUEUED, callback))
 
-    def on_running(self, cback):
-        assert isinstance(cback, callback.base)
-        self._callbacks.append((State.RUNNING, cback))
+    def on_running(self, callback):
+        """
+        Register a :ref:`callback<Callbacks>` for when this node enters the "running" state.
+        """
+        assert isinstance(callback, CallbackBase)
+        self._callbacks.append((State.RUNNING, callback))
 
-    def on_killed(self, cback):
-        assert isinstance(cback, callback.base)
-        self._callbacks.append((State.WORKER_ERROR, cback))
+    def on_killed(self, callback):
+        """
+        Register a :ref:`callback<Callbacks>` for when this node enters the "killed" state.
+        """
+        assert isinstance(callback, CallbackBase)
+        self._callbacks.append((State.WORKER_ERROR, callback))
 
-    def on_state_change(self, cback):
-        assert isinstance(cback, callback.base)
-        self._callbacks.append(("stateChange", cback))
+    def on_state_change(self, callback):
+        """
+        Register a :ref:`callback<Callbacks>` for when this node changes state.
+        """
+        assert isinstance(callback, CallbackBase)
+        self._callbacks.append(("stateChange", callback))
 
     def _pull(self):
         # these are finalized upon serialization
@@ -628,7 +650,7 @@ class Node:
 
         for i in data["nodes"]:
             for event, cb_literal in i.get("callbacks", []):
-                cb = callback._parse(cb_literal)
+                cb = callback_parse(cb_literal)
                 nodes[i["id"]]._callbacks.append((event, cb))
 
         for parent, child, name in data["edges"]:
@@ -735,8 +757,9 @@ class Node:
         :type use_shell: `bool`
 
         :param retention: Once the pipeline is put to sleep, its logs and
-            :ref:`data` will be deleted after `retention` days of inactivity.
-            Until then it can be woken up and interacted with. Default: :code:`7`
+            `data </docs/basics/shared-data#pipeline-data>` will be
+            deleted after `retention` days of inactivity.  Until then it
+            can be woken up and interacted with. Default: :code:`7`
         :type retention: `int`
 
         :param run: If True the pipeline will run immediately upon launching.

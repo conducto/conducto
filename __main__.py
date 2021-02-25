@@ -175,6 +175,7 @@ def build(
     retention=7,
     is_public=False,
     run=False,
+    run_at=None,
 ):
     from conducto.internal import build
 
@@ -183,6 +184,7 @@ def build(
     serialization = sys.stdin.read()
     node = co.Node.deserialize(serialization)
     node._autorun = run
+    node._autorun_at = run_at
     build.build(
         node,
         use_shell=shell,

@@ -31,12 +31,7 @@ FLAG_ARGS = [
     "sleep_when_done",
     "public",
 ]
-VALUE_ARGS = [
-    "pipeline_id",
-    "title",
-    "doc",
-    "default_doc",
-]
+VALUE_ARGS = ["pipeline_id", "title", "doc", "default_doc", "run_at"]
 CONDUCTO_ARGS = FLAG_ARGS + VALUE_ARGS
 
 OPS = {"||", "&&", "!=", "==", "(", ")", "!"}
@@ -471,7 +466,7 @@ def _make_usage_message(methods):
     prog = _get_calling_filename()
 
     if returns_node:
-        commands = "[--local | --cloud | --k8s] [--run] [--sleep-when-done]"
+        commands = "[--local | --cloud | --k8s] [--run] [--run-at] [--sleep-when-done]"
         node_l1 = commands
         node_l2 = "[--app | --no-app] [--shell | --no-shell]"
         node_usage = "\n".join([" " * (len(prog) + 8) + l for l in [node_l1, node_l2]])
@@ -586,6 +581,7 @@ def _add_argparse_options_for_node(parser):
     parser.add_argument("--local", action="store_true")
     parser.add_argument("--k8s", action="store_true")
     parser.add_argument("--run", action="store_true")
+    parser.add_argument("--run-at", default=None)
     _bool_mutex_group(parser, "shell", default=_get_default_shell())
     _bool_mutex_group(parser, "app", default=_get_default_app())
     parser.add_argument("--sleep-when-done", action="store_true")

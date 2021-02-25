@@ -194,6 +194,7 @@ class Node:
         "line",
         "_repo",
         "_autorun",
+        "_autorun_at",
         "_sleep_when_done",
         "callback_data",
     )
@@ -234,6 +235,7 @@ class Node:
 
         # These are only to be set on the root node, and only by co.main().
         self._autorun = None
+        self._autorun_at = None
         self._sleep_when_done = None
 
         # default all user-settable parameters
@@ -667,20 +669,22 @@ class Node:
         root.token = data.get("token")
         root._sleep_when_done = data.get("sleep_when_done", False)
         root._autorun = data.get("autorun")
+        root._autorun_at = data.get("autorun_at")
 
         return root
 
     def serialize(self, pretty=False):
-
         res = {
             "edges": [],
             "nodes": [],
             "images": self.repo.images,
             "token": self.token,
             "autorun": self._autorun,
+            "autorun_at": self._autorun_at,
             "sleep_when_done": self._sleep_when_done,
             "agent_only": t.Bool(os.getenv("CONDUCTO_AGENT_ONLY")),
         }
+
         queue = collections.deque([self])
         while queue:
             node = queue.popleft()
@@ -793,6 +797,7 @@ class Node:
         app=False,
         retention=7,
         run=False,
+        run_at=None,
         sleep_when_done=False,
         public=False,
     ):
@@ -800,6 +805,7 @@ class Node:
             self.image = image_mod.Image(name="conducto-default")
 
         self._autorun = run
+        self._autorun_at = run_at
         self._sleep_when_done = sleep_when_done
         from conducto.internal import build
 
@@ -822,6 +828,7 @@ class Node:
         app=False,
         retention=7,
         run=False,
+        run_at=None,
         sleep_when_done=False,
         public=False,
     ):
@@ -829,6 +836,7 @@ class Node:
             self.image = image_mod.Image(name="conducto-default")
 
         self._autorun = run
+        self._autorun_at = run_at
         self._sleep_when_done = sleep_when_done
 
         args = ["conducto", "build"]
@@ -855,6 +863,7 @@ class Node:
         app=False,
         retention=7,
         run=False,
+        run_at=None,
         sleep_when_done=False,
         public=False,
     ):
@@ -869,6 +878,7 @@ class Node:
             app=app,
             retention=retention,
             run=run,
+            run_at=run_at,
             sleep_when_done=sleep_when_done,
             public=public,
         )

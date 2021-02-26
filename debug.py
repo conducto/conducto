@@ -224,22 +224,23 @@ async def start_container(pipeline, payload, live, token, logger):
 async def dump_command(container_name, command, shell, logger, create_launch_json, env):
     # Create in-memory tar file since docker will take that on stdin with no
     # tempfile needed.
-    tario = io.BytesIO()
-    with tarfile.TarFile(fileobj=tario, mode="w") as cmdtar:
-        content = command
-        if not content.endswith("\n"):
-            content += "\n"
-        tfile = tarfile.TarInfo("cmd.conducto")
-        tfile.size = len(content)
-        cmdtar.addfile(tfile, io.BytesIO(content.encode("utf-8")))
+    for filename in ["/cmd.conducto", "/conducto/cmd.sh"]:
+        tario = io.BytesIO()
+        with tarfile.TarFile(fileobj=tario, mode="w") as cmdtar:
+            content = f"#!{shell}\n{command}"
+            if not content.endswith("\n"):
+                content += "\n"
+            tfile = tarfile.TarInfo(os.path.basename(filename))
+            tfile.size = len(content)
+            cmdtar.addfile(tfile, io.BytesIO(content.encode("utf-8")))
 
-    args = ["docker", "cp", "-", f"{container_name}:/"]
-    try:
-        out, err = await async_utils.run_and_check(*args, input=tario.getvalue())
-    except client_utils.CalledProcessError as e:
-        raise RuntimeError(f"Error placing /cmd.conducto: ({e})")
+        args = ["docker", "cp", "-", f"{container_name}:{os.path.dirname(filename)}"]
+        try:
+            await async_utils.run_and_check(*args, input=tario.getvalue())
+        except client_utils.CalledProcessError as e:
+            raise RuntimeError(f"Error placing {filename}: ({e})")
 
-    await execute_in(container_name, f"chmod u+x /cmd.conducto")
+        await execute_in(container_name, f"chmod u+x {filename}")
 
     if create_launch_json:
         cmd_parts = command.split()
@@ -274,18 +275,13 @@ async def dump_command(container_name, command, shell, logger, create_launch_jso
                 f"{container_name}:{constants.ConductoPaths.COPY_LOCATION}/",
             ]
             try:
-                out, err = await async_utils.run_and_check(
-                    *args, input=tario.getvalue()
-                )
+                await async_utils.run_and_check(*args, input=tario.getvalue())
             except client_utils.CalledProcessError as e:
                 raise RuntimeError(
                     f"Error placing {constants.ConductoPaths.COPY_LOCATION}/.vscode/launch.json: ({e})"
                 )
 
-    shell_alias = {"/bin/sh": "sh", "/bin/bash": "bash"}.get(shell, shell)
-    logger(
-        f"Execute command by running {format(f'{shell_alias} /cmd.conducto', color='cyan')}"
-    )
+    logger(f"Execute command by running {format('/conducto/cmd.sh', color='cyan')}")
 
 
 async def get_image_inspection(image_name):

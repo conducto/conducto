@@ -200,14 +200,15 @@ class Image:
         name=None,
         git_urls=None,
         instantiation_directory=None,
+        _from_serialization=False,
         **kwargs,
     ):
 
         # TODO: remove pre_built back-compatibility for sept 9 changes
         kwargs.pop("pre_built", None)
         kwargs.pop("git_sha", None)
-        if len(kwargs):
-            raise ValueError(f"unknown args: {','.join(kwargs)}")
+        if not _from_serialization and len(kwargs):
+            raise ValueError(f"unknown args: {kwargs}")
 
         if name is None:
             name = names.NameGenerator.name()

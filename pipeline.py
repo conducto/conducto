@@ -3,7 +3,6 @@ import collections
 import functools
 import gzip
 import shlex
-import inspect
 import json
 import os
 import pprint
@@ -12,13 +11,13 @@ import traceback
 import typing
 import inspect
 
+
 from .shared import constants, log, types as t, imagepath, resource_validation as rv
 from . import api, image as image_mod, callback as _callback
 
 CallbackBase = _callback.base
 callback_parse = _callback._parse
 
-import inspect
 
 State = constants.State
 
@@ -197,6 +196,7 @@ class Node:
         "_autorun_at",
         "_sleep_when_done",
         "callback_data",
+        "pipeline_reservation",
     )
 
     def __init__(
@@ -223,6 +223,7 @@ class Node:
         file=None,
         line=None,
         callback_data=None,
+        pipeline_reservation=None,
     ):
 
         self.parent = None
@@ -257,6 +258,7 @@ class Node:
         self.max_time = None
         self.max_concurrent = None
         self.container_reuse_context = None
+        self.pipeline_reservation = None
         self.callback_data = callback_data
 
         # prefer same_container only if it is set and container_reuse_context is not
@@ -291,6 +293,7 @@ class Node:
             tags=tags,
             file=file,
             line=line,
+            pipeline_reservation=pipeline_reservation,
         )
 
     def set(
@@ -315,6 +318,7 @@ class Node:
         tags: typing.Iterable = None,
         file=None,
         line=None,
+        pipeline_reservation=None,
     ):
         """
         Set params on an already created node with args that would typically go
@@ -380,6 +384,9 @@ class Node:
         if file is not None:
             self.file = file
             self.line = line
+
+        if pipeline_reservation is not None:
+            self.pipeline_reservation = pipeline_reservation
 
     def __enter__(self):
         Node._CONTEXT_STACK.append(self)
@@ -682,6 +689,7 @@ class Node:
             "autorun": self._autorun,
             "autorun_at": self._autorun_at,
             "sleep_when_done": self._sleep_when_done,
+            "pipeline_reservation": self.pipeline_reservation,
             "agent_only": t.Bool(os.getenv("CONDUCTO_AGENT_ONLY")),
         }
 

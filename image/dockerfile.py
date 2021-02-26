@@ -110,7 +110,7 @@ async def text_for_install(image, reqs_py, reqs_packages, reqs_docker, reqs_npm)
         # Upgrade pip to use the "--use-feature" input
         lines.append(f"RUN {py_binary} -m pip install --upgrade pip")
 
-        non_conducto_reqs_py = [r for r in reqs_py if r != "conducto"]
+        non_conducto_reqs_py = sorted({r for r in reqs_py if r != "conducto"})
         if non_conducto_reqs_py:
             # Don't use the 2020 resolver with non conducto reqs
             lines.append(

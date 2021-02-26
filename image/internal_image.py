@@ -93,13 +93,14 @@ class Image:
         shell=AUTO,
         name=None,
         git_urls=None,
+        _from_serialization=False,
         **kwargs,
     ):
 
         # TODO: remove pre_built back-compatibility for sept 9 changes
         kwargs.pop("pre_built", None)
         kwargs.pop("git_sha", None)
-        if len(kwargs):
+        if not _from_serialization and len(kwargs):
             raise ValueError(f"unknown args: {','.join(kwargs)}")
 
         if name is None:
@@ -493,7 +494,7 @@ class Image:
 
     @property
     def name_copied(self):
-        if self.needs_copying():
+        if self.needs_copying() or os.getenv("CONDUCTO_TEMPLATE_SOURCE"):
             return f"conducto_copied:{self._pipeline_id}_{self._get_image_tag()}"
         else:
             return self.name_installed
@@ -686,6 +687,8 @@ class Image:
                 await callback(status, None, entry)
 
     def needs_cloning(self):
+        if os.getenv("CONDUCTO_TEMPLATE_SOURCE"):
+            return False
         return bool(self.copy_branch)
 
     def _get_clone_dest(self):
@@ -796,6 +799,14 @@ class Image:
         Image._COMPLETED_CLONES.add(dest)
 
     async def _pull(self, st: "HistoryEntry"):
+        if os.getenv("CONDUCTO_TEMPLATE_SOURCE"):
+            t_id = os.getenv("CONDUCTO_TEMPLATE_SOURCE")
+            tempsrc = f"{self.registry}/{self.repo_name}:template-{t_id}-{self._get_image_tag()}"
+            log.log(f"building {self.name} based on template {tempsrc}")
+            await st.run("docker", "pull", tempsrc)
+            await st.run("docker", "tag", tempsrc, self.name_copied)
+            return
+
         is_dockerhub_image = True
         if "/" in self.image:
             possible_domain = self.image.split("/", 1)[0]
@@ -1054,6 +1065,10 @@ class Image:
         resources from a local machine -- such as copy_dir or a non-Git-based dockerfile
         -- then it cannot do this and needs an Agent to be built.
         """
+        if os.getenv("CONDUCTO_TEMPLATE_SOURCE"):
+            # if sourcing images from a prior template then the code &
+            # dockerfile are pre-built in said template.
+            return True
         if self.copy_dir:
             return False
         if self.dockerfile and not self.copy_branch:
@@ -1096,12 +1111,18 @@ class Image:
                 return False
 
     def needs_building(self):
+        if os.getenv("CONDUCTO_TEMPLATE_SOURCE"):
+            return False
         return self.dockerfile is not None
 
     def needs_installing(self):
+        if os.getenv("CONDUCTO_TEMPLATE_SOURCE"):
+            return False
         return self.reqs_py or self.reqs_packages or self.reqs_docker
 
     def needs_copying(self):
+        if os.getenv("CONDUCTO_TEMPLATE_SOURCE"):
+            return False
         return self.copy_dir is not None or self.copy_url is not None
 
     def _is_s3_url(self):

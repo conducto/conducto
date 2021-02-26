@@ -32,7 +32,6 @@ method), you can register it as the default handler for a given file type::
 import conducto as co
 import os
 import uuid
-import weakref
 
 from matplotlib._pylab_helpers import Gcf
 from matplotlib.backends.backend_agg import FigureManagerBase, FigureCanvasAgg
@@ -45,10 +44,6 @@ from matplotlib.figure import Figure
 # window/figure managers, etc...
 #
 ########################################################################
-
-# Gcf.get_all_fig_managers() returns all FigureManagers used so far. Keep a record so
-# we don't print plots multiple times.
-_SHOWN_MANAGERS = weakref.WeakSet()
 
 
 def show(*, block=None):
@@ -67,7 +62,7 @@ def show(*, block=None):
     if not co.nb.IN_MARKDOWN:
         print("\n<ConductoMarkdown>")
     for manager in Gcf.get_all_fig_managers():
-        if manager in _SHOWN_MANAGERS:
+        if not manager.canvas.figure.stale:
             continue
 
         basepath = f".mpl_plots/{uuid.uuid4()}.png"
@@ -79,7 +74,7 @@ def show(*, block=None):
         url = co.data.pipeline.url(basepath)
         print(f"![plot]({url})")
 
-        _SHOWN_MANAGERS.add(manager)
+        manager.canvas.figure.stale = False
 
     if not co.nb.IN_MARKDOWN:
         print("</ConductoMarkdown>")

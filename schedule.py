@@ -97,6 +97,21 @@ def create_template(installation_id, pipeline_id, token: t.Token = None):
     return api_utils.get_data(response)
 
 
+def delete_template(installation_id, template_id, token: t.Token = None):
+    config = co.api.Config()
+
+    url = config.get_url()
+    if not token:
+        token = config.get_token(refresh=False)
+
+    headers = api_utils.get_auth_headers(token)
+    response = request_utils.delete(
+        f"{url}/integrations/schedule/{installation_id}/template/{template_id}",
+        headers=headers,
+    )
+    return api_utils.get_data(response)
+
+
 def launch_template(installation_id, template_id, token: t.Token = None):
     config = co.api.Config()
 

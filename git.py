@@ -5,7 +5,7 @@ from conducto.integrations import git
 # from conducto import callback
 
 
-def apply_status(parent, *, inherited=False):
+def apply_status(parent):
     """initialize github checks status updating for node or subtree of nodes"""
     from conducto.shared import log
 

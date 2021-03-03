@@ -14,7 +14,9 @@ from ..shared import async_utils, constants
 _ROOT_USER_STRS = {"", "0", "root"}
 
 
-async def text_for_install(image, reqs_py, reqs_packages, reqs_docker, reqs_npm):
+async def text_for_install(
+    image, install_pip, install_packages, install_docker, install_npm
+):
     lines = [f"FROM {image}"]
 
     linux_flavor, linux_version, linux_name = None, None, None
@@ -38,8 +40,8 @@ async def text_for_install(image, reqs_py, reqs_packages, reqs_docker, reqs_npm)
         lines.append("USER 0")
 
     # Install any packages the user requests
-    if reqs_packages:
-        package_str = " ".join(shlex.quote(p) for p in reqs_packages)
+    if install_packages:
+        package_str = " ".join(shlex.quote(p) for p in install_packages)
         if _is_debian(linux_flavor):
             lines_append_once("RUN apt-get update")
             lines.append(f"RUN apt-get install -y {package_str}")
@@ -58,7 +60,7 @@ async def text_for_install(image, reqs_py, reqs_packages, reqs_docker, reqs_npm)
             )
 
     # Install docker if needed
-    if reqs_docker:
+    if install_docker:
         lines.append("RUN curl -sSL https://get.docker.com/ | sh")
         if _is_debian(linux_flavor):
             lines_append_once("RUN apt-get update")
@@ -75,7 +77,7 @@ async def text_for_install(image, reqs_py, reqs_packages, reqs_docker, reqs_npm)
             )
 
     # Install python packages with pip
-    if reqs_py:
+    if install_pip:
         py_binary, _py_version, pip_binary = await get_python_version(image)
         if not pip_binary:
             # install pip as per distro
@@ -104,20 +106,20 @@ async def text_for_install(image, reqs_py, reqs_packages, reqs_docker, reqs_npm)
 
         if py_binary is None:
             raise Exception(
-                f"Cannot find suitable python in {image} for installing {reqs_py}"
+                f"Cannot find suitable python in {image} for installing {install_pip}"
             )
 
         # Upgrade pip to use the "--use-feature" input
         lines.append(f"RUN {py_binary} -m pip install --upgrade pip")
 
-        non_conducto_reqs_py = sorted({r for r in reqs_py if r != "conducto"})
-        if non_conducto_reqs_py:
+        non_conducto_install_pip = sorted({r for r in install_pip if r != "conducto"})
+        if non_conducto_install_pip:
             # Don't use the 2020 resolver with non conducto reqs
             lines.append(
-                f"RUN {py_binary} -m pip install " + " ".join(non_conducto_reqs_py)
+                f"RUN {py_binary} -m pip install " + " ".join(non_conducto_install_pip)
             )
 
-        if "conducto" in reqs_py:
+        if "conducto" in install_pip:
             tag = api.Config().get_image_tag()
             if tag:
                 conducto_image = "conducto"
@@ -135,22 +137,22 @@ async def text_for_install(image, reqs_py, reqs_packages, reqs_docker, reqs_npm)
                 lines.append(f"RUN {py_binary} -m pip install conducto=={__version__}")
 
     # Install npm packages
-    if reqs_npm:
+    if install_npm:
         # TODO: check for and install node
         lines.append(f"RUN mkdir -p {constants.ConductoPaths.COPY_LOCATION}")
-        if reqs_npm is True:
+        if install_npm is True:
             lines.append(f"RUN cd {constants.ConductoPaths.COPY_LOCATION} && npm i")
         else:
-            non_conducto_reqs_npm = [i for i in reqs_npm if i != "conducto"]
-            if "conducto" in reqs_npm and "esm" not in reqs_npm:
-                non_conducto_reqs_npm.append("esm")
+            non_conducto_install_npm = [i for i in install_npm if i != "conducto"]
+            if "conducto" in install_npm and "esm" not in install_npm:
+                non_conducto_install_npm.append("esm")
 
             lines.append(
                 f"RUN cd {constants.ConductoPaths.COPY_LOCATION} && npm i "
-                + " ".join(i for i in reqs_npm if i != "conducto")
+                + " ".join(i for i in install_npm if i != "conducto")
             )
 
-    if type(reqs_npm) == list and "conducto" in reqs_npm:
+    if type(install_npm) == list and "conducto" in install_npm:
         tag = api.Config().get_image_tag()
         if tag:
             conducto_image = "conductojs"

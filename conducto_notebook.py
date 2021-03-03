@@ -1,3 +1,5 @@
+from .nb.conducto_notebook import main
+
 import asyncio
 import socket
 import os
@@ -24,23 +26,6 @@ if sys.version_info < (3, 7):
     # create_task is stdlib in 3.7, but we can declare it as a synonym for the
     # 3.6 ensure_future
     asyncio.create_task = asyncio.ensure_future
-
-
-# Several debug modes:
-# - "copy": shows command + environment variables, as it appears
-#   inside the container
-# - "login": running this container locally with all the
-#   env set up.
-# - "run": running this container, with all env, and running the
-#   node's command as well
-# - "liverun": only available if using co.Image(root="..."), similar to run
-#   except that it bind mounts your root directory inside the image so that
-#   you get your latest code.
-# - "debug": similar to run except that instead of starting the docker shell
-#   and running the command, it actually just prints the command and runs
-#   bash so that you can modify it yourself prior to running.
-#   TODO: put the command in the history using `history -s`, but not sure how to do that
-# - "livedebug": livedebug is to debug as liverun is to live.
 
 
 async def get_exec_node_queue_stats(token, id, node, timestamp=None):
@@ -88,18 +73,6 @@ def get_param(payload, param, default=None):
         if name == param:
             return val
     return default
-
-
-async def stop_container(container_name):
-    in_manager = constants.ExecutionEnv.value() in constants.ExecutionEnv.manager_all
-    in_cloud = constants.ExecutionEnv.value() in constants.ExecutionEnv.cloud
-
-    if in_manager and not in_cloud:
-        out, err = await async_utils.run_and_check(
-            "docker",
-            "stop",
-            container_name,
-        )
 
 
 async def start_container(pipeline, payload, live, token, logger):
@@ -221,38 +194,28 @@ async def start_container(pipeline, payload, live, token, logger):
     command = f"docker run -d --rm {' '.join(options)} --name={container_name} {image_name} tail -f /dev/null "
 
     await async_utils.run_and_check(command, shell=True)
-    if not live:
-        path_map = image["path_map"] or {}
-        for internal in path_map.values():
-            if internal == constants.ConductoPaths.COPY_LOCATION:
-                await execute_in(
-                    container_name,
-                    f"sed -i 's/{{__conducto_token__}}/{token}/' {internal}/.git/config || true",
-                )
-                break
     return container_name
 
 
 async def dump_command(container_name, command, shell, logger, create_launch_json, env):
     # Create in-memory tar file since docker will take that on stdin with no
     # tempfile needed.
-    for filename in ["/cmd.conducto", "/conducto/cmd.sh"]:
-        tario = io.BytesIO()
-        with tarfile.TarFile(fileobj=tario, mode="w") as cmdtar:
-            content = f"#!{shell}\n{command}"
-            if not content.endswith("\n"):
-                content += "\n"
-            tfile = tarfile.TarInfo(os.path.basename(filename))
-            tfile.size = len(content)
-            cmdtar.addfile(tfile, io.BytesIO(content.encode("utf-8")))
+    tario = io.BytesIO()
+    with tarfile.TarFile(fileobj=tario, mode="w") as cmdtar:
+        content = command
+        if not content.endswith("\n"):
+            content += "\n"
+        tfile = tarfile.TarInfo("cmd.conducto")
+        tfile.size = len(content)
+        cmdtar.addfile(tfile, io.BytesIO(content.encode("utf-8")))
 
-        args = ["docker", "cp", "-", f"{container_name}:{os.path.dirname(filename)}"]
-        try:
-            await async_utils.run_and_check(*args, input=tario.getvalue())
-        except client_utils.CalledProcessError as e:
-            raise RuntimeError(f"Error placing {filename}: ({e})")
+    args = ["docker", "cp", "-", f"{container_name}:/"]
+    try:
+        out, err = await async_utils.run_and_check(*args, input=tario.getvalue())
+    except client_utils.CalledProcessError as e:
+        raise RuntimeError(f"Error placing /cmd.conducto: ({e})")
 
-        await execute_in(container_name, f"chmod u+x {filename}")
+    await execute_in(container_name, f"chmod u+x /cmd.conducto")
 
     if create_launch_json:
         cmd_parts = command.split()
@@ -287,13 +250,18 @@ async def dump_command(container_name, command, shell, logger, create_launch_jso
                 f"{container_name}:{constants.ConductoPaths.COPY_LOCATION}/",
             ]
             try:
-                await async_utils.run_and_check(*args, input=tario.getvalue())
+                out, err = await async_utils.run_and_check(
+                    *args, input=tario.getvalue()
+                )
             except client_utils.CalledProcessError as e:
                 raise RuntimeError(
                     f"Error placing {constants.ConductoPaths.COPY_LOCATION}/.vscode/launch.json: ({e})"
                 )
 
-    logger(f"Execute command by running {format('/conducto/cmd.sh', color='cyan')}")
+    shell_alias = {"/bin/sh": "sh", "/bin/bash": "bash"}.get(shell, shell)
+    logger(
+        f"Execute command by running {format(f'{shell_alias} /cmd.conducto', color='cyan')}"
+    )
 
 
 async def get_image_inspection(image_name):
@@ -331,21 +299,6 @@ async def get_home_dir_for_image(image_name):
     return out.decode().strip()
 
 
-async def get_linux_flavor(container_name):
-    cmd = 'sh -c "cat /etc/*-release | grep ^ID="'
-    output = (await execute_in(container_name, cmd)).decode("utf8").strip()
-
-    flavor = re.search(r"^ID=(.*)", output, re.M)
-    flavor = flavor.groups()[0].strip().strip('"')
-
-    if "ubuntu" in flavor or "debian" in flavor:
-        return "debian"
-    elif "alpine" in flavor:
-        return "alpine"
-    else:
-        return f"unknown - {flavor}"
-
-
 async def execute_in(container_name, command):
     # using this instead of shell is slightly faster
     out, err = await async_utils.run_and_check(
@@ -359,84 +312,12 @@ async def execute_in(container_name, command):
     return out
 
 
-async def print_editor_commands(container_name, logger):
-    flavor = await get_linux_flavor(container_name)
-    if flavor == "ubuntu":
-        uid_str = await execute_in(container_name, "id -u")
-        base = "apt-get update"
-        each = "apt-get install"
-        if int(uid_str) != 0:
-            base = f"sudo {base}"
-            each = f"sudo {each}"
-    elif flavor == "alpine":
-        base = "apk update"
-        each = "apk add"
-    else:
-        return
-
-    editors = {"vim": "blue", "emacs": "cyan", "nano": "green"}
-    logger("To install an editor, run:", end="")
-    sep = ""
-    for editor, color in editors.items():
-        logger(sep, format(f"{base} && {each} {editor}", color=color), end="")
-        sep = " or"
-    logger()
-
-
 def start_shell(container_name, env_list, shell):
     subprocess.call(["docker", "exec", "-it", *env_list, container_name, shell])
     subprocess.call(["docker", "kill", container_name])
 
 
-def start_remote_shell(remote_callback, container_name, env_list, shell):
-    """
-    Executes into a remote debug container
-    Returns:
-        send() to send input into the container
-        recv() to receive output from the container
-        finish_task
-
-    """
-    import shlex
-    import pexpect
-
-    buf = client_utils.ByteBuffer(cb=remote_callback)
-
-    child = pexpect.spawn(
-        " ".join(
-            shlex.quote(i)
-            for i in ["docker", "exec", "-it", *env_list, container_name, shell]
-        ),
-        timeout=None,
-    )
-    child.logfile_read = buf
-
-    close = child.close
-
-    async def finish():
-        try:
-            while True:
-                try:
-                    await child.expect(pexpect.EOF, async_=True, timeout=5)
-                except pexpect.TIMEOUT:
-                    pass
-                else:
-                    break
-        except:
-            pass
-        finally:
-            close()
-            await async_utils.run_and_check("docker", "kill", container_name)
-
-    # wait on for the child to exit in the background, once it does exit terminate the container
-    finish_task = asyncio.create_task(finish())
-
-    return child.send, buf, close, finish_task, child.setwinsize
-
-
-async def _debug(
-    id, node, live, timestamp, remote_callback=None, logger=print, start=True
-):
+async def _edit(id, node, live, timestamp, logger=print):
     from . import api
 
     pl = constants.PipelineLifecycle
@@ -471,6 +352,8 @@ async def _debug(
         pipeline = api.Pipeline().get(pipeline_id, token=token)
 
     payload = await get_queue_stats_task
+
+    logger(f"JDS payload: {payload}")
 
     if status in pl.local:
         image = get_param(payload, "image", default={})
@@ -511,54 +394,69 @@ async def _debug(
         env_list += ["-e", f"{key}={value}"]
 
     if status in pl.cloud:
-        (
-            docker_login_cmd,
-            docker_registry,
-        ) = await api.AsyncAuth().get_ecr_credentials()
+        docker_domain = api.Config().get_docker_domain()
+
+        cmd = [
+            "docker",
+            "login",
+            "-u",
+            "conducto",
+            "--password-stdin",
+            f"https://{docker_domain}",
+        ]
 
         try:
-            _, stderr = await async_utils.run_and_check(docker_login_cmd, shell=True)
+            _, stderr = await async_utils.run_and_check(
+                *cmd, input=token.encode("utf-8")
+            )
         except client_utils.CalledProcessError as e:
             logger(e)
-            raise api.api_utils.NoTracebackError(
-                f"error logging into {docker_registry}; unable to debug\n{e}"
-            ) from None
+            logger(
+                f"error logging into https://{docker_domain}; unable to debug\n{e}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    print(f"JDS starting container")
 
     container_name = await start_container(pipeline, payload, live, token, logger)
 
-    shell = get_param(payload, "image", default={}).get("shell", "/bin/sh")
-    dump_command_task = asyncio.create_task(
-        dump_command(
-            container_name,
-            get_param(payload, "commandSummary"),
-            shell,
-            logger,
-            not start,
-            full_env_dict,
-        )
-    )
+    print(f"JDS container started")
 
-    if not live:
-        await print_editor_commands(container_name, logger)
+    print(f"JDS ")
 
-    await dump_command_task
-    if remote_callback:
-        return start_remote_shell(remote_callback, container_name, env_list, shell)
-    elif start:
-        start_shell(container_name, env_list, shell)
-    else:
-        logger(container_name)
+    version = await execute_in(container_name, "python --version")
+
+    print(f"JDS version: {version}")
+
+    return version
+
+    # shell = get_param(payload, "image", default={}).get("shell", "/bin/sh")
+    # dump_command_task = asyncio.create_task(
+    #    dump_command(
+    #        container_name,
+    #        get_param(payload, "commandSummary"),
+    #        shell,
+    #        logger,
+    #        not start,
+    #        full_env_dict,
+    #    )
+    # )
+
+    # await dump_command_task
+    # start_server()
+    # start_shell(container_name, env_list, shell)
+    # if remote_callback:
+    #    return start_remote_shell(remote_callback, container_name, env_list, shell)
+    # elif start:
+    #    start_shell(container_name, env_list, shell)
+    # else:
+    #    logger(container_name)
 
 
-async def remote_debug(send_to_ws, remote_callback, id, node, live, timestamp=None):
-    # TODO (apeng) this will also cause all the logging in the manager to get messed up, find another solution
-    # os.environ["TERM"] = ":)"  # hack to make format() work
-    return await _debug(id, node, live, timestamp, remote_callback, send_to_ws)
+async def edit(id, node, live, timestamp=None):
+    await _edit(id, node, live, timestamp, logger=print)
 
 
-async def debug(id, node, timestamp=None, shell=True):
-    await _debug(id, node, False, timestamp, logger=print, start=shell)
-
-
-async def livedebug(id, node, timestamp=None):
-    await _debug(id, node, True, timestamp, logger=print)
+async def liveedit(id, node, live, timestamp=None):
+    await _edit(id, node, live, timestamp, logger=print)

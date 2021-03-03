@@ -1,5 +1,6 @@
 import os
 import sys
+import subprocess
 import platform
 
 
@@ -107,13 +108,21 @@ def system_open(url):
     if is_windows():
         os.startfile(url)
     elif is_wsl1() or is_wsl2():
-        os.system(f'powershell.exe /c start "{sanitized}"')
+        subprocess.run(f'powershell.exe /c start "{sanitized}"', shell=True)
     elif is_mac():
-        os.system(f'open "{sanitized}"')
-    else:
+        subprocess.run(f'open "{sanitized}"', shell=True)
+    elif os.getenv("DISPLAY"):
         # assumed linux with DISPLAY variable
-        if os.environ.get("DISPLAY", None):
-            # Redirect output to dev-null because gui programs on linux print
-            # things which look scary but have little to do with the user level
-            # reality
-            os.system(f'xdg-open "{sanitized}" > /dev/null 2>&1')
+
+        # Linux xdg-open is moderately opaque due to the variety of desktop
+        # environments.  We take two precautions to avoid bad stuff happening
+        # for unexpected (mis)configurations.
+        # 1) Redirect output to dev-null because gui programs on linux
+        # print things which look scary but have little to do with the user
+        # level reality
+        # 2) Silently fail if this takes more than 2 seconds.
+        try:
+            cmd = f'xdg-open "{sanitized}" > /dev/null 2>&1'
+            subprocess.run(cmd, shell=True, timeout=2)
+        except subprocess.TimeoutExpired:
+            pass

@@ -97,7 +97,7 @@ class Repository:
 class Image:
     """
     :param image:  Specify the base image to start from. Code can be added with
-        various context* variables, and packages with reqs_* variables.
+        various context* variables, and packages with install_* variables.
     :type image: `str`
 
     :param dockerfile:  Use instead of :code:`image` and pass a path to a Dockerfile.
@@ -105,6 +105,11 @@ class Image:
         written. Unless :code:`context` is specified, it uses the directory of the
         Dockerfile as the build context
     :type dockerfile: `str`
+
+    :param dockerfile_text: Directly pass the text of a Dockerfile rather than linking
+        to one that's already written. If you want to use :code:`ADD` or :code:`COPY`
+        you must specify :code:`context` explicitly.
+    :type dockerfile_text: `str`
 
     :param docker_build_args: Dict mapping names of arguments to
         :code:`docker --build-args` to values
@@ -148,16 +153,20 @@ class Image:
         typically happens when a user-generated Dockerfile copies the code into the image.
     :type path_map: `None`
 
-    :param reqs_py:  List of Python packages for Conducto to :code:`pip install` into
+    :param install_pip:  List of Python packages for Conducto to :code:`pip install` into
         the generated Docker image.
-    :type reqs_py: `List[str]`
+    :type install_pip: `List[str]`
 
-    :param reqs_packages: List of packages to install with the appropriate Linux package
+    :param install_npm: List of npm packages for Conducto to :code:`npm i` into the
+        generated Docker image.
+    :type install_npm: `List[str]`
+
+    :param install_packages: List of packages to install with the appropriate Linux package
         manager for this image's flavor.
-    :type reqs_packages: `List[str]`
+    :type install_packages: `List[str]`
 
-    :param reqs_docker: If :code:`True`, install Docker during build time.
-    :type reqs_docker: `bool`
+    :param install_docker: If :code:`True`, install Docker during build time.
+    :type install_docker: `bool`
 
     :param shell: Which shell to use in this container. Defaults to :code:`co.Image.AUTO` to
         auto-detect. :code:`AUTO` will prefer :code:`/bin/bash` when available, and fall back to
@@ -173,6 +182,14 @@ class Image:
         used to determine where relative paths passed into co.Image are relative from. This is
         automatically populated internally by conducto.
     :type instantiation_directory: `str`
+
+    :param reqs_py:  Deprecated. Use :code:`install_py` instead.
+
+    :param reqs_npm:  Deprecated. Use :code:`install_npm` instead.
+
+    :param reqs_packages:  Deprecated. Use :code:`install_packages` instead.
+
+    :param reqs_docker:  Deprecated. Use :code:`install_docker` instead.
     """
 
     _CONTEXT = None
@@ -184,6 +201,7 @@ class Image:
         image=None,
         *,
         dockerfile=None,
+        dockerfile_text=None,
         docker_build_args=None,
         context=None,
         copy_repo=None,
@@ -191,23 +209,27 @@ class Image:
         copy_url=None,
         copy_branch=None,
         docker_auto_workdir=True,
-        reqs_py=None,
-        reqs_npm=None,
-        reqs_packages=None,
-        reqs_docker=False,
+        install_pip=None,
+        install_npm=None,
+        install_packages=None,
+        install_docker=False,
         path_map=None,
         shell=AUTO,
         name=None,
         git_urls=None,
         instantiation_directory=None,
-        _from_serialization=False,
+        # For backwards-compatibility only
+        reqs_py=None,
+        reqs_npm=None,
+        reqs_packages=None,
+        reqs_docker=False,
         **kwargs,
     ):
 
         # TODO: remove pre_built back-compatibility for sept 9 changes
         kwargs.pop("pre_built", None)
         kwargs.pop("git_sha", None)
-        if not _from_serialization and len(kwargs):
+        if len(kwargs):
             raise ValueError(f"unknown args: {kwargs}")
 
         if name is None:
@@ -217,6 +239,7 @@ class Image:
         self.copy_url = copy_url
         self.image = image
         self.dockerfile = dockerfile
+        self.dockerfile_text = dockerfile_text
         self.docker_build_args = docker_build_args
         self.context = context
         self.copy_repo = copy_repo
@@ -224,10 +247,10 @@ class Image:
         self.copy_url = copy_url
         self.copy_branch = copy_branch
         self.docker_auto_workdir = docker_auto_workdir
-        self.reqs_py = reqs_py
-        self.reqs_npm = reqs_npm
-        self.reqs_packages = reqs_packages
-        self.reqs_docker = reqs_docker
+        self.install_pip = install_pip or reqs_py
+        self.install_npm = install_npm or reqs_npm
+        self.install_packages = install_packages or reqs_packages
+        self.install_docker = install_docker or reqs_docker
         self.path_map = path_map or {}
         self.shell = shell
         self.git_urls = git_urls
@@ -238,7 +261,7 @@ class Image:
         return isinstance(other, Image) and self.to_dict() == other.to_dict()
 
     @staticmethod
-    def _serialize_path(p):
+    def _serialize_path(p: typing.Union[imagepath.Path, str]):
         return p._id() if isinstance(p, imagepath.Path) else p
 
     @staticmethod
@@ -265,6 +288,7 @@ class Image:
             "name": self.name,
             "image": self.image,
             "dockerfile": self._serialize_path(self.dockerfile),
+            "dockerfile_text": self.dockerfile_text,
             "docker_build_args": self.docker_build_args,
             "docker_auto_workdir": self.docker_auto_workdir,
             "context": self._serialize_path(self.context),
@@ -272,13 +296,18 @@ class Image:
             "copy_dir": self._serialize_path(self.copy_dir),
             "copy_url": self.copy_url,
             "copy_branch": self.copy_branch,
-            "reqs_py": self.reqs_py,
-            "reqs_npm": self.reqs_npm,
-            "reqs_packages": self.reqs_packages,
-            "reqs_docker": self.reqs_docker,
+            "install_pip": self.install_pip,
+            "install_npm": self.install_npm,
+            "install_packages": self.install_packages,
+            "install_docker": self.install_docker,
             "path_map": self._serialize_pathmap(self.path_map),
             "shell": self.shell,
             "instantiation_directory": self.instantiation_directory,
+            # For backcompat only
+            "reqs_py": self.install_pip,
+            "reqs_npm": self.install_npm,
+            "reqs_packages": self.install_packages,
+            "reqs_docker": self.install_docker,
         }
 
     # Note: these methods are not needed in non-python implementations

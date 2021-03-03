@@ -236,7 +236,7 @@ def main():
             script += (
                 'if(typeof(out) == "object") { '
                 "let cls_name = out.constructor.name;  "
-                'if(cls_name == "Exec" || cls_name == "Parallel" || cls_name == "Serial") out.output();}'
+                'if(cls_name == "Exec" || cls_name == "Notebook" || cls_name == "Parallel" || cls_name == "Serial") out.output();}'
             )
 
             to_exec = f"node -r esm -e '{script}'"

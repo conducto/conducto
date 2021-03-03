@@ -35,7 +35,12 @@ def jsonable(obj):
 
 
 def load_node(kwargs):
-    use_cls = {"Exec": Exec, "Serial": Serial, "Parallel": Parallel}[kwargs["type"]]
+    use_cls = {
+        "Exec": Exec,
+        "Serial": Serial,
+        "Parallel": Parallel,
+        "Notebook": Notebook,
+    }[kwargs["type"]]
     return use_cls(**{k: v for k, v in kwargs.items() if k in KEY_PARAMS})
 
 
@@ -429,6 +434,12 @@ class Node:
             cur = cur.parent
         return "/".join(name[::-1]).replace("//", "/")
 
+    def _repr_pretty_(self, p, cycle):
+        if cycle:
+            p.text(f"<Node name={self} ... />")
+        else:
+            p.text(self.pretty(strict=False))
+
     @property
     def name(self):
         return self._name
@@ -628,6 +639,7 @@ class Node:
             "type": self.__class__.__name__,
             "file": self.file,
             "line": self.line,
+            "is_notebook": False,
         }
         if self.doc:
             output["doc"] = self.doc
@@ -649,6 +661,10 @@ class Node:
             output["stop_on_error"] = self.stop_on_error
         if isinstance(self, Exec):
             output["command"] = self.command
+        if isinstance(self, Notebook):
+            output["command"] = self.command
+            output["type"] = Exec.__name__
+            output["is_notebook"] = True
         return output
 
     @staticmethod
@@ -788,8 +804,8 @@ class Node:
         # :param tags: If specified, should be a list of strings. The app lets you filter programs based on these tags.
         # :param title: Title to show in the program list in the app. If unspecified, the title will be based on the command line.
 
-        self._build(
-            build_mode=constants.BuildMode.LOCAL,
+        self.launch(
+            local=True,
             shell=use_shell,
             retention=retention,
             run=run,
@@ -864,9 +880,11 @@ class Node:
 
         subprocess.run(args, input=self.serialize().encode("utf-8"))
 
-    def _build(
+    def launch(
         self,
-        build_mode=constants.BuildMode.LOCAL,
+        local=False,
+        cloud=False,
+        k8s=False,
         shell=False,
         app=False,
         retention=7,
@@ -880,6 +898,17 @@ class Node:
             if os.getenv("CONDUCTO_EMULATE_MULTILANG")
             else self._build_optim
         )
+        if bool(local) + bool(cloud) + bool(k8s) > 1:
+            raise ValueError(
+                f"Too many run modes selected (max: 1). local={local} cloud={cloud} k8s={k8s}"
+            )
+        if cloud:
+            build_mode = constants.BuildMode.DEPLOY_TO_CLOUD
+        elif k8s:
+            build_mode = constants.BuildMode.DEPLOY_TO_K8S
+        else:
+            # Default to local if none are specified
+            build_mode = constants.BuildMode.LOCAL
         build_func(
             build_mode=build_mode,
             shell=shell,
@@ -893,10 +922,13 @@ class Node:
 
     def check_images(self):
         for node in self.stream():
-            if isinstance(node, Exec):
+            if isinstance(node, (Exec, Notebook)):
                 node.expanded_command()
 
     def pretty(self, strict=True):
+        from .internal.build import validate_tree
+
+        validate_tree(self, cloud=False, check_images=False, set_default=False)
         buf = []
         self._pretty("", "", "", buf, strict)
         return "\n".join(buf)
@@ -913,7 +945,7 @@ class Node:
           │ └─ Parallel2   "echo 'I also run first"
           └─2 Second   "echo 'I run last.'"
         """
-        if isinstance(self, Exec):
+        if isinstance(self, (Exec, Notebook)):
             node_str = f"{log.format(self.name, color='cyan')}   {self.expanded_command(strict)}"
             node_str = node_str.strip().replace("\n", "\\n")
         else:
@@ -1203,6 +1235,36 @@ class Serial(Node):
             line=line,
         )
         self.stop_on_error = stop_on_error
+
+
+class Notebook(Exec):
+    """
+    A node that contains an executable command
+
+    :param command: A shell command to execute or a python callable
+    :type command: `str`
+
+    If a Python callable is specified for the command the `args` and `kwargs`
+    are serialized and a `conducto` command line is constructed to launch the
+    function for that node in the pipeline.
+    """
+
+    __slots__ = ("command",)
+
+    def __init__(self, command, *args, **kwargs):
+        from .glue import method
+
+        command, kwargs = method.Wrapper.to_command_for_notebook(command, **kwargs)
+
+        if args:
+            raise ValueError(
+                f"Only allowed arg is command. Got:\n  command={repr(command)}\n  args={args}\n  kwargs={kwargs}"
+            )
+
+        super().__init__(command, **kwargs)
+
+        # Instance variables
+        self.command = log.unindent(command)
 
 
 _abspath = functools.lru_cache(1000)(os.path.abspath)

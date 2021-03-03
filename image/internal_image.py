@@ -78,6 +78,7 @@ class Image:
         *,
         instantiation_directory=None,
         dockerfile=None,
+        dockerfile_text=None,
         docker_build_args=None,
         context=None,
         copy_repo=None,
@@ -85,38 +86,49 @@ class Image:
         copy_url=None,
         copy_branch=None,
         docker_auto_workdir=True,
-        reqs_py=None,
-        reqs_npm=None,
-        reqs_packages=None,
-        reqs_docker=False,
+        install_pip=None,
+        install_npm=None,
+        install_packages=None,
+        install_docker=False,
         path_map=None,
         shell=AUTO,
         name=None,
         git_urls=None,
-        _from_serialization=False,
+        # For backwards compatibility only
+        reqs_py=None,
+        reqs_npm=None,
+        reqs_packages=None,
+        reqs_docker=False,
         **kwargs,
     ):
 
         # TODO: remove pre_built back-compatibility for sept 9 changes
         kwargs.pop("pre_built", None)
         kwargs.pop("git_sha", None)
-        if not _from_serialization and len(kwargs):
-            raise ValueError(f"unknown args: {','.join(kwargs)}")
+
+        if len(kwargs):
+            # `internal_image` should check kwargs when called interactively. Docker
+            # images can have version mismatches, however, so don't break if the image
+            # gets some parameters from the future.
+            EE = constants.ExecutionEnv
+            if EE.value() not in (EE.manager_all | EE.agent):
+                raise ValueError(f"unknown args: {','.join(kwargs)}")
 
         if name is None:
             raise Exception("Image has no name")
 
         self.name = name
 
-        if image and dockerfile:
+        if bool(image) + bool(dockerfile) + bool(dockerfile_text) > 1:
             raise ValueError(
-                f"Cannot specify both image ({image}) and dockerfile ({dockerfile})"
+                f"Must specify at most 1: image={image} dockerfile={dockerfile} "
+                f"dockerfile_text=({len(dockerfile_text or '')} chars)"
             )
-        if not image and not dockerfile:
+        if not image and not dockerfile and not dockerfile_text:
             # Default to user's current version of python, if none is specified
             image = f"python:{sys.version_info[0]}.{sys.version_info[1]}-slim"
-            if not reqs_py:
-                reqs_py = ["conducto"]
+            if not install_pip:
+                install_pip = ["conducto"]
         if copy_dir and copy_url:
             raise ValueError(
                 f"Must not specify copy_dir ({copy_dir}) and copy_url ({copy_url})."
@@ -138,6 +150,7 @@ class Image:
         self.image = image
         self.instantiation_directory = instantiation_directory
         self.dockerfile = dockerfile
+        self.dockerfile_text = dockerfile_text
         self.docker_build_args = docker_build_args
         self.context = context
         self.copy_repo = copy_repo
@@ -146,26 +159,12 @@ class Image:
         self.copy_url = copy_url
         self.copy_branch = copy_branch
         self.docker_auto_workdir = docker_auto_workdir
-        self.reqs_py = reqs_py
-        self.reqs_npm = reqs_npm
-        self.reqs_packages = reqs_packages
-        self.reqs_docker = reqs_docker
+        self.install_pip = install_pip or reqs_py
+        self.install_npm = install_npm or reqs_npm
+        self.install_packages = install_packages or reqs_packages
+        self.install_docker = install_docker or reqs_docker
         self.path_map = path_map or {}
         self.shell = shell
-
-        self.auth = conducto.api.Auth()
-        self.cfg = conducto.api.Config()
-
-        try:
-            _, self.registry = self.auth.get_ecr_credentials()
-            self.repo_name = self.cfg.get_repo_name()
-        except Exception as e:
-            # User missing credentials, or endpoing not found:
-            # 1. workaround for 1st time deployment;
-            # 2. Sandbox scenario where we're only building images for local mode
-            print(e)
-            self.registry = None
-            self.repo_name = None
 
         if self.path_map:
             # on deserialize pathmaps are strings but they may also be strings when
@@ -349,6 +348,7 @@ class Image:
             "name": self.name,
             "image": self.image,
             "dockerfile": self._serialize_path(self.dockerfile),
+            "dockerfile_text": self.dockerfile_text,
             "docker_build_args": self.docker_build_args,
             "docker_auto_workdir": self.docker_auto_workdir,
             "context": self._serialize_path(self.context),
@@ -356,10 +356,10 @@ class Image:
             "copy_dir": self._serialize_path(self.copy_dir),
             "copy_url": self.copy_url,
             "copy_branch": self.copy_branch,
-            "reqs_py": self.reqs_py,
-            "reqs_npm": self.reqs_npm,
-            "reqs_packages": self.reqs_packages,
-            "reqs_docker": self.reqs_docker,
+            "install_pip": self.install_pip,
+            "install_npm": self.install_npm,
+            "install_packages": self.install_packages,
+            "install_docker": self.install_docker,
             "path_map": self._serialize_pathmap(self.path_map),
             "shell": self.shell,
         }
@@ -507,7 +507,8 @@ class Image:
     def name_cloud_extended(self):
         if self._pipeline_id is None:
             raise ValueError("Must specify pipeline_id before pushing to cloud")
-        return f"{self.registry}/{self.repo_name}:{self._get_image_tag()}_{self._pipeline_id}"
+        registry, repo_name = _get_repo_info()
+        return f"{registry}/{repo_name}:{self._get_image_tag()}_{self._pipeline_id}"
 
     @property
     def status(self):
@@ -575,7 +576,11 @@ class Image:
         # Pull the image if needed
         if await self.needs_pulling():
             async with self._new_status(Status.PULLING, callback) as st:
-                if force_rebuild or not await self._image_exists(self.image):
+                if (
+                    force_rebuild
+                    or os.getenv("CONDUCTO_TEMPLATE_SOURCE")
+                    or not await self._image_exists(self.image)
+                ):
                     await callback()
                     await self._pull(st)
                     await st.finish()
@@ -801,7 +806,8 @@ class Image:
     async def _pull(self, st: "HistoryEntry"):
         if os.getenv("CONDUCTO_TEMPLATE_SOURCE"):
             t_id = os.getenv("CONDUCTO_TEMPLATE_SOURCE")
-            tempsrc = f"{self.registry}/{self.repo_name}:template-{t_id}-{self._get_image_tag()}"
+            registry, repo_name = _get_repo_info()
+            tempsrc = f"{registry}/{repo_name}:template-{t_id}-{self._get_image_tag()}"
             log.log(f"building {self.name} based on template {tempsrc}")
             await st.run("docker", "pull", tempsrc)
             await st.run("docker", "tag", tempsrc, self.name_copied)
@@ -840,22 +846,49 @@ class Image:
 
     async def _build(self, st: "HistoryEntry"):
         """
-        Build this Image's `dockerfile`. If copy_* or reqs_* are passed, then additional
-        code or packages will be added in a later step.
+        Build this Image's `dockerfile` or `dockerfile_text`. If `copy_*` or
+        `install_*` are passed, then additional code or packages will be added in a
+        later step.
         """
-        assert self.dockerfile is not None
+        assert self.dockerfile is not None or self.dockerfile_text is not None
         # Build the specified dockerfile
         if self.needs_cloning():
             gitroot = self._get_clone_dest()
-            context = self.context.to_docker_mount(gitroot=gitroot)
-            dockerfile = self.dockerfile.to_docker_mount(gitroot=gitroot)
+            context = (
+                self.context.to_docker_mount(gitroot=gitroot) if self.context else None
+            )
+            dockerfile = (
+                self.dockerfile.to_docker_mount(gitroot=gitroot)
+                if self.dockerfile
+                else "-"
+            )
         elif self._is_s3_url():
             s3root = self._get_s3_dest()
-            context = self.context.to_docker_mount(s3root=s3root)
-            dockerfile = self.dockerfile.to_docker_mount(s3root=s3root)
+            context = (
+                self.context.to_docker_mount(s3root=s3root) if self.context else None
+            )
+            dockerfile = (
+                self.dockerfile.to_docker_mount(s3root=s3root)
+                if self.dockerfile
+                else "-"
+            )
         else:
-            context = self.context.to_docker_mount(pipeline_id=self._pipeline_id)
-            dockerfile = self.dockerfile.to_docker_mount(pipeline_id=self._pipeline_id)
+            context = (
+                self.context.to_docker_mount(pipeline_id=self._pipeline_id)
+                if self.context
+                else None
+            )
+            dockerfile = (
+                self.dockerfile.to_docker_mount(pipeline_id=self._pipeline_id)
+                if self.dockerfile
+                else "-"
+            )
+
+        dockerfile_args = ["-f", dockerfile]
+        if context is not None:
+            dockerfile_args.append(context)
+
+        input = None if self.dockerfile_text is None else self.dockerfile_text.encode()
 
         pipeline_id = os.getenv("CONDUCTO_PIPELINE_ID", self._pipeline_id)
         build_args = []
@@ -873,10 +906,9 @@ class Image:
             "--label",
             f"com.conducto.pipeline={pipeline_id}",
             *build_args,
-            "-f",
-            dockerfile,
-            context,
+            *dockerfile_args,
             env={**os.environ, "DOCKER_BUILDKIT": "1"},
+            input=input,
         )
 
     async def _install(self, st: "HistoryEntry"):
@@ -884,16 +916,16 @@ class Image:
         # with "-"
         text = await dockerfile_mod.text_for_install(
             self.name_built,
-            self.reqs_py,
-            self.reqs_packages,
-            self.reqs_docker,
-            self.reqs_npm,
+            self.install_pip,
+            self.install_packages,
+            self.install_docker,
+            self.install_npm,
         )
 
         # Only in test setting, if the conducto image is used, pull it!
         if (
-            self.reqs_py
-            and "conducto" in self.reqs_py
+            self.install_pip
+            and "conducto" in self.install_pip
             and os.environ.get("CONDUCTO_DEV_REGISTRY")
         ):
             pull_image = True
@@ -962,7 +994,7 @@ class Image:
         dockerignore_text = dockerfile_mod.dockerignore_for_copy(
             context, preserve_git=self.copy_repo or self.needs_cloning()
         )
-        if self.reqs_npm:
+        if self.install_npm:
             dockerignore_text += "\nnode_modules"
 
         dockerfile_path = f"/tmp/{self.name}/Dockerfile"
@@ -1073,13 +1105,15 @@ class Image:
             return False
         if self.dockerfile and not self.copy_branch:
             return False
+        if self.dockerfile_text and self.context and not self.copy_branch:
+            return False
         return True
 
     def get_steps(self, push_to_cloud):
         result = []
         if self.needs_cloning():
             result.append(Status.CLONING)
-        if self.image:
+        if self.needs_pulling():
             result.append(Status.PULLING)
         if self.needs_building():
             result.append(Status.BUILDING)
@@ -1093,6 +1127,10 @@ class Image:
         return result
 
     async def needs_pulling(self):
+        if os.getenv("CONDUCTO_TEMPLATE_SOURCE"):
+            # if running from a template, the template image must _always_ be
+            # pulled from the ECR
+            return True
         if not self.image:
             # If not based on a Docker image, then nothing to pull
             return False
@@ -1113,12 +1151,17 @@ class Image:
     def needs_building(self):
         if os.getenv("CONDUCTO_TEMPLATE_SOURCE"):
             return False
-        return self.dockerfile is not None
+        return self.dockerfile is not None or self.dockerfile_text is not None
 
     def needs_installing(self):
         if os.getenv("CONDUCTO_TEMPLATE_SOURCE"):
             return False
-        return self.reqs_py or self.reqs_packages or self.reqs_docker
+        return (
+            self.install_pip
+            or self.install_npm
+            or self.install_packages
+            or self.install_docker
+        )
 
     def needs_copying(self):
         if os.getenv("CONDUCTO_TEMPLATE_SOURCE"):
@@ -1222,6 +1265,21 @@ def _get_path_map() -> typing.Dict[imagepath.Path, str]:
             for external, internal in d.items()
         }
     return {}
+
+
+@functools.lru_cache(1)
+def _get_repo_info():
+    try:
+        _, registry = conducto.api.Auth().get_ecr_credentials()
+        repo_name = conducto.api.Config().get_repo_name()
+    except Exception as e:
+        # User missing credentials, or endpoint not found:
+        # 1. workaround for 1st time deployment;
+        # 2. Sandbox scenario where we're only building images for local mode
+        print(e)
+        registry = None
+        repo_name = None
+    return registry, repo_name
 
 
 _conducto_dir = os.path.dirname(os.path.dirname(__file__)) + os.path.sep

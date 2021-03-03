@@ -43,15 +43,17 @@ def codegen(
             if isinstance(j, co.Parallel):
                 traverse(j, level + 1)
             if isinstance(j, co.Exec):
-                # append to current code block
-
                 func_code.append(
                     (level + 1) * "    "
                     + f'co.Exec(name="{j.name}", command="{j.command}")'
                 )
                 need_indent = True
-
-                # print(j.command)
+            if isinstance(j, co.Notebook):
+                func_code.append(
+                    (level + 1) * "    "
+                    + f'co.Notebook(name="{j.name}", command="{j.command}")'
+                )
+                need_indent = True
 
     traverse(tree, 1)
 
@@ -66,7 +68,7 @@ def codegen(
     func_code.append("")
     func_code.append(f"    return output")
 
-    reqs_py = ["pytest"] if lib == lib.PYTHON_PYTEST else []
+    install_pip = ["pytest"] if lib == lib.PYTHON_PYTEST else []
 
     # write to file
     f = open(filename, "w+")
@@ -79,7 +81,7 @@ def discover() -> co.Parallel:
     # this is the image used to run these tests
     # modify it as appropriate 
     # https://www.conducto.com/docs/basics/images 
-    image = co.Image(copy_dir=\"{source_dir}\", reqs_py={reqs_py}) 
+    image = co.Image(copy_dir=\"{source_dir}\", install_pip={install_pip}) 
 
     with co.Parallel(image=image) as output:
 """

@@ -171,14 +171,10 @@ class Wrapper(object):
         )
         return args
 
-    def to_command(self, *args, **kwargs):
-        abspath = f"__conducto_intermediate_path:{os.path.realpath(inspect.getfile(self.callFunc))}:endpath__"
-
-        parts = [self.callFunc.__name__]
-
-        sig = inspect.signature(self.callFunc)
-        bound = sig.bind(*args, **kwargs)
-        for k, v in bound.arguments.items():
+    @staticmethod
+    def _make_quoted_command_parts(iterable):
+        parts = list()
+        for k, v in iterable.items():
             if v is True:
                 parts.append(f"--{k}")
                 continue
@@ -190,10 +186,86 @@ class Wrapper(object):
             else:
                 parts += [f"--{k}={t.serialize(v)}"]
         quoted = [shlex.quote(part) for part in parts]
+        return quoted
 
+    @staticmethod
+    def _make_quoted_command_parts_notebook(iterable):
+        parts = list()
+        for k, v in iterable.items():
+            if v is True:
+                parts.append(f"-p {k} True")
+                continue
+            if v is False:
+                parts.append(f"-p {k} False")
+                continue
+            if client_utils.isiterable(v):
+                raise Exception(
+                    f"compound datatypes not supported for conducto-notebook arguments, only str, int, float, bool. Got '{k}={v}'"
+                ) from None
+            else:
+                parts += [f"-p {k} {shlex.quote(t.serialize(v))}"]
+        quoted = [part for part in parts]
+        return quoted
+
+    def to_command(self, *args, **kwargs):
+        abspath = f"__conducto_intermediate_path:{os.path.realpath(inspect.getfile(self.callFunc))}:endpath__"
+
+        parts = [self.callFunc.__name__]
+
+        sig = inspect.signature(self.callFunc)
+        bound = sig.bind(*args, **kwargs)
+        quoted = Wrapper._make_quoted_command_parts(bound.arguments)
+
+        quoted = parts + quoted
         command = [Wrapper.EXE, abspath] + quoted
 
         return " ".join(command)
+
+    @staticmethod
+    def to_command_for_notebook(path, **kwargs):
+        abspath = f"__conducto_intermediate_path:{os.path.realpath(path)}:endpath__"
+        mem = (None,)
+        cpu = (None,)
+        gpu = (None,)
+        env = (None,)
+        image = (None,)
+        requires_docker = (None,)
+
+        nb_kwarg_keys = set(kwargs) - set(
+            [
+                "env",
+                "skip",
+                "name",
+                "cpu",
+                "gpu",
+                "mem",
+                "requires_docker",
+                "suppress_errors",
+                "max_time",
+                "max_concurrent",
+                "container_reuse_context",
+                "same_container",
+                "image",
+                "image_name",
+                "docker_run_args",
+                "doc",
+                "title",
+                "tags",
+                "file",
+                "line",
+                "callback_data",
+            ]
+        )
+        nb_kwargs = {key: kwargs[key] for key in nb_kwarg_keys}
+        non_nb_kwargs = {
+            key: kwargs[key] for key in kwargs.keys() if key not in nb_kwarg_keys
+        }
+
+        quoted = Wrapper._make_quoted_command_parts_notebook(nb_kwargs)
+
+        command = f"conducto-notebook {abspath}".split() + quoted
+
+        return (" ".join(command), non_nb_kwargs)
 
     def pretty(self):
         myargs = self.getArguments()
@@ -690,12 +762,14 @@ def _parse_image_kwargs_from_config_section(section):
     return {
         "image": section.get("image"),
         "dockerfile": section.get("dockerfile"),
+        "dockerfile_text": section.get("dockerfile_text"),
         "docker_build_args": get_json("docker_build_args"),
         "context": section.get("context"),
         "docker_auto_workdir": section.getboolean("docker_auto_workdir", True),
-        "reqs_py": get_json("reqs_py"),
-        "reqs_packages": get_json("reqs_packages"),
-        "reqs_docker": get_json("reqs_docker"),
+        "install_pip": get_json("install_pip") or get_json("reqs_py"),
+        "install_npm": get_json("install_npm") or get_json("reqs_npm"),
+        "install_packages": get_json("install_packages") or get_json("reqs_packages"),
+        "install_docker": get_json("install_docker") or get_json("reqs_docker"),
         "path_map": get_json("path_map"),
         "name": section.get("name", "conducto_cfg_image"),
     }
@@ -1099,10 +1173,7 @@ def run_cfg_section(
     will_build = is_cloud or is_local
 
     if will_build:
-        BM = constants.BuildMode
-        return output._build(
-            build_mode=BM.LOCAL if is_local else BM.DEPLOY_TO_CLOUD, **conducto_kwargs
-        )
+        return output.launch(local=is_local, cloud=not is_local, **conducto_kwargs)
     elif t.Bool(os.getenv("CONDUCTO_GLUE_DEBUG")):
         print(output.serialize(pretty=True))
     else:
@@ -1314,18 +1385,15 @@ def _main(
                     update_serialization(output.serialize(), pipeline_id)
                 )
             else:
-                build_mode = BM.DEPLOY_TO_CLOUD
+                local = cloud = k8s = False
                 if is_local:
-                    build_mode = BM.LOCAL
+                    local = True
                 elif is_k8s:
-                    build_mode = BM.DEPLOY_TO_K8S
+                    k8s = True
+                else:
+                    cloud = True
                 try:
-                    from conducto.internal.build import validate_tree
-
-                    output._build(
-                        build_mode=build_mode,
-                        **conducto_state,
-                    )
+                    output.launch(local=local, cloud=cloud, k8s=k8s, **conducto_state)
                 except api.api_utils.InvalidResponse as e:
                     if str(e).find("Cloud mode must be enabled") >= 0:
                         raise api.api_utils.NoTracebackError(e.message)

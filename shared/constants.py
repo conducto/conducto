@@ -146,6 +146,7 @@ class GwParams:
     WEBSOCKET_FRAME_BYTES = 6 * 1024 ** 2
     # 5 MB
     MAX_DATA_BYTES = 5 * 1024 ** 2
+    MAX_STR_CHARS = MAX_DATA_BYTES // 4
 
 
 class RdParams:

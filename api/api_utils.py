@@ -121,7 +121,7 @@ def get_auth_headers(token: t.Token = None, refresh=True, force_refresh=False):
 
 
 def get_data(
-    response, content_type="application/json"
+    response, content_type="application/json", logger=None
 ) -> typing.Union[None, dict, list, str, int, float, typing.Dict[str, dict]]:
     """
     Handle responses that have errors, and return the JSON-parsed result. May return
@@ -130,7 +130,7 @@ def get_data(
     url = response.url if hasattr(response, "url") else ""
     res = response.read()
     status = response.status_code
-    return _get_data(response.headers, url, res, status, content_type)
+    return _get_data(response.headers, url, res, status, content_type, logger)
 
 
 async def aiohttp_get_data(
@@ -146,7 +146,7 @@ async def aiohttp_get_data(
     return _get_data(response.headers, url, res, status, content_type)
 
 
-def _get_data(headers, url, res, status, content_type="application/json"):
+def _get_data(headers, url, res, status, content_type="application/json", logger=None):
     if content_type not in headers["content-type"]:
         raise InvalidResponse(
             res, status_code=status, url=url, content_type=headers["content-type"]
@@ -172,6 +172,8 @@ def _get_data(headers, url, res, status, content_type="application/json"):
                 content_type=headers["content-type"],
             )
         else:
+            if logger:
+                logger(f"Status {status} InvalidResponse: '{message}' from url: {url}")
             raise InvalidResponse(
                 message,
                 status_code=status,

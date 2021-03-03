@@ -48,7 +48,7 @@ def discover_cli(
     # it's possible to both generate code to a file and run that pipeline
     if run_pipeline:
 
-        reqs_py = ["pytest"] if lib == lib.PYTHON_PYTEST else []
+        install_pip = ["pytest"] if lib == lib.PYTHON_PYTEST else []
 
         if source_dir is None:
             source_dir = discover_dir

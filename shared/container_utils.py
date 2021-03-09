@@ -284,6 +284,13 @@ def get_running_containers():
     return result.stdout.decode().splitlines()
 
 
+def get_all_containers():
+    args = ["docker", "container", "ls", "--all", "--format", "{{json .}}"]
+    result = client_utils.subprocess_run(args, capture_output=True)
+    results = result.stdout.decode().splitlines()
+    return [json.loads(r) for r in results]
+
+
 def get_current_container_id():
     """
     Return the full container ID of the Docker container we're in, or the empty string

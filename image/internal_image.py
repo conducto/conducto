@@ -1113,7 +1113,9 @@ class Image:
         result = []
         if self.needs_cloning():
             result.append(Status.CLONING)
-        if self.needs_pulling():
+        # needs_pulling would be nice here, but it is async and this is a
+        # sufficient approximation
+        if self.image or os.getenv("CONDUCTO_TEMPLATE_SOURCE"):
             result.append(Status.PULLING)
         if self.needs_building():
             result.append(Status.BUILDING)

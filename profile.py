@@ -338,7 +338,7 @@ def profile_stop_agent(id=None):
     if id is not None:
         os.environ["CONDUCTO_PROFILE"] = id
 
-    container_name = agent_utils.name()
+    container_name = agent_utils.agent_container_name()
 
     running = container_utils.get_running_containers()
     if f"{container_name}-old" in running:

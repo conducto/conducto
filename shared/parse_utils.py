@@ -49,3 +49,45 @@ def duration_string(duration) -> float:
             raise ValueError(f"Invalid value {value} in duration {duration}")
 
     return total / _second_size
+
+
+units_long = {
+    "second": _second_size,
+    "seconds": _second_size,
+    "minute": _minute_size,
+    "minutes": _minute_size,
+    "hour": _hour_size,
+    "hours": _hour_size,
+    "day": _day_size,
+    "days": _day_size,
+    "week": _week_size,
+    "weeks": _week_size,
+    "month": _month_size,
+    "months": _month_size,
+    "year": _year_size,
+    "years": _year_size,
+}
+
+# NOTE: THIS MUST STAY IN SYNC WITH private/services/app/src/utils/duration.js
+def duration_string_long(duration) -> float:
+    """Parse a duration string to number of seconds, as a float"""
+
+    if duration in ("0", "+0", "-0"):
+        return 0
+
+    pattern = re.compile(r"([\d.]+) +([a-zµμ]+)")
+    matches = pattern.findall(duration)
+    if not len(matches):
+        raise ValueError(f"Invalid duration {duration}")
+
+    total = 0
+
+    for (value, unit) in matches:
+        if unit not in units_long:
+            raise ValueError(f"Unknown unit {unit} in duration {duration}")
+        try:
+            total += float(value) * units_long[unit]
+        except Exception:
+            raise ValueError(f"Invalid value {value} in duration {duration}")
+
+    return total / _second_size

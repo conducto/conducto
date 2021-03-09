@@ -7,7 +7,7 @@ from . import client_utils, constants, container_utils, log, types as t
 from ..internal import host_detection as hostdet
 
 
-def name():
+def agent_container_name():
     profile_id = co.api.Config().default_profile
     host_id = co.api.Config().get_host_id()
     return f"conducto_agent_h{host_id}_p{profile_id}"
@@ -15,7 +15,7 @@ def name():
 
 def launch_agent(*, check_for_old=True, token=None) -> str:
     inside_container = container_utils.get_current_container_id()
-    container_name = name()
+    container_name = agent_container_name()
 
     running = container_utils.get_running_containers()
     if container_name in running:
@@ -142,11 +142,23 @@ def launch_agent(*, check_for_old=True, token=None) -> str:
 
     # check once more if the agent is running to avoid even trying to start a
     # second
-    running = container_utils.get_running_containers()
+    running = container_utils.get_all_containers()
+    running = {r["Names"]: r for r in running}
     if container_name in running:
-        return "running"
+        name = container_name
+        if running[name]["State"] == "running":
+            return "running"
+        else:
+            x = ["docker", "container", "rm", name]
+            print(f"shutting down {name}")
+            client_utils.subprocess_run(x, capture_output=True)
     if check_for_old and f"{container_name}-old" in running:
-        return "running-old"
+        name = f"{container_name}-old"
+        if running[name]["State"] == "running":
+            return "running-old"
+        else:
+            x = ["docker", "container", "rm", name]
+            client_utils.subprocess_run(x, capture_output=True)
 
     try:
         client_utils.subprocess_run(

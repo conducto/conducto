@@ -464,11 +464,13 @@ def _get_call_func(argv, default, methods):
 
     usage_message = _make_usage_message(methods)
 
-    if argv and argv[0] == "--version":
-        print(f"{__version__} (sha1={__sha1__})")
-        sys.exit(0)
-    if argv and argv[0] in ("-h", "--help"):
+    help_flags = {"-h", "--help"}
+    if argv and help_flags & set(argv):
         print("usage:", usage_message, file=sys.stderr)
+        sys.exit(0)
+    ver_flags = {"-v", "--version"}
+    if argv and ver_flags & set(argv):
+        print(f"{__version__} (sha1={__sha1__})")
         sys.exit(0)
     if default is None:
         if not argv:
@@ -638,7 +640,11 @@ def _get_state(callFunc, remainder):
     try:
         bound = signature.bind(*args, **kwargs)
     except TypeError as e:
-        raise api.api_utils.NoTracebackError(f"wrong arguments to {prog}: {e.message}")
+        print(
+            f"{prog}: wrong parameters for {callFunc.__name__}()",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # Parse the arguments according to their types
     call_state = {

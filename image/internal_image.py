@@ -295,7 +295,13 @@ class Image:
             )
 
     def __eq__(self, other):
-        return isinstance(other, Image) and self.to_dict() == other.to_dict()
+        if isinstance(other, Image):
+            return self.to_dict() == other.to_dict()
+        else:
+            try:
+                return Image(**other.to_dict()) == self
+            except:
+                return False
 
     def _detect_repo_root(self):
         if CONST_EE.headless():

@@ -258,7 +258,14 @@ class Image:
         self.instantiation_directory = instantiation_directory or _non_conducto_dir()
 
     def __eq__(self, other):
-        return isinstance(other, Image) and self.to_dict() == other.to_dict()
+        if isinstance(other, Image):
+            return self.to_dict() == other.to_dict()
+        else:
+            from .internal_image import Image as IImage
+
+            if isinstance(other, IImage):
+                return IImage(**self.to_dict()) == other
+        return False
 
     @staticmethod
     def _serialize_path(p: typing.Union[imagepath.Path, str]):

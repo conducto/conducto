@@ -438,12 +438,16 @@ commands:
             if not default_account_token:
                 # if none is marked default in config, take first
                 default_account_token = accounts_list[0]["token"]
-            print(accounts_message)
-            print(
-                "NOTE: * indicates default profile.\n"
-                "Change your default at anytime with the command:\n"
-                "  `conducto-profile set-default <profile_id>`"
-            )
+            if not skip_profile:
+                # this user facing message is irrelevant in API usage other
+                # than CLI; skip_profile seems a pretty decent proxy for
+                # distinguishing that condition
+                print(accounts_message)
+                print(
+                    "NOTE: * indicates default profile.\n"
+                    "Change your default at anytime with the command:\n"
+                    "  `conducto-profile set-default <profile_id>`"
+                )
         else:
             raise api.UserInputValidation(
                 f"No accounts associated with this user. please visit the web app at {self.get_url()}/app/ "

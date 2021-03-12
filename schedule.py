@@ -152,6 +152,17 @@ def list_schedules(installation_id, token: t.Token = None):
     return api_utils.get_data(response)
 
 
+def schedule_run_list(installation_id, schedule_id, token: t.Token = None):
+    url = co.api.Config().get_url()
+
+    headers = api_utils.get_auth_headers(token)
+    response = request_utils.get(
+        f"{url}/integrations/schedule/{installation_id}/schedule/{schedule_id}/runs",
+        headers=headers,
+    )
+    return api_utils.get_data(response)
+
+
 def delete_schedule(installation_id, schedule_id, token: t.Token = None):
     url = co.api.Config().get_url()
 

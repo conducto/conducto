@@ -1040,14 +1040,9 @@ class Image:
             f"com.conducto.profile={profile}",
             f"com.conducto.pipeline={pipeline_id}",
         ]
-        if True:
-            text, worker_image = await dockerfile_mod.text_for_extend_rust(
-                self.name_copied, labels
-            )
-        else:
-            text, worker_image = await dockerfile_mod.text_for_extend(
-                self.name_copied, labels
-            )
+        text, worker_image = await dockerfile_mod.text_for_extend_rust(
+            self.name_copied, labels
+        )
 
         if "/" in worker_image:
             pull_worker = True

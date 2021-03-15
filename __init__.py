@@ -1,4 +1,4 @@
-from .pipeline import Exec, Serial, Parallel, Node, Notebook
+from .pipeline import Exec, Serial, Parallel, Node, Notebook, Params
 from .glue import lazy_py, main, lazy_shell, Lazy
 from .shared.constants import SameContainer, ContainerReuseContext
 from .shared.imagepath import Path
@@ -14,6 +14,7 @@ __all__ = [
     "Parallel",
     "Node",
     "Notebook",
+    "Params",
     "main",
     "lazy_py",
     "lazy_shell",

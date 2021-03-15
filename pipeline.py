@@ -1027,13 +1027,38 @@ class Exec(Node):
 
     def __init__(self, command, *args, **kwargs):
         if callable(command):
-            self._validate_args(command, *args, **kwargs)
+
+            if "params" in kwargs:
+                co_kwargs = kwargs["params"]
+                fn_kwargs = kwargs
+                del fn_kwargs["params"]
+            else:
+                co_kwargs = dict()
+                fn_kwargs = kwargs
+
+            self._validate_args(command, *args, **fn_kwargs)
             from .glue import method
 
-            wrapper = method.Wrapper(command)
-            command = wrapper.to_command(*args, **kwargs)
-            kwargs = wrapper.get_exec_params(*args, **kwargs)
+            wrapper = method.Wrapper(command, co_kwargs)
+            command = wrapper.to_command(*args, **fn_kwargs)
+            kwargs = wrapper.get_exec_params(list(), **co_kwargs)
             args = []
+        else:
+            # if they provided params on a regular Exec node,
+            # then we will use those, too. However, param keys
+            # must not collide between kwargs and kwargs["params"]
+            # or we count that as an error
+            if "params" in kwargs:
+                co_params = kwargs["params"]
+                co_keys = set(co_params.keys())
+                user_keys = set(kwargs.keys())
+                multiply_defined_keys = co_keys & user_keys
+                keys_specified_twice = bool(multiply_defined_keys)
+                if keys_specified_twice:
+                    raise ValueError(
+                        f"The following Conducto parameters were specified twice: {', '.join(multiply_defined_keys)}"
+                    )
+                kwargs = kwargs["params"]
 
         if args:
             raise ValueError(
@@ -1254,14 +1279,15 @@ class Notebook(Exec):
     def __init__(self, command, *args, **kwargs):
         from .glue import method
 
-        command, kwargs = method.Wrapper.to_command_for_notebook(command, **kwargs)
+        command = method.Wrapper.to_command_for_notebook(command, **kwargs)
+        co_params = kwargs.get("params", dict())
 
         if args:
             raise ValueError(
                 f"Only allowed arg is command. Got:\n  command={repr(command)}\n  args={args}\n  kwargs={kwargs}"
             )
 
-        super().__init__(command, **kwargs)
+        super().__init__(command, **co_params)
 
         # Instance variables
         self.command = log.unindent(command)
@@ -1272,3 +1298,8 @@ _isabs = functools.lru_cache(1000)(os.path.isabs)
 _conducto_dir = os.path.dirname(__file__) + os.path.sep
 
 KEY_PARAMS = set(inspect.signature(Serial.__init__).parameters) | {"command"}
+
+
+def Params(**kwargs):
+    """wrapper for dictionary creation"""
+    return kwargs

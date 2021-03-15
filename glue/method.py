@@ -13,6 +13,7 @@ import typing
 import fnmatch
 import re
 import traceback
+import copy
 
 from ..shared import client_utils, constants, log, types as t, path_utils, github_utils
 from .._version import __version__, __sha1__
@@ -114,12 +115,7 @@ class Wrapper(object):
     def __init__(
         self,
         func,
-        mem=None,
-        cpu=None,
-        gpu=None,
-        env=None,
-        image=None,
-        requires_docker=None,
+        params=dict(),
     ):
 
         if isinstance(func, staticmethod):
@@ -140,13 +136,13 @@ class Wrapper(object):
         doc = log.unindent(func.__doc__) if func.__doc__ else None
 
         self.exec_params = {
-            "mem": mem,
-            "cpu": cpu,
-            "gpu": gpu,
-            "env": env,
-            "image": image,
-            "requires_docker": requires_docker,
-            "doc": doc,
+            "mem": params.get("mem", None),
+            "cpu": params.get("cpu", None),
+            "gpu": params.get("gpu", None),
+            "env": params.get("env", None),
+            "image": params.get("image", None),
+            "requires_docker": params.get("requires_docker", None),
+            "doc": params.get("doc", None),
         }
 
     def get_exec_params(self, *args, **kwargs):
@@ -158,7 +154,10 @@ class Wrapper(object):
                 output[k] = v(*args, **kwargs)
             elif k == "env":
                 output[k] = dict(v)
-            else:
+            elif v:
+                output[k] = v
+        for k, v in kwargs.items():
+            if k not in output:
                 output[k] = v
         return output
 
@@ -231,41 +230,19 @@ class Wrapper(object):
         image = (None,)
         requires_docker = (None,)
 
-        nb_kwarg_keys = set(kwargs) - set(
-            [
-                "env",
-                "skip",
-                "name",
-                "cpu",
-                "gpu",
-                "mem",
-                "requires_docker",
-                "suppress_errors",
-                "max_time",
-                "max_concurrent",
-                "container_reuse_context",
-                "same_container",
-                "image",
-                "image_name",
-                "docker_run_args",
-                "doc",
-                "title",
-                "tags",
-                "file",
-                "line",
-                "callback_data",
-            ]
-        )
-        nb_kwargs = {key: kwargs[key] for key in nb_kwarg_keys}
-        non_nb_kwargs = {
-            key: kwargs[key] for key in kwargs.keys() if key not in nb_kwarg_keys
-        }
+        if "params" in kwargs:
+            co_kwargs = kwargs["params"]
+            nb_kwargs = kwargs
+            del nb_kwargs["params"]
+        else:
+            co_kwargs = dict()
+            nb_kwargs = kwargs
 
         quoted = Wrapper._make_quoted_command_parts_notebook(nb_kwargs)
 
         command = f"conducto-notebook {abspath}".split() + quoted
 
-        return (" ".join(command), non_nb_kwargs)
+        return " ".join(command)
 
     def pretty(self):
         myargs = self.getArguments()
